@@ -53,6 +53,10 @@ func (e *GameEngine) castHidingSpell(player *Player, spell *SpellDef, args []str
 		return &CommandResult{
 			Messages:      []string{"You gesture.", "You feel a tingling sensation."},
 			RoomBroadcast: []string{fmt.Sprintf("%s fades from sight.", player.DisplayNameCap())},
+			// The player is already Invisible/PhantomForm by the time this result
+			// reaches api.go's concealed-broadcast choke point, which would otherwise
+			// suppress this exact line — the one announcing that they just vanished.
+			ConcealedBroadcastOK: true,
 		}
 	}
 	e.SavePlayer(context.Background(), target)

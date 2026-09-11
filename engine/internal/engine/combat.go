@@ -1289,8 +1289,11 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 
 		// If there's no elemental crit to supply its own kill-flavor line below, a
 		// killing base hit gets weaponKillFlavor in place of the normal severity line.
+		// weaponDef is nil for bare-handed/Martial Arts combat, so it can't be
+		// dereferenced directly here.
 		if killed && critType == "" {
-			if kf := weaponKillFlavor(dtype, isRangedWeaponType(weaponDef.Type)); kf != "" {
+			ranged := weaponDef != nil && isRangedWeaponType(weaponDef.Type)
+			if kf := weaponKillFlavor(dtype, ranged); kf != "" {
 				baseHitLine = " " + kf
 			}
 		}
@@ -1312,8 +1315,8 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			msgs = append(msgs, fmt.Sprintf("The %s wakes up, startled!", name))
 		}
 
-		// Weapon poison
-		if poisonLvl := weaponPoisonLevel(player.Wielded); poisonLvl > 0 && !killed {
+		// Weapon poison — no effect on undead (RACE 22), which lack a life force for it to act on.
+		if poisonLvl := weaponPoisonLevel(player.Wielded); poisonLvl > 0 && !killed && def.Race != 22 {
 			msgs = append(msgs, " Your weapon delivers its venom!")
 		}
 
@@ -1368,7 +1371,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			} else {
 				msgs = append(msgs, " It collapses, dead.")
 			}
-			e.handleMonsterDeath([]*Player{player}, inst, def)
+			e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 		}
 
 		// Build simplified 3rd-person broadcast
@@ -1507,14 +1510,14 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 				result.Messages = append(result.Messages, fmt.Sprintf(" The %s wakes up, startled!", name))
 			}
 
-			// Weapon poison (off-hand)
-			if ohPoisonLvl := weaponPoisonLevel(player.OffHand); ohPoisonLvl > 0 && !ohKilled {
+			// Weapon poison (off-hand) — no effect on undead (RACE 22).
+			if ohPoisonLvl := weaponPoisonLevel(player.OffHand); ohPoisonLvl > 0 && !ohKilled && def.Race != 22 {
 				result.Messages = append(result.Messages, " Your weapon delivers its venom!")
 			}
 
 			if ohKilled {
 				result.Messages = append(result.Messages, " It collapses, dead.")
-				e.handleMonsterDeath([]*Player{player}, inst, def)
+				e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 			}
 			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s %s at %s%s with their off hand. Hit.", player.DisplayNameCap(), ohThirdVerb, article, name))
 		} else {
@@ -1824,20 +1827,24 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 			playerMsgs = append(playerMsgs, interruptMsg)
 		}
 
-		// Monster poison/disease/fatigue on hit
-		if def.PoisonChance > 0 && rand.Intn(100) < def.PoisonChance {
-			player.Poisoned = true
-			if 1 > player.PoisonLevel {
-				player.PoisonLevel = 1
+		// Monster poison/disease/fatigue on hit. GMSCRIPT.DOC immunity #7 ("life
+		// affecting") exempts undead from poison/disease due to lacking an active
+		// life force — mirrors the !player.Undead bleeding exemption in wounds.go.
+		if !player.Undead {
+			if def.PoisonChance > 0 && rand.Intn(100) < def.PoisonChance {
+				player.Poisoned = true
+				if 1 > player.PoisonLevel {
+					player.PoisonLevel = 1
+				}
+				playerMsgs = append(playerMsgs, " You feel poison coursing through your veins!")
 			}
-			playerMsgs = append(playerMsgs, " You feel poison coursing through your veins!")
-		}
-		if def.DiseaseChance > 0 && rand.Intn(100) < def.DiseaseChance {
-			player.Diseased = true
-			if 1 > player.DiseaseLevel {
-				player.DiseaseLevel = 1
+			if def.DiseaseChance > 0 && rand.Intn(100) < def.DiseaseChance {
+				player.Diseased = true
+				if 1 > player.DiseaseLevel {
+					player.DiseaseLevel = 1
+				}
+				playerMsgs = append(playerMsgs, " You feel a sickness taking hold!")
 			}
-			playerMsgs = append(playerMsgs, " You feel a sickness taking hold!")
 		}
 		if def.FatigueChance > 0 && rand.Intn(100) < def.FatigueChance {
 			drain := def.FatigueLevel
@@ -2480,6 +2487,11 @@ func (e *GameEngine) handlePlayerDeath(player *Player, killerName string) []stri
 	player.CombatTarget = nil
 	player.Joined = false
 	player.Position = 2 // laying down
+	// A corpse can't stay hidden/invisible/phantom-formed — it needs to be
+	// visible so other players can find and raise it.
+	player.Hidden = false
+	player.Invisible = false
+	player.PhantomForm = false
 	e.lastDeathRoom = player.RoomNumber
 
 	e.dismissSummonedCreature(player)
@@ -2706,14 +2718,18 @@ func (e *GameEngine) groupOf(player *Player) []*Player {
 }
 
 // dotKillRecipients resolves who should receive XP for a damage-over-time kill (bleed-
-// out, tentacle DOT, and any future poison/disease-to-death mechanic) that has no single
-// decisive blow: the last player to damage the monster (lastAttackerName — e.g.
-// MonsterInstance.LastAttacker or TentacleCasterName), plus their group, minus anyone
-// hidden or invisible. A solo attacker always gets credit regardless of concealment —
-// same as a normal kill, which never checks concealment at all; the exclusion only
-// matters for deciding who shares in a group split. Returns nil if the last attacker
-// isn't online, or if they're grouped and everyone eligible is concealed — in that case
-// the kill is unattributed (no XP, just a broadcast), same as before this tracking existed.
+// out, tentacle DOT, poison, or disease) that has no single decisive blow: the last
+// player to damage the monster (lastAttackerName — e.g. MonsterInstance.LastAttacker or
+// TentacleCasterName). Sharing with the rest of their group is gated on SHAREDXP exactly
+// like a normal kill (sharedXPRecipients — same room, alive, leader has it toggled on);
+// if it's off, or they aren't grouped, the last attacker alone gets full credit, same as
+// a direct kill. When sharing is active, anyone hidden or invisible is additionally
+// excluded — a DOT kill has no clean single participant to fall back to attributing it
+// to, so concealment is used as a weak signal of "wasn't really part of this." A solo
+// attacker always gets credit regardless of concealment. Returns nil if the last
+// attacker isn't online, or if they're sharing and everyone eligible is concealed — in
+// that case the kill is unattributed (no XP, just a broadcast), same as before this
+// tracking existed.
 func (e *GameEngine) dotKillRecipients(lastAttackerName string) []*Player {
 	if lastAttackerName == "" || e.sessions == nil {
 		return nil
@@ -2728,7 +2744,7 @@ func (e *GameEngine) dotKillRecipients(lastAttackerName string) []*Player {
 	if attacker == nil {
 		return nil
 	}
-	group := e.groupOf(attacker)
+	group := e.sharedXPRecipients(attacker)
 	if len(group) == 1 {
 		return group
 	}
@@ -2739,6 +2755,131 @@ func (e *GameEngine) dotKillRecipients(lastAttackerName string) []*Player {
 		}
 	}
 	return visible
+}
+
+// sharedXPRecipients resolves who should receive XP for killer's kill under the
+// SHAREDXP toggle (see doSharedXP, social.go): killer's whole group, if their group's
+// leader has SHAREDXP active, filtered down to whoever is actually still online, alive,
+// and in the same room as the kill — eligibility is re-checked live at the moment of
+// death (GMSCRIPT-era "within the required group/combat area" rule) rather than trusting
+// stale group membership, so a member who wandered off to a different room doesn't
+// collect XP for a fight they weren't part of. Falls back to just killer — the normal
+// solo-kill path — if SHAREDXP isn't active for their group, or they aren't grouped.
+func (e *GameEngine) sharedXPRecipients(killer *Player) []*Player {
+	solo := []*Player{killer}
+	if e.sessions == nil {
+		return solo
+	}
+	var leader *Player
+	if killer.IsGroupLeader {
+		leader = killer
+	} else if killer.Following != "" {
+		leader = e.findOnlinePlayerByName(killer.Following)
+	}
+	if leader == nil || !leader.SharedXP {
+		return solo
+	}
+	var eligible []*Player
+	for _, p := range e.groupOf(killer) {
+		if p.RoomNumber == killer.RoomNumber && !p.Dead {
+			eligible = append(eligible, p)
+		}
+	}
+	if len(eligible) == 0 {
+		return solo
+	}
+	return eligible
+}
+
+// computeGroupXPShares splits baseXP across recipients for a group kill (SHAREDXP —
+// see doSharedXP/sharedXPRecipients — or a DOT kill's dotKillRecipients). For a single
+// recipient (the ordinary solo-kill case every other call site still uses) this is just
+// baseXP unchanged. For a group:
+//
+//  1. The pool grows 25% per member beyond the first (2p=125%, 3p=150%, 4p=175%, ...) —
+//     grouping should net more total XP than fighting alone, to make it worth forming
+//     a party in the first place.
+//  2. Everyone starts with an equal cut of that pool.
+//  3. Each member's cut is nudged by how far their level sits from the group's average
+//     — modestly (2% per level of difference) and capped at ±35%, so a much-lower-level
+//     member's share is reduced, not zeroed, and a much-higher-level member's is boosted,
+//     not doubled.
+//  4. Those nudged shares are renormalized back to sum to exactly the pool.
+//  5. Finally, an extreme level spread across the whole group (max level - min level)
+//     shrinks the pool itself — normal groups are untouched, a level 50 + level 2 pairing
+//     lands deep in the reduced range — to blunt power-leveling through a huge level gap
+//     without needing per-member eligibility cutoffs.
+func computeGroupXPShares(baseXP int, recipients []*Player) []int {
+	n := len(recipients)
+	switch {
+	case n == 0:
+		return nil
+	case n == 1:
+		return []int{baseXP}
+	}
+
+	pool := float64(baseXP) * (1.0 + 0.25*float64(n-1))
+	equalShare := pool / float64(n)
+
+	totalLevel := 0
+	minLevel, maxLevel := recipients[0].Level, recipients[0].Level
+	for _, p := range recipients {
+		totalLevel += p.Level
+		if p.Level < minLevel {
+			minLevel = p.Level
+		}
+		if p.Level > maxLevel {
+			maxLevel = p.Level
+		}
+	}
+	avgLevel := float64(totalLevel) / float64(n)
+
+	const perLevelWeight = 0.02  // each level of difference from the group average nudges a share ~2%
+	const maxWeightSwing = 0.35  // ...capped at +/-35%, so no one's cut goes near zero or doubles
+	weighted := make([]float64, n)
+	weightedTotal := 0.0
+	for i, p := range recipients {
+		swing := (float64(p.Level) - avgLevel) * perLevelWeight
+		if swing > maxWeightSwing {
+			swing = maxWeightSwing
+		} else if swing < -maxWeightSwing {
+			swing = -maxWeightSwing
+		}
+		weighted[i] = equalShare * (1.0 + swing)
+		weightedTotal += weighted[i]
+	}
+
+	shares := make([]float64, n)
+	for i := range shares {
+		shares[i] = weighted[i] * (pool / weightedTotal)
+	}
+
+	// Level-spread penalty: shrinks the pool, not any one member's slice of it.
+	// <=15 levels apart: full pool. 15-40: tapers 100% -> 50%. 40+: tapers 50% -> a
+	// 25% floor at a 60-level spread (so grouping never falls below a quarter pool).
+	spread := float64(maxLevel - minLevel)
+	penalty := 1.0
+	switch {
+	case spread <= 15:
+		penalty = 1.0
+	case spread <= 40:
+		penalty = 1.0 - 0.5*(spread-15)/25
+	default:
+		t := (spread - 40) / 20
+		if t > 1 {
+			t = 1
+		}
+		penalty = 0.5 - 0.25*t
+	}
+
+	result := make([]int, n)
+	for i, s := range shares {
+		result[i] = int(s*penalty + 0.5)
+		if result[i] < 1 {
+			result[i] = 1
+		}
+	}
+	return result
 }
 
 // handleMonsterDeath awards kill XP/alignment/loot for a monster's death. recipients[0]
@@ -2767,7 +2908,7 @@ func (e *GameEngine) handleMonsterDeath(recipients []*Player, inst *MonsterInsta
 	if baseXP < 10 {
 		baseXP = 10
 	}
-	sharedXP := baseXP / len(recipients)
+	shares := computeGroupXPShares(baseXP, recipients)
 
 	e.Events.Publish("combat", fmt.Sprintf("%s killed %s (monster %d) in room %d",
 		killer.FirstName, def.Name, def.Number, killer.RoomNumber))
@@ -2828,10 +2969,18 @@ func (e *GameEngine) handleMonsterDeath(recipients []*Player, inst *MonsterInsta
 		e.dropMonsterCarriedItems(killer.RoomNumber, inst)
 	}
 
-	for _, p := range recipients {
-		xp := sharedXP
-		// Scale XP slightly by player level (diminishing returns for grinding weak mobs)
-		if p.Level > 1 && xp < p.Level*5 {
+	for i, p := range recipients {
+		xp := shares[i]
+		// Diminishing returns for grinding weak-for-your-level content: gated on the
+		// monster's full value (baseXP), not this player's post-split share. For a solo
+		// kill those are the same number (computeGroupXPShares returns baseXP unchanged
+		// for a single recipient), so solo behavior is identical to before. But in a
+		// group, comparing the split share would treat sharing a perfectly worthwhile
+		// kill several ways as if the monster itself were trivial — e.g. a 313 XP kill
+		// split 3 ways left a level-33 player's ~162 share under her own Level*5 (165)
+		// threshold and cratered it to 49, even though 313 is well above what's trivial
+		// for her level.
+		if p.Level > 1 && baseXP < p.Level*5 {
 			xp = max(5, xp*50/(p.Level*5))
 		}
 		p.Experience += xp
@@ -3052,7 +3201,13 @@ func (e *GameEngine) doFlee(ctx context.Context, player *Player) *CommandResult 
 
 	oldRoom := player.RoomNumber
 	player.RoomNumber = chosen.destID
-	player.Position = 0
+	// Fleeing while flying (e.g. over an AERIAL room with no ground) must not
+	// silently ground the player — that would strand them unable to DESCEND
+	// (which requires Position == 4) with no floor to stand on. Every other
+	// position (sitting/kneeling/laying) still snaps back up to standing.
+	if player.Position != 4 {
+		player.Position = 0
+	}
 	player.Submitting = false
 
 	result := e.doLook(player)

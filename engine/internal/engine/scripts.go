@@ -204,6 +204,18 @@ func (e *GameEngine) RunPreverbScripts(player *Player, room *gameworld.Room, ver
 		}
 	}
 
+	// Run bare top-level item actions (e.g. item 747's dice: "RANDOM dieone 1 6 0"
+	// ahead of "IFPREVERB ROLL -1") unconditionally, before any IFVERB/IFPREVERB
+	// check — same rationale as the room-level ACTION loop above. Without this the
+	// values an IFVAR check downstream reads were never actually rolled/set.
+	for _, block := range def.Scripts {
+		if block.Type == "ACTION" {
+			for _, action := range block.Actions {
+				sc.execAction(action)
+			}
+		}
+	}
+
 	// Check item-level scripts (on the archetype definition).
 	// Item scripts may have IFPREVERB blocks nested inside IFVAR trees (e.g., the alley
 	// item checks IFVAR ITEMVAL5 then IFVAR ORG before exposing IFPREVERB GO).
@@ -716,6 +728,9 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 		if len(action.Args) >= 1 && strings.ToUpper(action.Args[0]) == "PLAYER" {
 			sc.Player.BodyPoints = 0
 			sc.Player.Dead = true
+			sc.Player.Hidden = false
+			sc.Player.Invisible = false
+			sc.Player.PhantomForm = false
 			sc.KillPlayer = true
 		}
 	case "ROUTINE":
@@ -2573,6 +2588,7 @@ func (sc *ScriptContext) doRoutine(args []string) {
 		sc.Player.PreparedSpell = spellID
 		sc.Player.PreparedSpellReagentArch = 0
 		sc.Player.PreparedMoonstoneBonus = false
+		sc.Player.PreparedWormScaleBonus = false
 		sc.Messages = append(sc.Messages, fmt.Sprintf("The %s glows briefly. %s is prepared for casting. (CAST to release it.)", itemNoun, spell.Name))
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("The %s in %s's hands glows briefly.", itemNoun, sc.Player.FirstName))
 	}

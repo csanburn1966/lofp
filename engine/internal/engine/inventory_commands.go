@@ -1152,6 +1152,12 @@ func (e *GameEngine) runItemOwnPreverbHook(player *Player, room *gameworld.Room,
 		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
 		ItemBits: ii.ItemBits, State: ii.State}
 	sc := e.RunPreverbScripts(player, room, verb, &tempRI, def)
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+	// after the delay is lost (e.g. the Grimoire of Chaos's "pages stop turning"
+	// pause before its random effect rolls).
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
 	if !sc.Blocked {
 		return nil
 	}
@@ -1461,12 +1467,16 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 					return &CommandResult{Messages: msgs, PlayerState: player}
 				}
 			}
+			// Run the item's own IFPREVERB OPEN script first, even when it's a normal
+			// container — a scripted container (e.g. item 675, the Grimoire of Chaos)
+			// still needs its CLEARVERB-gated logic to fire instead of being silently
+			// shadowed by the generic "you open it" flow below.
+			if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
+				return res
+			}
 			if !containsFlag(itemDef.Flags, "OPENABLE") {
 				// Not a container — but it may still define its own universal OPEN
 				// hijack (e.g. item 925, "the object").
-				if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
-					return res
-				}
 				return &CommandResult{Messages: []string{"You can't open that."}}
 			}
 			if ii.State == "LOCKED" {
@@ -1508,10 +1518,10 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 					return &CommandResult{Messages: msgs, PlayerState: player}
 				}
 			}
+			if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
+				return res
+			}
 			if !containsFlag(itemDef.Flags, "OPENABLE") {
-				if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
-					return res
-				}
 				return &CommandResult{Messages: []string{"You can't open that."}}
 			}
 			if ii.State == "LOCKED" {
@@ -1558,10 +1568,22 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 						return &CommandResult{Messages: msgs, PlayerState: player}
 					}
 				}
+				// Run the item's own IFPREVERB OPEN script first, even when it's a normal
+				// container/portal — a scripted container (e.g. item 675, the Grimoire of
+				// Chaos) still needs its CLEARVERB-gated logic to fire instead of being
+				// silently shadowed by the generic "you open it" flow below.
+				sc := e.RunPreverbScripts(player, room, "OPEN", &room.Items[i], itemDef)
+				// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+				// after the delay is lost (e.g. the Grimoire of Chaos's "pages stop turning"
+				// pause before its random effect rolls).
+				if len(sc.DeferredSegments) > 0 {
+					e.scheduleScriptSegments(player, sc.DeferredSegments)
+				}
+				if sc.Blocked {
+					return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
+				}
+				ri = room.Items[i]
 				if !containsFlag(itemDef.Flags, "OPENABLE") && !isPortal(itemDef.Type) {
-					if sc := e.RunPreverbScripts(player, room, "OPEN", &room.Items[i], itemDef); sc.Blocked {
-						return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
-					}
 					return &CommandResult{Messages: []string{"You can't open that."}}
 				}
 				if ri.State == "LOCKED" {
@@ -1619,18 +1641,25 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 
 	var msgs []string
 	physicalHarm := false
+	// Undead lack an active life force for poison to act on (GMSCRIPT.DOC immunity
+	// #7, "life affecting") — mirrors the !player.Undead exemptions in combat.go.
+	poisonImmune := player.Undead
 	switch {
 	case trapType == 1: // Needle, minor poison
 		msgs = append(msgs, "A needle springs out and pricks your finger!")
-		player.Poisoned = true
-		if 1 > player.PoisonLevel {
-			player.PoisonLevel = 1
+		if !poisonImmune {
+			player.Poisoned = true
+			if 1 > player.PoisonLevel {
+				player.PoisonLevel = 1
+			}
 		}
 	case trapType == 2: // Gas, minor poison
 		msgs = append(msgs, "A cloud of noxious gas billows out!")
-		player.Poisoned = true
-		if 1 > player.PoisonLevel {
-			player.PoisonLevel = 1
+		if !poisonImmune {
+			player.Poisoned = true
+			if 1 > player.PoisonLevel {
+				player.PoisonLevel = 1
+			}
 		}
 	case trapType == 3: // Acid
 		dmg := formDamageReduction(player, 10+rand.Intn(15))
@@ -1650,15 +1679,19 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 		physicalHarm = true
 	case trapType == 5: // Needle, moderate poison
 		msgs = append(msgs, "A poison-coated needle jabs into your hand!")
-		player.Poisoned = true
-		if 2 > player.PoisonLevel {
-			player.PoisonLevel = 2
+		if !poisonImmune {
+			player.Poisoned = true
+			if 2 > player.PoisonLevel {
+				player.PoisonLevel = 2
+			}
 		}
 	case trapType == 7: // Needle, major poison
 		msgs = append(msgs, "A large needle drives deep into your finger, delivering a potent venom!")
-		player.Poisoned = true
-		if 3 > player.PoisonLevel {
-			player.PoisonLevel = 3
+		if !poisonImmune {
+			player.Poisoned = true
+			if 3 > player.PoisonLevel {
+				player.PoisonLevel = 3
+			}
 		}
 	case trapType == 8: // Explosive
 		dmg := formDamageReduction(player, 30+rand.Intn(30))
@@ -1678,9 +1711,11 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 		physicalHarm = true
 	case trapType == 12: // Gas, moderate poison
 		msgs = append(msgs, "A thick cloud of poisonous gas engulfs you!")
-		player.Poisoned = true
-		if 2 > player.PoisonLevel {
-			player.PoisonLevel = 2
+		if !poisonImmune {
+			player.Poisoned = true
+			if 2 > player.PoisonLevel {
+				player.PoisonLevel = 2
+			}
 		}
 	case trapType == 13: // Black needle, lethal
 		dmg := formDamageReduction(player, 40+rand.Intn(30))
@@ -1689,9 +1724,11 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 			player.BodyPoints = 0
 		}
 		msgs = append(msgs, fmt.Sprintf("A black needle strikes you, delivering a lethal toxin! [%d Damage]", dmg))
-		player.Poisoned = true
-		if 5 > player.PoisonLevel {
-			player.PoisonLevel = 5
+		if !poisonImmune {
+			player.Poisoned = true
+			if 5 > player.PoisonLevel {
+				player.PoisonLevel = 5
+			}
 		}
 		physicalHarm = true
 	case trapType >= 1000: // Glyph traps (spell-based)
@@ -1762,14 +1799,12 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 				continue
 			}
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			// Run the item's own IFPREVERB CLOSE script first, even when it's a normal
+			// container (see the identical OPEN fix above for item 675's rationale).
+			if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
+				return res
+			}
 			if ii.State != "OPEN" {
-				if !containsFlag(itemDef.Flags, "OPENABLE") {
-					// Not a container — but it may still define its own universal CLOSE
-					// hijack (e.g. item 925, "the object").
-					if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
-						return res
-					}
-				}
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 			}
 			player.Inventory[i].State = "CLOSED"
@@ -1789,12 +1824,10 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 				continue
 			}
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
+				return res
+			}
 			if ii.State != "OPEN" {
-				if !containsFlag(itemDef.Flags, "OPENABLE") {
-					if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
-						return res
-					}
-				}
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 			}
 			player.Worn[i].State = "CLOSED"
@@ -1815,12 +1848,15 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 					continue
 				}
 				fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+				sc := e.RunPreverbScripts(player, room, "CLOSE", &room.Items[i], itemDef)
+				if len(sc.DeferredSegments) > 0 {
+					e.scheduleScriptSegments(player, sc.DeferredSegments)
+				}
+				if sc.Blocked {
+					return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
+				}
+				ri = room.Items[i]
 				if ri.State != "OPEN" {
-					if !containsFlag(itemDef.Flags, "OPENABLE") {
-						if sc := e.RunPreverbScripts(player, room, "CLOSE", &room.Items[i], itemDef); sc.Blocked {
-							return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
-						}
-					}
 					return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 				}
 				room.Items[i].State = "CLOSED"
@@ -2088,9 +2124,21 @@ func (e *GameEngine) doEat(ctx context.Context, player *Player, args []string) *
 				continue
 			}
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			room := e.rooms[player.RoomNumber]
+
+			// Run the item's own IFPREVERB EAT script first, same last-chance-hijack
+			// pattern as OPEN/CLOSE/WEAR/LATCH/SELL/APPRAISE (see runItemOwnPreverbHook):
+			// a food item with a scripted reaction to being eaten — like the myrkberry,
+			// which tracks how many you've eaten this hour and makes you sick past a
+			// threshold — needs its own CLEARVERB-gated logic to fire instead of being
+			// silently shadowed by the generic "you finish eating it" flow below. Neither
+			// RunItemScripts (IFVAR only) nor RunVerbScripts (IFVERB only) below ever
+			// reaches a top-level IFPREVERB EAT block on its own.
+			if res := e.runItemOwnPreverbHook(player, room, "EAT", ii); res != nil {
+				return res
+			}
 
 			// Run item scripts FIRST — they may set ITEMVAL3 based on adjective checks
-			room := e.rooms[player.RoomNumber]
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
 				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,

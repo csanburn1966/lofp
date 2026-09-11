@@ -214,6 +214,9 @@ func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You whisper to those close, \"%s\"", text)},
 			RoomBroadcast: []string{roomLine},
+			// roomLine is already anonymized above for a concealed whisperer, so this
+			// opts out of api.go's default choke-point suppression.
+			ConcealedBroadcastOK: true,
 		}
 	}
 
@@ -236,6 +239,9 @@ func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *
 		TargetName:    found.FirstName, // session routing key — must stay the real name even if found is disguised
 		WhisperTarget: found.FirstName,
 		WhisperMsg:    fmt.Sprintf("%s whispers to you, \"%s\"", player.DisplayNameCap(), text),
+		// roomLine is already anonymized above for a concealed whisperer, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
 	}
 }
 
@@ -273,6 +279,9 @@ func (e *GameEngine) doYell(player *Player, args []string, rawInput string) *Com
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You %syell, \"%s\"", adverb, text)},
 		RoomBroadcast: []string{roomLine},
+		// roomLine is already anonymized above for a concealed yeller, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
 	}
 }
 
@@ -583,6 +592,28 @@ func (e *GameEngine) doDisband(player *Player) *CommandResult {
 	}
 }
 
+// doSharedXP handles the SHAREDXP command — only the group leader may toggle it. While
+// active, a kill by any member of the group splits XP across the whole group (see
+// sharedXPRecipients/computeGroupXPShares in combat.go) instead of going solely to
+// whoever landed the kill. Message goes to every current member, not just the leader,
+// since the mode affects everyone's XP going forward.
+func (e *GameEngine) doSharedXP(player *Player) *CommandResult {
+	if !player.IsGroupLeader {
+		return &CommandResult{Messages: []string{"Only the leader of a group can toggle shared experience."}}
+	}
+	player.SharedXP = !player.SharedXP
+	msg := "Your group is no longer sharing experience from combat."
+	if player.SharedXP {
+		msg = "Your group will now share experience from combat."
+	}
+	if e.sendToPlayer != nil {
+		for _, memberName := range player.GroupMembers {
+			e.sendToPlayer(memberName, []string{msg})
+		}
+	}
+	return &CommandResult{Messages: []string{msg}}
+}
+
 // groupMates returns every other online player currently in player's group — the
 // leader and its other followers if player is a follower, or all of player's own
 // followers if player is the leader — excluding player itself. Returns nil if player
@@ -820,24 +851,167 @@ func (e *GameEngine) doWho(player *Player) *CommandResult {
 	return &CommandResult{Messages: msgs}
 }
 
-func (e *GameEngine) doHelp() *CommandResult {
+// helpTopicNames lists the topics HELP <topic> answers, in the original's own order —
+// also the canonical set doHelp's intro text advertises and its "no help on that" error
+// echoes back.
+var helpTopicNames = []string{"combat", "commanding", "death", "movement", "psionics", "spells", "training", "verbs"}
+
+// helpIntro is the exact text HELP with no argument printed in the original game,
+// preserved from a 1996 session capture (original/csanburn/wolf0615.txt) — typo in
+// "just try tying what you want to do!" included, since it's what players actually saw.
+var helpIntro = []string{
+	"You are playing Legends of Future Past(tm)",
+	"(C)1991-1995 Inner Circle Technologies, Inc.",
+	"",
+	"You communicate with the world by typing english sentences. If you want to do something, just try tying what you want to do!  The system understands many verbs. Here are some examples of what you could try:",
+	"",
+	"NORTH            (go north)",
+	"SOUTHWEST        (go southwest)",
+	"INVENTORY        (see what you are carrying)",
+	"LOOK             (view your surroundings)",
+	"GO GATE          (go through a gate)",
+	"CLIMB LADDER     (climb a ladder)",
+	"LOOK UNDER BED   (look at what is under a bed)",
+	"TAKE SWORD       (pick up a sword)",
+	"KILL RAT         (kill a rat)",
+	"",
+	"In your travels, you will encounter not only monsters but other characters being played by people like you!  To say something out loud so someone in the room can hear you, just start your input line with a quote character ('). Example:",
+	"",
+	"You type: 'Hi everyone!",
+	`Other people in room see: Moordread says, "Hi everyone!"`,
+	"",
+	"Some other important commands to know:",
+	"ADVICE -- Get some advice and tips on game play",
+	"ASSIST -- Call for a GameMaster's assistance",
+	"BRIEF -- Turn on brief description mode",
+	"EXPERIENCE -- See your experience and build points",
+	"FATIGUE -- See your fatigue, mana and psi",
+	"FULL -- Turn on full description mode",
+	"HEALTH -- Check your health",
+	"REPORT -- Report a bug or comment to the Legends staff",
+	"STATUS -- See your statistics, skills, etc.",
+	"WHO -- See who else is playing Legends",
+	"",
+	"Good luck!",
+	"",
+	"Help is available on the following topics:",
+	"",
+	"combat",
+	"commanding",
+	"death",
+	"movement",
+	"psionics",
+	"spells",
+	"training",
+	"verbs",
+	"",
+	`To view the help information on any of these topics, simply type "HELP <topic>."`,
+}
+
+// helpTopics holds the per-topic command references HELP <topic> prints. Only
+// "psionics" survives verbatim from an original session capture (see helpIntro's
+// comment) — the rest are reconstructed in the same terse "COMMAND <args>: description"
+// style from the commands actually implemented today, since no capture of the other
+// seven topics survived. Keep this in sync as commands are added, renamed, or retired —
+// stale entries here are worse than none.
+var helpTopics = map[string][]string{
+	"COMBAT": {
+		"Combat related commands:",
+		"",
+		"ATTACK <target>, KILL <target>:  Attack a monster or hostile player",
+		"ADVANCE <target>:                Move to engage a target in combat",
+		"RETREAT:                         Disengage and back away from combat",
+		"FLEE:                            Attempt to run from combat entirely",
+		"TARGET <target>:                 Add a target for a multi-target spell (Chain Lightning, etc.)",
+		"GUARD [target]:                  Protect a player, portal, or item from harm",
+		"BACKSTAB <target>:               A sneak attack from hiding for extra damage",
+		"DISARM <target>:                 Attempt to knock the weapon from an opponent's hand",
+		"BERSERK, DEFENSIVE, OFFENSIVE, WARY, NORMAL:  Set your combat stance",
+		"NOCK/LOAD <weapon>:              Load a ranged weapon before firing it",
+		"SPECIALIZE <weapon type>:        Focus your training on a specific weapon type",
+	},
+	"COMMANDING": {
+		"Commanding related commands:",
+		"",
+		"FOLLOW <person>:                 Join a group by following its leader",
+		"LEAVE:                           Stop following your group's leader",
+		"DISBAND:                         (leader) Disband your group, releasing all members",
+		"SPLIT <amount> <gold/silver/copper>:  Divide coin evenly among your group",
+		"SHAREDXP:                        (leader) Toggle whether your group splits combat experience",
+		"COMMAND <creature> <action>:     Direct a summoned or bonded creature",
+	},
+	"DEATH": {
+		"Death related commands:",
+		"",
+		"SUBMIT:                          Yield in combat, signaling you won't fight back",
+		"UNSUBMIT:                        Stop submitting",
+		"TEND <person>:                   Attempt to stabilize a dying or badly hurt player",
+		"CARRY <person>:                  Pick up and carry an incapacitated or submitting player",
+		"RELEASE:                         Let go of the person you're carrying",
+		"PUTDOWN:                         Set down the person you're carrying",
+	},
+	"MOVEMENT": {
+		"Movement related commands:",
+		"",
+		"N, S, E, W, NE, NW, SE, SW, UP, DOWN, OUT:  Move in a compass direction",
+		"GO <exit/portal>:                Move through a named exit, door, or portal",
+		"CLIMB <object>:                  Climb up or through something",
+		"ASCEND, DESCEND:                 Move up or down where flight or levitation applies",
+		"FLY:                             Take to the air, if you have the means",
+		"LAND:                            Come back down to the ground",
+		"HIDE:                            Attempt to conceal yourself",
+		"SNEAK <direction>:               Move stealthily without announcing your passing",
+		"SEARCH:                          Look for hidden exits, items, or passages",
+		"DIG:                             Dig at the ground, if you're carrying a tool for it",
+	},
+	"PSIONICS": {
+		"Psionics related commands:",
+		"",
+		"PSI [Discipline#]: Show current psi statistics, or ready a discipline",
+		"PROJECT <target>:  Direct a psionic discipline at a creature",
+	},
+	"SPELLS": {
+		"Spells related commands:",
+		"",
+		"CAST <spell> [target]:           Cast a spell you've already prepared",
+		"PREPARE <spell>, INVOKE <spell>: Ready a spell for casting",
+		"CHANT <words>:                   Speak a ritual phrase a spell or script is listening for",
+		"MASTER <spell>:                  Attempt to master a spell you already know",
+		"SPELL [number]:                  Show your spellbook, or a spell's details",
+	},
+	"TRAINING": {
+		"Training related commands:",
+		"",
+		"TRAIN:                           Spend build points on skills, at a guild that teaches them",
+		"LEARN <spell/skill>:             Learn a new spell or skill from a book, scroll, or trainer",
+		"TEACH <person> <spell/skill>:    Teach a spell or skill you know to someone else",
+		"UNLEARN <skill>:                 Give up a skill to reclaim its build points",
+	},
+	"VERBS": {
+		"Verbs related commands:",
+		"",
+		"The system understands many general-purpose verbs beyond the ones covered under the",
+		"other topics. Some of the more common ones:",
+		"",
+		"GET/TAKE, DROP, PUT <item> IN <container>, GIVE <item> TO <person>",
+		"OPEN, CLOSE, LOOK, EXAMINE, READ",
+		"EAT, DRINK, WEAR, REMOVE, WIELD, UNWIELD",
+		"TOUCH, PUSH, PULL, TURN, RUB, TAP, FLIP",
+		"LATCH, UNLATCH, MARK, SKIN, APPRAISE, USE",
+	},
+}
+
+func (e *GameEngine) doHelp(args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{Messages: helpIntro}
+	}
+	topic := strings.ToUpper(args[0])
+	if msgs, ok := helpTopics[topic]; ok {
+		return &CommandResult{Messages: msgs}
+	}
 	return &CommandResult{Messages: []string{
-		"=== Legends of Future Past - Commands ===",
-		"Movement: N, S, E, W, NE, NW, SE, SW, UP, DOWN, OUT, GO <portal>",
-		"Looking: LOOK, LOOK <item>, LOOK IN/ON/UNDER <item>, EXAMINE <item>",
-		"Items: GET <item>, DROP <item>, INVENTORY, WIELD <weapon>, UNWIELD [item]",
-		"Wear: WEAR <item>, REMOVE <item>",
-		"Containers: OPEN <item>, CLOSE <item>, LOOK IN <item>",
-		"           GET <item> FROM <container>, GET ALL FROM <container>",
-		"           PUT <item> IN <container>, DUMP <container>",
-		"           GET ALL, GET ALL <noun>",
-		"Selling:   SELL <item>, SELL ALL <noun>",
-		"Info: STATUS, HEALTH, FATIGUE, WEALTH, SKILLS, WHO, TIME, WEATHER",
-		"Combat: ATTACK <target>, ADVANCE <target>, RETREAT",
-		"Social: '<message> (say), ACT <action>, WHISPER <person> <msg>",
-		"Position: SIT, STAND, KNEEL, LAY",
-		"Settings: BRIEF, FULL",
-		"System: HELP, ADVICE, QUIT",
+		fmt.Sprintf("No help is available on \"%s\".", args[0]),
+		"Help is available on the following topics: " + strings.Join(helpTopicNames, ", ") + ".",
 	}}
 }
 

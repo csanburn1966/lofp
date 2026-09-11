@@ -110,6 +110,7 @@ func init() {
 		{ID: 230, Name: "Disjunction", School: "Enchantment", Level: 21, ManaCost: 21, CastTime: 4, Effect: "utility"},
 		{ID: 231, Name: "Imprison", School: "Enchantment", Level: 19, ManaCost: 19, CastTime: 4, Effect: "utility"},
 		{ID: 232, Name: "Mist Form", School: "Enchantment", Level: 20, ManaCost: 20, CastTime: 4, Effect: "utility"},
+		{ID: 233, Name: "Disenchant", School: "Enchantment", Level: 27, ManaCost: 27, CastTime: 4, Effect: "utility"}, // new — not part of the original 1990s data; undoes Enchantment I/II/III (202/203/204)
 		{ID: 243, Name: "Charge Wand", School: "Enchantment", Level: 26, ManaCost: 26, CastTime: 5, Effect: "utility"},
 		{ID: 244, Name: "Enchant an Item", School: "Enchantment", Level: 31, ManaCost: 31, CastTime: 5, Effect: "utility"},
 		{ID: 245, Name: "Slime Form", School: "Enchantment", Level: 13, ManaCost: 13, CastTime: 4, Effect: "utility"},
@@ -597,6 +598,14 @@ func isUndeadOnlySpell(spellID int) bool {
 // shemri.txt "PRE 121 WITH MY MOON" and PreparedMoonstoneBonus.
 const moonstoneReagentArch = 113
 
+// wormScaleReagentArch is the item archetype for a worm scale (ITEM1.SCR INUMBER 507,
+// "scale" — SKIN + REAGENT, dropped by the giant "worm" monster with its SKINADJ
+// "worm" auto-applied). Optional catalyst reagent for Siryx's Terrible Tentacles
+// (134) only — see PreparedWormScaleBonus. New pairing, not part of the original
+// 1990s data (the item and its "worm" skin source already existed; only the spell
+// association is new).
+const wormScaleReagentArch = 507
+
 // spellReagentArch returns the required inventory item archetype for spells that need a reagent.
 // Returns 0 if no reagent is required.
 func spellReagentArch(spellID int) int {
@@ -605,6 +614,8 @@ func spellReagentArch(spellID int) int {
 		return 520 // spider eye
 	case 204:
 		return 526 // imp toe
+	case 233:
+		return 525 // spriggan finger (skinned from spriggan, MONSTERS.SCR MNUMBER 104)
 	case 106:
 		return 109 // garnet for fire elemental
 	case 107:
@@ -632,6 +643,8 @@ func spellReagentName(spellID int) string {
 		return "a spider eye"
 	case 204:
 		return "an imp toe"
+	case 233:
+		return "a spriggan finger"
 	case 106:
 		return "a garnet"
 	case 107:
@@ -652,44 +665,30 @@ func spellReagentName(spellID int) string {
 	return ""
 }
 
-// spellReagentBaseName returns the bare noun (no article) for the reagent message.
-func spellReagentBaseName(spellID int) string {
-	switch spellID {
-	case 203:
-		return "spider eye"
-	case 204:
-		return "imp toe"
-	case 106:
-		return "garnet"
-	case 107:
-		return "opal"
-	case 108:
-		return "aquamarine"
-	case 109:
-		return "diamond"
-	case 123:
-		return "tourmaline"
-	case 305:
-		return "mandrake root"
-	case 353:
-		return "ghoul dust"
-	case 243:
-		return "mandrake root"
-	}
-	return "reagent"
-}
-
-// spellReagentConsumeMessage returns the message shown when a spell's reagent is
-// consumed during PREPARE. Most spells share the generic wording; a few have
-// their own flavor text.
+// spellReagentConsumeMessage returns the message shown to the caster when a
+// spell's reagent is consumed — during PREPARE for spells in
+// spellConsumesReagentAtPrepare, or at CAST time for the rest (spider eye,
+// imp toe, spriggan finger, mandrake root for Charge Wand — see each cast*
+// function's own reagent-consumption block). Matches the original's phrasing
+// (original/csanburn/chan0409.txt: "A worm scale turns to dust as it is
+// absorbed by the magic of your spell!"). Most spells share that generic
+// wording; ghoul dust has its own flavor text since "the ghoul dust turns to
+// dust" reads oddly.
 func spellReagentConsumeMessage(spellID int) string {
-	if spellID == 305 {
-		return "Some mandrake root turns to dust as it is absorbed by the magic of your spell!"
-	}
 	if spellID == 353 {
 		return "The ghoul dust swirls away into nothingness as it is consumed by the spell!"
 	}
-	return fmt.Sprintf("The %s turns to dust as it is consumed by the spell.", spellReagentBaseName(spellID))
+	return fmt.Sprintf("%s turns to dust as it is absorbed by the magic of your spell!", capitalize(spellReagentName(spellID)))
+}
+
+// spellReagentConsumeMessageRoom is spellReagentConsumeMessage's third-person
+// counterpart, shown to everyone else in the room — casterName should be the
+// caster's DisplayName (real name, or their apparent one if disguised/hidden).
+func spellReagentConsumeMessageRoom(spellID int, casterName string) string {
+	if spellID == 353 {
+		return fmt.Sprintf("The ghoul dust swirls away into nothingness as it is consumed by %s's spell!", casterName)
+	}
+	return fmt.Sprintf("%s turns to dust as it is absorbed by the magic of %s's spell!", capitalize(spellReagentName(spellID)), casterName)
 }
 
 // spellConsumesReagentAtPrepare returns true for spells whose reagent is consumed during PREPARE
@@ -772,6 +771,7 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s requires %s, which you don't have.", spell.Name, spellReagentName(spell.ID))}}
 		}
 		player.PreparedMoonstoneBonus = false
+		player.PreparedWormScaleBonus = false
 	} else {
 		player.PreparedSpellReagentArch = 0
 		// Moonstone: optional catalyst reagent for any spell with no mandatory reagent
@@ -779,18 +779,38 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 		// see shemri.txt "PRE 121 WITH MY MOON" / "A moonstone turns to dust as it is
 		// absorbed by the magic of your spell!"
 		player.PreparedMoonstoneBonus = false
+		player.PreparedWormScaleBonus = false
 		if reagentArg != "" {
 			reagentArg = strings.ToLower(reagentArg)
-			for i, ii := range player.Inventory {
-				def := e.items[ii.Archetype]
-				if def == nil || ii.Archetype != moonstoneReagentArch {
-					continue
+			// Worm scale: optional catalyst for Tentacles (134) only — see
+			// PreparedWormScaleBonus. Checked before the universal moonstone catalyst
+			// since it's the more specific match.
+			if spell.ID == 134 {
+				for i, ii := range player.Inventory {
+					def := e.items[ii.Archetype]
+					if def == nil || ii.Archetype != wormScaleReagentArch {
+						continue
+					}
+					noun := e.getItemNounName(def)
+					if matchesTarget(noun, reagentArg, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+						player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+						player.PreparedWormScaleBonus = true
+						break
+					}
 				}
-				noun := e.getItemNounName(def)
-				if matchesTarget(noun, reagentArg, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
-					player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
-					player.PreparedMoonstoneBonus = true
-					break
+			}
+			if !player.PreparedWormScaleBonus {
+				for i, ii := range player.Inventory {
+					def := e.items[ii.Archetype]
+					if def == nil || ii.Archetype != moonstoneReagentArch {
+						continue
+					}
+					noun := e.getItemNounName(def)
+					if matchesTarget(noun, reagentArg, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+						player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+						player.PreparedMoonstoneBonus = true
+						break
+					}
 				}
 			}
 		}
@@ -801,12 +821,18 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 	prepRT := effectiveCastTime(spell, mastery, player)
 	player.RoundTimeExpiry = time.Now().Add(time.Duration(prepRT) * time.Second)
 
-	var prepMsgs []string
+	var prepMsgs, roomMsgs []string
 	if spellConsumesReagentAtPrepare(spell.ID) {
 		prepMsgs = append(prepMsgs, spellReagentConsumeMessage(spell.ID))
+		roomMsgs = append(roomMsgs, spellReagentConsumeMessageRoom(spell.ID, player.DisplayName()))
 	}
 	if player.PreparedMoonstoneBonus {
 		prepMsgs = append(prepMsgs, "A moonstone turns to dust as it is absorbed by the magic of your spell!")
+		roomMsgs = append(roomMsgs, fmt.Sprintf("A moonstone turns to dust as it is absorbed by the magic of %s's spell!", player.DisplayName()))
+	}
+	if player.PreparedWormScaleBonus {
+		prepMsgs = append(prepMsgs, "A worm scale turns to dust as it is absorbed by the magic of your spell!")
+		roomMsgs = append(roomMsgs, fmt.Sprintf("A worm scale turns to dust as it is absorbed by the magic of %s's spell!", player.DisplayName()))
 	}
 	prepMsgs = append(prepMsgs, fmt.Sprintf("You prepare the %s spell.", spell.Name))
 	prepMsgs = append(prepMsgs, fmt.Sprintf("[Round: %d sec]", prepRT))
@@ -818,9 +844,10 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 	if player.Hidden || player.Invisible {
 		roomMsg = "Something prepares a spell."
 	}
+	roomMsgs = append(roomMsgs, roomMsg)
 	return &CommandResult{
 		Messages:      prepMsgs,
-		RoomBroadcast: []string{roomMsg},
+		RoomBroadcast: roomMsgs,
 	}
 }
 
@@ -1110,6 +1137,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castDispelLesserMagic(ctx, player, args)
 		case 243: // Charge Wand
 			result = e.castChargeWandSpell(player, spell, args)
+		case 233: // Disenchant
+			result = e.castDisenchantSpell(player, spell, args)
 		case 227, 322: // Imprisonment Rune, Death Scythe — sigil spells
 			result = e.castSigilSpell(player, spell, args)
 		case 408: // Truename
@@ -1286,12 +1315,18 @@ func elementalKillFlavor(dmgType string) string {
 // MONSTERS.SCR is a rating on the same scale as ATTACK1/DEFENSE (tens to low
 // thousands), not a 0-100 percentage — so it's weighed against the caster's
 // own spellcraft-based rating using the same rating-vs-rating shape as
-// calcToHit (combat.go), rather than compared directly to a 0-99 roll.
-func magicResistRoll(player *Player, monsterResist int) bool {
+// calcToHit (combat.go), rather than compared directly to a 0-99 roll. bonus
+// is an optional flat addition to the caster's rating (e.g. the worm scale
+// catalyst's +25 for Tentacles, see PreparedWormScaleBonus) — omit it for the
+// plain roll.
+func magicResistRoll(player *Player, monsterResist int, bonus ...int) bool {
 	if monsterResist <= 0 {
 		return false
 	}
 	casterRating := 50 + player.Skills[23]*5 + player.Empathy/5 // Spellcraft skill + Empathy, mirrors playerAttackRating's shape
+	if len(bonus) > 0 {
+		casterRating += bonus[0]
+	}
 	return rand.Intn(100) < calcToHit(casterRating, monsterResist)
 }
 
@@ -1407,6 +1442,17 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		dmg = dmg * 2
 	}
 
+	// Body Destruction I/II/III (313/314/315) call upon the forces of death — the dark
+	// mirror of Body Restoration's forces-of-life blessing (see castHealSpell). Same
+	// 1-in-100 throttle: these are routine damage spells cast constantly, and an
+	// unconditional shift would tank a caster's alignment far faster than the original
+	// 1990s game did.
+	isBodyDestruction := spell.ID == 313 || spell.ID == 314 || spell.ID == 315
+	alignmentCursed := isBodyDestruction && rand.Intn(100) == 0
+	if alignmentCursed {
+		player.Alignment--
+	}
+
 	// Generic spell flavor text based on damage type. The caster sees a
 	// second-person ("You...") version; onlookers see a third-person version.
 	flavorSelf := fmt.Sprintf("You form a bolt of energy and hurl it at %s%s!", article, name)
@@ -1474,6 +1520,9 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 	roomMsgs = append(roomMsgs, gestureRoom)
 	msgs = append(msgs, flavorSelf)
 	roomMsgs = append(roomMsgs, flavorRoom)
+	if alignmentCursed {
+		msgs = append(msgs, "You sense the displeasure of the gods as you call upon the forces of death.")
+	}
 
 	// Onlookers get a vague damage tier ("Awesome damage.") rather than the exact
 	// severity/body-part/number breakdown the caster sees — same convention as
@@ -1498,7 +1547,7 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 			msgs = append(msgs, "He collapses, dead.")
 			roomMsgs = append(roomMsgs, fmt.Sprintf("A %s collapses, dead!", name))
 		}
-		e.handleMonsterDeath([]*Player{player}, inst, def)
+		e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 	} else {
 		msgs = append(msgs, flavorDmg)
 		roomMsgs = append(roomMsgs, roomDmgLine)
@@ -1589,7 +1638,7 @@ func (e *GameEngine) castMeteorSpell(player *Player, spell *SpellDef, inst *Mons
 			msgs = append(msgs, "He collapses, dead.")
 			roomMsgs = append(roomMsgs, fmt.Sprintf("A %s collapses, dead!", name))
 		}
-		e.handleMonsterDeath([]*Player{player}, inst, def)
+		e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 	} else {
 		if heatDmg > 0 {
 			burnLine := fmt.Sprintf("%s burn to %s. [%d Damage]", damageSeverity(heatDmg, inst.MaxHP), randomBodyPart(def.BodyType), heatDmg)
@@ -1720,7 +1769,7 @@ func (e *GameEngine) castChainLightningSpell(player *Player, spell *SpellDef, ar
 				roomMsgs = append(roomMsgs, fmt.Sprintf("A %s collapses, dead!", name))
 			}
 			instCopy := en.Inst
-			e.handleMonsterDeath([]*Player{player}, &instCopy, en.Def)
+			e.handleMonsterDeath(e.sharedXPRecipients(player), &instCopy, en.Def)
 			player.Targets = removeTargetID(player.Targets, en.Inst.ID)
 		}
 
@@ -1792,7 +1841,7 @@ func (e *GameEngine) castFlamingArrowsSpell(player *Player, spell *SpellDef, arg
 				roomMsgs = append(roomMsgs, fmt.Sprintf("A %s collapses, dead!", name))
 			}
 			instCopy := en.Inst
-			e.handleMonsterDeath([]*Player{player}, &instCopy, en.Def)
+			e.handleMonsterDeath(e.sharedXPRecipients(player), &instCopy, en.Def)
 			player.Targets = removeTargetID(player.Targets, en.Inst.ID)
 		} else {
 			msgs = append(msgs, dmgLine)
@@ -1809,6 +1858,11 @@ func (e *GameEngine) castFlamingArrowsSpell(player *Player, spell *SpellDef, arg
 // been built), each taking periodic crushing damage from tentacleDamageTick
 // until it dies, breaks free, or the spell expires. Unlike Web, there is no
 // body-point limit on what it can immobilize.
+//
+// PREPARE 134 WITH <worm scale> is an optional catalyst (see
+// PreparedWormScaleBonus) — new, not part of the original 1990s data — that
+// grants +25 to the resist-roll rating against every target below, same
+// magnitude as moonstone's universal +25 CAST-success bonus.
 func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
 	entries := e.resolveTargets(player)
 	if len(entries) == 0 {
@@ -1833,6 +1887,15 @@ func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []
 	startName := strings.ToLower(FormatMonsterName(entries[startIdx].Def, e.monAdjs))
 	startArticle := articleFor(startName, entries[startIdx].Def.Unique)
 
+	// Worm scale (see PreparedWormScaleBonus): +25 to the resist-roll rating against
+	// every target below, same magnitude as moonstone's +25 CAST-success bonus. A
+	// valid target is already confirmed above, so this can't be spent on a fizzled cast.
+	wormScaleBonus := 0
+	if player.PreparedWormScaleBonus {
+		wormScaleBonus = 25
+	}
+	player.PreparedWormScaleBonus = false
+
 	msgs := []string{
 		fmt.Sprintf("You gesture at %s%s.", startArticle, startName),
 		"Black tentacles burst forth from the ground!",
@@ -1852,7 +1915,7 @@ func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []
 			roomMsgs = append(roomMsgs, line)
 			continue
 		}
-		if magicResistRoll(player, en.Def.MagicResist) {
+		if magicResistRoll(player, en.Def.MagicResist, wormScaleBonus) {
 			line := fmt.Sprintf("%s%s resists the tentacles!", capArticle(article), name)
 			msgs = append(msgs, line)
 			roomMsgs = append(roomMsgs, line)
@@ -1910,8 +1973,14 @@ func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *S
 	// Body Restoration on a living target calls upon the forces of life — nudges the
 	// caster's alignment toward good, same ±1 step as a monster kill (combat.go), with
 	// the caster-only flavor line confirmed from original session captures (csanburn/*.txt).
+	// Only a 1-in-100 chance per cast, not every cast — Body Restoration gets spammed
+	// constantly as a routine healing spell, and an unconditional +1 let a caster reach
+	// a white aura in a tiny fraction of the effort it took in the original 1990s game.
+	// Breath of Life (castBreathOfLife) is the "big" version of this and stays
+	// unconditional at +2 — reviving the dead is rare enough on its own.
 	isBodyRestoration := spell.ID == 316 || spell.ID == 317 || spell.ID == 318
-	if isBodyRestoration {
+	alignmentBlessed := isBodyRestoration && rand.Intn(100) == 0
+	if alignmentBlessed {
 		player.Alignment++
 	}
 
@@ -1955,7 +2024,7 @@ func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *S
 		if wakeMsg != "" {
 			msgs = append(msgs, wakeMsg)
 		}
-		if isBodyRestoration {
+		if alignmentBlessed {
 			msgs = append(msgs, "You sense the pleasure of the gods as you call upon the forces of life.")
 		}
 		return &CommandResult{
@@ -1969,7 +2038,7 @@ func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *S
 		targetMsgs = append(targetMsgs, wakeMsg)
 	}
 	casterMsgs := []string{fmt.Sprintf("You gesture and cast %s on %s, healing %d body points.", spell.Name, targetName, amount)}
-	if isBodyRestoration {
+	if alignmentBlessed {
 		casterMsgs = append(casterMsgs, "You sense the pleasure of the gods as you call upon the forces of life.")
 	}
 	return &CommandResult{
@@ -3922,6 +3991,7 @@ func (e *GameEngine) castEnchantmentSpell(player *Player, spell *SpellDef, args 
 	// set when the player self-prepared the spell with a reagent in hand; spells
 	// chanted from a scroll (or otherwise prepared without going through PREPARE)
 	// leave it at 0, so no reagent is required in that case.
+	var reagentMsg, reagentRoomMsg string
 	if player.PreparedSpellReagentArch != 0 {
 		reqArch := player.PreparedSpellReagentArch
 		consumed := false
@@ -3937,6 +4007,8 @@ func (e *GameEngine) castEnchantmentSpell(player *Player, spell *SpellDef, args 
 			return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
 		}
 		player.PreparedSpellReagentArch = 0
+		reagentMsg = spellReagentConsumeMessage(spell.ID)
+		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
 	}
 
 	type candidate struct {
@@ -3997,12 +4069,133 @@ func (e *GameEngine) castEnchantmentSpell(player *Player, spell *SpellDef, args 
 			c.item.Adj3 = adjID
 		}
 		newName := e.formatItemName(c.def, c.item.Adj1, c.item.Adj2, c.item.Adj3, c.item.Tail)
+		msgs := []string{fmt.Sprintf("A soft glow surrounds %s and then sinks into it.", oldName)}
+		roomMsgs := []string{fmt.Sprintf("A soft glow surrounds an item %s is holding.", player.DisplayName())}
+		if reagentMsg != "" {
+			msgs = append(msgs, reagentMsg)
+			roomMsgs = append(roomMsgs, reagentRoomMsg)
+		}
+		msgs = append(msgs, fmt.Sprintf("It is now %s!", newName))
 		return &CommandResult{
-			Messages: []string{
-				fmt.Sprintf("A soft glow surrounds %s and then sinks into it.", oldName),
-				fmt.Sprintf("It is now %s!", newName),
-			},
-			RoomBroadcast: []string{fmt.Sprintf("A soft glow surrounds an item %s is holding.", player.DisplayName())},
+			Messages:      msgs,
+			RoomBroadcast: roomMsgs,
+		}
+	}
+	return &CommandResult{Messages: []string{"You don't have a weapon, armor, or shield matching that."}}
+}
+
+// disenchantAdjIDs mirrors adjIDs in castEnchantmentSpell — the three adjectives
+// (523 enchanted, 524 ensorcelled, 525 eldritch) that mark an item as having
+// been enchanted by spells 202/203/204.
+var disenchantAdjIDs = map[int]bool{523: true, 524: true, 525: true}
+
+// castDisenchantSpell handles Disenchant (233) — new, not part of the original
+// 1990s data. Undoes whichever of Enchantment I/II/III (202/203/204) was cast
+// on a weapon/armor/shield: clears the enchanted/ensorcelled/eldritch adjective
+// and zeroes the item's Val2 magic bonus. Requires a spriggan finger reagent
+// (see spellReagentArch), consumed here at cast time — mirrors castEnchantmentSpell.
+//
+// Primary match is by adjective (Adj1/2/3 == 523/524/525). Some enchanted items
+// may not carry that tag at all — castEnchantmentSpell only writes it into a free
+// Adj slot, so an item whose three adjective slots were already full when it was
+// enchanted (e.g. a crafted item with a material + variety adjective already
+// occupying Adj1/Adj3) kept its existing adjectives and got only the Val2 bonus.
+// For those, fall back to Val2 alone as proof of enchantment — the exact bonus
+// value (10/20/30 weapon, 5/10/15 armor/shield) unambiguously identifies which
+// spell it came from, but since there's no adjective to remove in that case,
+// there's nothing to do beyond stripping Val2.
+func (e *GameEngine) castDisenchantSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{Messages: []string{"Disenchant what? Specify a weapon or armor in your possession."}, TargetNotFound: true}
+	}
+	target := strings.ToLower(strings.Join(args, " "))
+	target, skip := parseOrdinal(target)
+
+	// Consume the reagent verified at PREPARE time (mirrors castEnchantmentSpell).
+	var reagentMsg, reagentRoomMsg string
+	if player.PreparedSpellReagentArch != 0 {
+		reqArch := player.PreparedSpellReagentArch
+		consumed := false
+		for i, ii := range player.Inventory {
+			if ii.Archetype == reqArch {
+				player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+				consumed = true
+				break
+			}
+		}
+		if !consumed {
+			player.PreparedSpellReagentArch = 0
+			return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
+		}
+		player.PreparedSpellReagentArch = 0
+		reagentMsg = spellReagentConsumeMessage(spell.ID)
+		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
+	}
+
+	type candidate struct {
+		item *InventoryItem
+		def  *gameworld.ItemDef
+	}
+	var candidates []candidate
+	for i := range player.Inventory {
+		def := e.items[player.Inventory[i].Archetype]
+		if def != nil && (isWeapon(def.Type) || def.Type == "ARMOR" || def.Type == "SHIELD") {
+			candidates = append(candidates, candidate{&player.Inventory[i], def})
+		}
+	}
+	for i := range player.Worn {
+		def := e.items[player.Worn[i].Archetype]
+		if def != nil && def.Type == "ARMOR" {
+			candidates = append(candidates, candidate{&player.Worn[i], def})
+		}
+	}
+	if player.Wielded != nil {
+		def := e.items[player.Wielded.Archetype]
+		if def != nil && isWeapon(def.Type) {
+			candidates = append(candidates, candidate{player.Wielded, def})
+		}
+	}
+	if player.OffHand != nil {
+		def := e.items[player.OffHand.Archetype]
+		if def != nil && (def.Type == "SHIELD" || isWeapon(def.Type)) {
+			candidates = append(candidates, candidate{player.OffHand, def})
+		}
+	}
+
+	for _, c := range candidates {
+		name := e.getItemNounName(c.def)
+		if !matchesTargetOrdinal(name, target, &skip, e.getAdjName(c.item.Adj1), e.getAdjName(c.item.Adj2), e.getAdjName(c.item.Adj3)) {
+			continue
+		}
+		if c.item.Val2 <= 0 {
+			return &CommandResult{Messages: []string{"That item bears no magical enchantment to remove."}}
+		}
+		oldName := e.formatItemName(c.def, c.item.Adj1, c.item.Adj2, c.item.Adj3, c.item.Tail)
+
+		switch {
+		case disenchantAdjIDs[c.item.Adj1]:
+			c.item.Adj1 = 0
+		case disenchantAdjIDs[c.item.Adj2]:
+			c.item.Adj2 = 0
+		case disenchantAdjIDs[c.item.Adj3]:
+			c.item.Adj3 = 0
+		}
+		// Fall-through for the no-adjective-found case is intentional: Val2 alone
+		// already proved it was enchanted, so it's still stripped below even though
+		// none of the three switch cases matched.
+		c.item.Val2 = 0
+
+		newName := e.formatItemName(c.def, c.item.Adj1, c.item.Adj2, c.item.Adj3, c.item.Tail)
+		msgs := []string{fmt.Sprintf("A shimmering aura fades from %s.", oldName)}
+		roomMsgs := []string{fmt.Sprintf("A shimmering aura fades from an item %s is holding.", player.DisplayName())}
+		if reagentMsg != "" {
+			msgs = append(msgs, reagentMsg)
+			roomMsgs = append(roomMsgs, reagentRoomMsg)
+		}
+		msgs = append(msgs, fmt.Sprintf("It is now %s.", newName))
+		return &CommandResult{
+			Messages:      msgs,
+			RoomBroadcast: roomMsgs,
 		}
 	}
 	return &CommandResult{Messages: []string{"You don't have a weapon, armor, or shield matching that."}}
@@ -4024,6 +4217,7 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 	}
 
 	// Consume the reagent verified at PREPARE time (mirrors castEnchantmentSpell).
+	var reagentMsg, reagentRoomMsg string
 	if player.PreparedSpellReagentArch != 0 {
 		reqArch := player.PreparedSpellReagentArch
 		consumed := false
@@ -4039,6 +4233,8 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 			return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
 		}
 		player.PreparedSpellReagentArch = 0
+		reagentMsg = spellReagentConsumeMessage(spell.ID)
+		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
 	}
 
 	item, def := e.findMagicItemTarget(player, strings.Join(args, " "), false)
@@ -4060,9 +4256,15 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 	player.Mana = 0
 	item.Val2 += charges
 
+	msgs := []string{fmt.Sprintf("You grasp %s tightly and your hands are surrounded by a bright blue glow that flows into %s and you are left exhausted.", itemName, itemName)}
+	roomMsgs := []string{fmt.Sprintf("%s grasps %s tightly and %s hands are surrounded by a bright blue glow that flows into %s, leaving them looking exhausted.", player.DisplayNameCap(), itemName, player.Possessive(), itemName)}
+	if reagentMsg != "" {
+		msgs = append(msgs, reagentMsg)
+		roomMsgs = append(roomMsgs, reagentRoomMsg)
+	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You grasp %s tightly and your hands are surrounded by a bright blue glow that flows into %s and you are left exhausted.", itemName, itemName)},
-		RoomBroadcast: []string{fmt.Sprintf("%s grasps %s tightly and %s hands are surrounded by a bright blue glow that flows into %s, leaving them looking exhausted.", player.DisplayNameCap(), itemName, player.Possessive(), itemName)},
+		Messages:      msgs,
+		RoomBroadcast: roomMsgs,
 	}
 }
 

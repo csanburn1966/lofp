@@ -987,6 +987,7 @@ func (e *GameEngine) doChant(ctx context.Context, player *Player, args []string)
 		player.PreparedSpell = spellNum
 		player.PreparedSpellReagentArch = 0 // scroll casting never requires a reagent
 		player.PreparedMoonstoneBonus = false
+		player.PreparedWormScaleBonus = false
 		scrollRT := applyRoundTime(player, 3)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(scrollRT) * time.Second)
 		e.SavePlayer(ctx, player)
@@ -1179,6 +1180,10 @@ func (e *GameEngine) doHide(ctx context.Context, player *Player) *CommandResult 
 	return &CommandResult{
 		Messages:      []string{"You slip into hiding."},
 		RoomBroadcast: []string{fmt.Sprintf("%s fades into the shadows.", player.FirstName)},
+		// Player.Hidden is already true by the time this reaches api.go's
+		// concealed-broadcast choke point, which would otherwise suppress this
+		// exact line — the one announcing that they just went into hiding.
+		ConcealedBroadcastOK: true,
 	}
 }
 

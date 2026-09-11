@@ -658,6 +658,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			result := &CommandResult{
 				Messages:      []string{fmt.Sprintf("You %s, \"%s\"", player.SpeechAdverb, msg)},
 				RoomBroadcast: []string{roomLine},
+				// roomLine is already anonymized above for a concealed speaker, so this
+				// opts out of api.go's default choke-point suppression rather than
+				// having the whole line (including the "Something says" fallback) dropped.
+				ConcealedBroadcastOK: true,
 			}
 			// Run IFSAY scripts
 			room := e.rooms[player.RoomNumber]
@@ -697,6 +701,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		result := &CommandResult{
 			Messages:      []string{fmt.Sprintf("You %s, \"%s\"", verb, msg)},
 			RoomBroadcast: []string{roomLine},
+			// roomLine is already anonymized above for a concealed speaker, so this
+			// opts out of api.go's default choke-point suppression rather than
+			// having the whole line (including the "Something says" fallback) dropped.
+			ConcealedBroadcastOK: true,
 		}
 		// Run IFSAY scripts
 		room := e.rooms[player.RoomNumber]
@@ -939,6 +947,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "CLOSE":
 		return e.doClose(player, args)
 	case "SIT":
+		if player.Position == 4 {
+			return &CommandResult{Messages: []string{"You are flying and have nothing to sit on! Type LAND first."}}
+		}
 		if player.Position == 1 {
 			return &CommandResult{Messages: []string{"You are already sitting."}}
 		}
@@ -949,12 +960,18 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 		return e.doPositionWithScripts(ctx, player, verb, "You sit down.", fmt.Sprintf("%s sits down.", player.DisplayNameCap()))
 	case "STAND":
+		if player.Position == 4 {
+			return &CommandResult{Messages: []string{"You are flying! Type LAND first."}}
+		}
 		if player.Position == 0 {
 			return &CommandResult{Messages: []string{"You are already standing."}}
 		}
 		player.Position = 0
 		return e.doPositionWithScripts(ctx, player, verb, "You stand up.", fmt.Sprintf("%s stands up.", player.DisplayNameCap()))
 	case "KNEEL":
+		if player.Position == 4 {
+			return &CommandResult{Messages: []string{"You are flying and have nothing to kneel on! Type LAND first."}}
+		}
 		if player.Position == 3 {
 			return &CommandResult{Messages: []string{"You are already kneeling."}}
 		}
@@ -963,6 +980,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "LAY":
 		if len(args) > 0 {
 			return e.doLayCarried(ctx, player, args)
+		}
+		if player.Position == 4 {
+			return &CommandResult{Messages: []string{"You are flying and have nothing to lie on! Type LAND first."}}
 		}
 		if player.Position == 2 {
 			return &CommandResult{Messages: []string{"You are already lying down."}}
@@ -1043,7 +1063,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		return &CommandResult{Messages: []string{"You fade from the Shattered Realms..."}, Quit: true,
 			GlobalBroadcast: []string{fmt.Sprintf("** %s has just left the Realms.", player.DisplayNameCap())}}
 	case "HELP":
-		return e.doHelp()
+		return e.doHelp(args)
 	case "ADVICE":
 		if len(args) > 0 {
 			switch strings.ToUpper(args[0]) {
@@ -1333,7 +1353,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			return result
 		}
 		return e.processEmote(player, verb, args)
-	case "PULL", "PUSH", "TOUCH", "DIG", "USE", "THUMP":
+	case "PULL", "PUSH", "TWIST", "TOUCH", "DIG", "USE", "THUMP":
 		result := e.doItemInteraction(ctx, player, verb, args)
 		// If item interaction found nothing, fall back to emote for verbs that have emote entries
 		if result != nil && len(result.Messages) > 0 && result.Messages[0] != "You don't see that here." {
@@ -1518,7 +1538,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		e.SavePlayer(ctx, player)
 		return &CommandResult{Messages: []string{"Prompt indicators off."}}
 	case "VERSION", "NEWS", "NOTES":
-		return &CommandResult{Messages: []string{"Legends of Future Past v12.4.0"}}
+		return &CommandResult{Messages: []string{"Legends of Future Past v12.7.0"}}
 	case "CREDITS":
 		return &CommandResult{Messages: []string{
 			"",
@@ -1806,6 +1826,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		return e.doLeave(player)
 	case "DISBAND":
 		return e.doDisband(player)
+	case "SHAREDXP":
+		return e.doSharedXP(player)
 	case "TEND":
 		return e.doTend(ctx, player, args)
 	case "BREAK":
@@ -1896,7 +1918,7 @@ var allVerbs = []string{
 	"OPEN", "CLOSE", "SIT", "STAND", "KNEEL", "LAY",
 	"BRIEF", "FULL", "PROMPT", "WHO", "SKILLS", "WEALTH",
 	"QUIT", "HELP", "ADVICE", "ASSIST", "ANSWER", "ACT", "EMOTE", "RECITE", "READ", "CLIMB",
-	"PULL", "PUSH", "TURN", "RUB", "TAP", "TOUCH", "SEARCH", "DIG", "RECALL", "USE", "PRAY",
+	"PULL", "PUSH", "TURN", "TWIST", "RUB", "TAP", "TOUCH", "SEARCH", "DIG", "RECALL", "USE", "PRAY",
 	"CAST", "CONCENTRATE", "BUY", "SELL", "PAY",
 	"DRINK", "SIP", "LIGHT", "EXTINGUISH", "DOUSE",
 	"FLIP", "LATCH", "UNLATCH",
@@ -1925,7 +1947,7 @@ var allVerbs = []string{
 	// Racial (TODO: implement)
 	"BLEND", "CALL", "TRANSFORM", "MOLD",
 	"DISGUISE", "SUBMIT", "UNSUBMIT", "ARREST", "CARRY", "RELEASE", "PUTDOWN",
-	"ENROLL", "INITIATE", "JOIN", "FOLLOW", "LEAVE", "DISBAND",
+	"ENROLL", "INITIATE", "JOIN", "FOLLOW", "LEAVE", "DISBAND", "SHAREDXP",
 	"TEND", "BREAK",
 	"SNIFF", "SMELL", "LISTEN",
 	// Communication

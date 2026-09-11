@@ -400,6 +400,18 @@ func (e *GameEngine) lookInRoomContainer(player *Player, def *gameworld.ItemDef,
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is closed.", displayName)}}
 	}
 
+	// Room-scoped "*DESCRIPTION_START ITEM IN <ref>" text (e.g. DEEP1.SCR room 1782's
+	// well, or a plundered chest now home to centipedes) always wins over the generic
+	// empty/contents listing below — same precedence EXAMINE gives its own custom text
+	// in examineRoomItem. Without this, any room item that's both flagged CONTAINER/ON
+	// and has custom flavor text for looking inside it silently fell through to the
+	// mechanical "It is empty." message instead.
+	if room := e.rooms[player.RoomNumber]; room != nil {
+		if desc, ok := room.ItemDescriptions["IN:"+fmt.Sprintf("%d", ri.Ref)]; ok {
+			return &CommandResult{Messages: descriptionToMessages(desc)}
+		}
+	}
+
 	if def.Type == "LIQCONTAINER" {
 		// A LIQCONTAINER's contents are normally tracked on its own Val2 (sips) and
 		// Val4 (potion appearance adjective) — see potionLookInMessages. But some

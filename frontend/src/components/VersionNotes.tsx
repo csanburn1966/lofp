@@ -9,6 +9,121 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.7.0 &mdash; September 10, 2026</h2>
+            <p className="text-gray-400 mb-3">New enchantment spell <code className="text-amber-300">Disenchant</code> and an optional reagent for <code className="text-amber-300">Siryx&rsquo;s Terrible Tentacles</code>, plus a throttle on how fast Body Restoration and Body Destruction shift your alignment. Also fixed a bug that could strand a flying player in mid-air unable to descend, an experience exploit in weaponsmithing tin weapons, targeting commands for controlled/summoned creatures that only worked with a full name, and several spells that silently consumed their reagent with no &ldquo;turns to dust&rdquo; message to anyone.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Disenchant</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Level 27 Enchantment spell that undoes whatever Enchantment I, II, or III put on a weapon, armor piece, or shield &mdash; removing the enchanted/ensorcelled/eldritch quality and its magic bonus</li>
+                  <li>Requires a spriggan finger as a reagent (skinned from a spriggan), consumed on cast</li>
+                  <li>Falls back to checking the item&rsquo;s magic bonus directly on an item enchanted before it had a free adjective slot to record which quality it received</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Optional Worm Scale Reagent for Siryx&rsquo;s Terrible Tentacles</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">PREPARE 134 WITH worm scale</code> is now an optional catalyst (skinned from the giant worm) that grants +25 to the resist-roll rating against every target the tentacles try to grab &mdash; casting without it works exactly as it always has</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: Alignment Shifts From Healing/Harming Spells Throttled</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Body Restoration I/II/III nudging your alignment toward good was firing on every single cast, letting a caster reach a white aura in a tiny fraction of the effort it took in the original game. Now only a 1-in-100 chance per cast actually shifts it (and shows the &ldquo;you sense the pleasure of the gods&rdquo; message)</li>
+                  <li>Body Destruction I/II/III now has the same dark mirror &mdash; a 1-in-100 chance per successful cast to nudge alignment toward evil, with its own &ldquo;you sense the displeasure of the gods&rdquo; message</li>
+                  <li>Breath of Life is unaffected &mdash; reviving the dead is rare enough on its own to stay an unconditional +2</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Flying Players Could Get Stranded Mid-Air</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SIT</code>, <code className="text-amber-300">STAND</code>, <code className="text-amber-300">KNEEL</code>, and <code className="text-amber-300">LAY</code> while flying used to silently ground you with no warning &mdash; over open sky, with nothing to actually sit or lie on, leaving you unable to <code className="text-amber-300">DESCEND</code> and no clue why. They now refuse and tell you to <code className="text-amber-300">LAND</code> first</li>
+                  <li>Fleeing combat while flying no longer drops you out of the sky either &mdash; every other position still snaps back to standing on a successful flee, same as before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Tin Weapons Paying Wildly Inflated Experience</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Tin had no entry of its own in the weaponsmithing quality table, so it fell through to the tier meant for rare exotic metals like randar and elkyri &mdash; a tin cutlass could out-earn one forged from steel or even truesteel. Tin now sits appropriately below copper, both for experience reward and for how easy it is to work (it&rsquo;s a very soft, low-melting-point metal, just a poor choice for an actual weapon)</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: COMMAND GUARD/FOLLOW/ATTACK Needing a Full Name</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Directing a controlled or summoned creature with <code className="text-amber-300">COMMAND GUARD</code>, <code className="text-amber-300">FOLLOW</code>, or <code className="text-amber-300">ATTACK</code> required typing a player&rsquo;s entire name &mdash; every other targeting command in the game accepts an abbreviation. All three now do too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Spell Reagents Vanishing With No Message</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Casting a spell that consumes a physical reagent (Enchantment I/II/III, Disenchant, Charge Wand, the elemental summons, Breath of Life, Summon Spectral Warrior) removed the item with no acknowledgment at all in several cases, and even where a message existed for the caster, it never reached anyone else in the room. Both the caster and onlookers now see the reagent &ldquo;turn to dust&rdquo; as it&rsquo;s absorbed into the spell, matching the original game&rsquo;s wording</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.6.0 &mdash; September 9, 2026</h2>
+            <p className="text-gray-400 mb-3">The <code className="text-amber-300">HELP</code> command works like it originally did: typing <code className="text-amber-300">HELP</code> alone shows the real introductory text new players saw in the 1990s, and <code className="text-amber-300">HELP &lt;topic&gt;</code> now actually answers for all eight of the topics it always claimed to cover.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: HELP &lt;topic&gt; Actually Works</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">HELP</code> with no argument now shows the original 1996 introduction &mdash; how to talk to the world, how to speak out loud with <code className="text-amber-300">&apos;</code>, the handful of commands every new player should know, and the list of deeper help topics &mdash; recovered from an actual session capture rather than a generic modern summary</li>
+                  <li><code className="text-amber-300">HELP &lt;topic&gt;</code> now dispatches to one of eight topics &mdash; <code className="text-amber-300">combat</code>, <code className="text-amber-300">commanding</code>, <code className="text-amber-300">death</code>, <code className="text-amber-300">movement</code>, <code className="text-amber-300">psionics</code>, <code className="text-amber-300">spells</code>, <code className="text-amber-300">training</code>, <code className="text-amber-300">verbs</code> &mdash; each listing the commands that actually apply, instead of the topic name going nowhere</li>
+                  <li><code className="text-amber-300">SHAREDXP</code> is listed under <code className="text-amber-300">HELP commanding</code> alongside the rest of the group commands, so it&rsquo;s discoverable without already knowing it exists</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.5.0 &mdash; September 9, 2026</h2>
+            <p className="text-gray-400 mb-3">New: <code className="text-amber-300">SHAREDXP</code>, a group leader&rsquo;s toggle that splits combat experience across the whole party instead of handing it all to whoever landed the kill. Also fixed several scripted-item bugs that silently dropped a script&rsquo;s logic in favor of generic default behavior &mdash; an openable item with its own reaction to being opened (or closed), a container with its own &ldquo;look in&rdquo; description, and an item that rolls a value before checking it &mdash; plus a crafting XP bug that could pay out thousands of experience for a low-skill craft.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: SHAREDXP &mdash; Group Experience Sharing</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Only a group&rsquo;s leader can toggle it, with <code className="text-amber-300">SHAREDXP</code>, and the whole group is told when it&rsquo;s switched on or off</li>
+                  <li>While active, any kill by a group member splits that monster&rsquo;s experience across everyone in the group who&rsquo;s online, alive, and in the room when it dies &mdash; instead of the killer taking it all</li>
+                  <li>Grouping up grows the total pool of experience rather than just slicing the same amount thinner: each additional member adds 25% more (a 3-person group creates a 150% pool), so a party that kills faster together also earns more together</li>
+                  <li>Shares aren&rsquo;t flat &mdash; each member&rsquo;s cut is nudged up or down based on their level relative to the group&rsquo;s average, modestly and within a cap, so a much lower-level member&rsquo;s share is reduced but never negligible, and a much higher-level member&rsquo;s is boosted but never doubled</li>
+                  <li>An extreme level gap across the group (say, a level 50 alongside a level 2) shrinks the pool itself substantially, to blunt power-leveling through grouping without making the low-level member&rsquo;s own cut worthless</li>
+                  <li>A monster that dies from bleeding out (or any other damage-over-time death with no single decisive blow) now shares the same way, credited to whoever landed the last hit and their group &mdash; if <code className="text-amber-300">SHAREDXP</code> is off, that last hit alone gets full credit, same as before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: OPEN and CLOSE Ignoring a Container&rsquo;s Own Script</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>An item that&rsquo;s both a normal openable container <em>and</em> has its own scripted reaction to being opened &mdash; like the Grimoire of Chaos, which is supposed to flip to a random page and trigger one of thirteen different effects &mdash; always fell through to the plain &ldquo;you open it&rdquo; message instead, because the mechanical container logic took over before the script ever got a chance to run. Fixed for both <code className="text-amber-300">OPEN</code> and <code className="text-amber-300">CLOSE</code></li>
+                  <li>Scripts that pause partway through (like the grimoire&rsquo;s &ldquo;the pages stop turning&rdquo; beat before the effect resolves) weren&rsquo;t being scheduled to actually finish, so the pause never resolved into anything</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: LOOK IN Ignoring a Container&rsquo;s Custom Description</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A room item flagged as a container that also has its own custom &ldquo;look in&rdquo; text &mdash; a well with murky water below, a chest long since plundered down to a few centipedes &mdash; always showed the generic &ldquo;it is empty&rdquo; message instead of that text</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Item Scripts Silently Dropping Setup Actions</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>An item script that rolls or sets a value before checking it further down (like a pair of dice, which roll two values before <code className="text-amber-300">ROLL</code> reports them) had that setup step silently discarded during parsing on any item, so the check downstream always saw the value at zero. <code className="text-amber-300">ROLL DICE</code> now actually reports what came up</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Crafting Experience Reward Reading the Wrong Item Field</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Crafting a sling (a skill-2 Wood Lore item) was paying out 8,660 experience &mdash; the reward formula was reading a missile weapon&rsquo;s ammunition-item reference as if it were a difficulty rating. It now uses the same skill-level field the game already uses to decide whether you&rsquo;re allowed to craft the item in the first place, so the reward actually matches the difficulty</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v12.4.0 &mdash; September 7, 2026</h2>
             <p className="text-gray-400 mb-3">A first real alignment system: life-affirming spells nudge your alignment, <code className="text-amber-300">Aura Sense</code> reveals anyone&rsquo;s as a color, and GMs can view and set it directly. Mass Protection now shares its defense bonus with your whole group instead of just the caster. Also fixed a cluster of Island pool/volcano-vent bugs (a broken cave exit, an unreliable breath-holding mechanic, a ritual that echoed its message three times, and a crank mistaken for a book), the Cult of Dahkahn&rsquo;s temple pointing at the wrong building, and a gem-molding bug that could destroy a flawless gem&rsquo;s quality instead of just polishing it.</p>
 

@@ -974,6 +974,9 @@ func (e *GameEngine) gmKill(ctx context.Context, player *Player, args []string) 
 	target.CombatTarget = nil
 	target.Joined = false
 	target.Position = 2 // laying down
+	target.Hidden = false
+	target.Invisible = false
+	target.PhantomForm = false
 	e.SavePlayer(ctx, target)
 	return &CommandResult{Messages: []string{fmt.Sprintf("%s has been slain.", target.FullName())}}
 }

@@ -300,6 +300,14 @@ type Player struct {
 	// PreparedSpellReagentArch.
 	PreparedMoonstoneBonus bool `bson:"-" json:"-"`
 
+	// PreparedWormScaleBonus: true when Siryx's Terrible Tentacles (134) was prepared
+	// with a worm scale (item 507, skinned from the "worm" monster) as an optional
+	// catalyst — not part of the original 1990s data, new. Grants +25 to the magic
+	// resist roll against each target Tentacles tries to grab (see castTentaclesSpell),
+	// mirroring PreparedMoonstoneBonus's +25 CAST-success bonus. Cleared the moment the
+	// prepared spell resolves (or is lost/released), same as PreparedMoonstoneBonus.
+	PreparedWormScaleBonus bool `bson:"-" json:"-"`
+
 	// Crafting state (transient)
 	CraftingItem  string `bson:"-" json:"-"` // what they're making (e.g., "greatsword")
 	CraftingMetal string `bson:"-" json:"-"` // what material (e.g., "copper", "hide")
@@ -328,6 +336,7 @@ type Player struct {
 	Following     string   `bson:"-" json:"-"` // who this player is following
 	GroupMembers  []string `bson:"-" json:"-"` // if this player is a leader, who's in their group
 	IsGroupLeader bool     `bson:"-" json:"-"`
+	SharedXP      bool     `bson:"-" json:"-"` // leader-set: SHAREDXP command toggle — group splits combat XP (combat.go sharedXPRecipients)
 
 	// Social blocking (persistent): AVOID/UNAVOID/ALLOW/UNALLOW. AvoidList
 	// blocks physical interactive emotes (KISS, NIBBLE, etc.) and HOLD from
@@ -486,7 +495,7 @@ type DisguisePersona struct {
 
 // bareDisplayName is DisplayName lowercased with any leading article ("a ",
 // "an ") stripped — the matching-friendly form of the player's current
-// apparent identity, used by NameMatches/NameEquals below.
+// apparent identity, used by NameMatches below.
 func (p *Player) bareDisplayName() string {
 	name := strings.ToLower(p.DisplayName())
 	if s, ok := strings.CutPrefix(name, "a "); ok {
@@ -505,13 +514,6 @@ func (p *Player) bareDisplayName() string {
 // has despite DisplayName's leading article.
 func (p *Player) NameMatches(query string) bool {
 	return strings.HasPrefix(p.bareDisplayName(), strings.ToLower(query))
-}
-
-// NameEquals reports whether query is an exact case-insensitive match of the
-// player's current apparent identity — the disguise-aware replacement for
-// exact-match targeting (e.g. COMMAND FOLLOW/GUARD/ATTACK <name> in summons.go).
-func (p *Player) NameEquals(query string) bool {
-	return p.bareDisplayName() == strings.ToLower(query)
 }
 
 // EffectiveAppearance returns the player's apparent race/gender/age/height/

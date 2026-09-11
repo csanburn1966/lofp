@@ -518,7 +518,7 @@ func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []s
 		if deathText != "" {
 			deathMsg = fmt.Sprintf("A %s %s", name, deathText)
 		}
-		e.handleMonsterDeath([]*Player{player}, inst, def)
+		e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You project %s at a %s for %d damage!", disc.Name, name, dmg), deathMsg},
 			RoomBroadcast: []string{fmt.Sprintf("%s focuses psychic energy at a %s!", player.FirstName, name), deathMsg},

@@ -815,6 +815,16 @@ func (p *fileParser) parseItem(fields []string) {
 			block := p.parseScriptBlock(fields)
 			item.Scripts = append(item.Scripts, block)
 			continue
+		case "ECHO", "AFFECT", "RANDOM", "EQUAL", "ADD", "SUB",
+			"NEWITEM", "REMOVEITEM", "GENMON", "KILLMON", "GMMSG", "CALLPACK":
+			// Bare top-level action (e.g. item 747's dice: "RANDOM dieone 1 6 0"
+			// ahead of "IFPREVERB ROLL -1" rolls fresh values before the block's
+			// IFVAR checks read them). Same handling as parseRoom — without this
+			// the statement is silently dropped and every IFVAR check downstream
+			// sees the variable at its zero default.
+			item.Scripts = append(item.Scripts, gameworld.ScriptBlock{
+				Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: cmd, Args: fields[1:]}},
+			})
 		case "VARIABLE":
 			if len(fields) >= 2 {
 				p.result.Variables = append(p.result.Variables, gameworld.Variable{Name: fields[1]})

@@ -390,7 +390,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 			found := false
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.NameEquals(rest) && p.RoomNumber == instRoom && !p.Dead {
+					if p.NameMatches(rest) && p.RoomNumber == instRoom && !p.Dead {
 						followTarget = p.FirstName // internal bookkeeping: real name, not the apparent one
 						followLabel = "follow " + p.DisplayName()
 						found = true
@@ -537,7 +537,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 			found := false
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.NameEquals(guardTarget) && p.RoomNumber == instRoom {
+					if p.NameMatches(guardTarget) && p.RoomNumber == instRoom {
 						guardTarget = p.FirstName // internal bookkeeping: real name, not the apparent one
 						found = true
 						break
@@ -627,7 +627,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		var targetPlayer *Player
 		if e.sessions != nil {
 			for _, p := range e.sessions.OnlinePlayers() {
-				if p.NameEquals(rest) && p.RoomNumber == instRoom && !p.Dead {
+				if p.NameMatches(rest) && p.RoomNumber == instRoom && !p.Dead {
 					targetPlayer = p
 					break
 				}

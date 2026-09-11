@@ -797,6 +797,10 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 // metalDifficulty returns the quench success rate for a metal adjective name.
 func metalDifficulty(metal string) int {
 	switch strings.ToLower(metal) {
+	case "tin":
+		// Softer and even easier to work than copper — very low melting point —
+		// but a poor choice for a weapon (see metalQualityXPBonus).
+		return 80
 	case "copper":
 		return 70
 	case "iron", "brass", "bronze":
@@ -814,6 +818,11 @@ func metalDifficulty(metal string) int {
 // metalQualityXPBonus returns the XP bonus for metal quality when completing a weapon.
 func metalQualityXPBonus(metal string) int {
 	switch strings.ToLower(metal) {
+	case "tin":
+		// Below copper's baseline — tin is a poor, low-quality metal for a weapon,
+		// not an exotic one. Previously fell through to the "exotic" default (+300),
+		// wildly overpaying XP for the softest, lowest-quality metal available.
+		return -10
 	case "copper":
 		return 0
 	case "iron", "brass", "bronze":
@@ -1281,19 +1290,14 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 		}
 		player.Inventory = append(player.Inventory, item)
 
-		// XP award: scale by skill level required (weaponsmithing uses metalDifficulty instead).
-		// Jewelry/weaving items always carry this on Parameter2 (Parameter1 unused there).
-		// Wood Lore items are inconsistent in the source data — many non-launcher items
-		// (instruments, staves, etc.) never got a Parameter2 assigned, so fall back to
-		// Parameter1 (their only other small, per-item difficulty-shaped field) rather
-		// than silently awarding zero.
+		// XP award: scale by the skill level required (weaponsmithing uses metalDifficulty
+		// instead). skillNeeded was already derived above from def's type/substance — reuse
+		// it rather than re-guessing "whichever of Parameter1/2 is nonzero", which picks up
+		// unrelated fields on some types (e.g. a missile weapon's Parameter2 is its
+		// ammunition item number, not a difficulty rating).
 		xpAward := 0
 		if skillID != 8 {
-			if def.Parameter2 > 0 {
-				xpAward = def.Parameter2 * 20
-			} else if def.Parameter1 > 0 {
-				xpAward = def.Parameter1 * 20
-			}
+			xpAward = skillNeeded * 20
 		}
 		if xpAward > 0 {
 			player.Experience += xpAward
@@ -3416,6 +3420,41 @@ func buildWeaveCraftAdjs(matItem InventoryItem, matDef *gameworld.ItemDef) (adj1
 	return adj1, adj2, matDef.Parameter1
 }
 
+// craftSkillRequirement returns which skill (and level) a CRAFTABLE item's own data
+// gates it behind. Mirrors the type/substance branching in doCraft's no-args listing
+// and craft-start validation (crafting.go, "Items you can craft" and the CRAFT <item>
+// skill check) — see the matching comment there: PARAMETER1 doubles as the required
+// skill level for plain weapons and WOOD-substance items (whose PARAMETER1 is their
+// damage-tier stat with no competing use); PARAMETER2 is the level for SHIELD/ARMOR/
+// HIDE/CLOTH/jewelry items instead, since their PARAMETER1 slot already holds DR%/
+// DefBonus. Used both to gate crafting and (via completeCraft) to size its XP reward —
+// keeping both on one source of truth so they can't drift apart the way they did when
+// completeCraft had its own separate "whichever of Parameter1/2 is nonzero" guess.
+func craftSkillRequirement(def *gameworld.ItemDef) (skillID int, skillName string, skillNeeded int) {
+	switch {
+	case def.Type == "SHIELD":
+		if def.Substance == "WOOD" {
+			skillID, skillName = 18, "Wood Lore"
+		} else {
+			skillID, skillName = 8, "Weaponsmithing"
+		}
+		skillNeeded = def.Parameter2
+	case def.Substance == "HIDE", def.Substance == "CLOTH":
+		skillID, skillName, skillNeeded = 15, "Dyeing/Weaving", def.Parameter2
+	case def.Substance == "WOOD":
+		skillID, skillName, skillNeeded = 18, "Wood Lore", def.Parameter1
+	case isWeapon(def.Type):
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter1
+	case def.Type == "ARMOR":
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter2
+	case def.Parameter2 > 0:
+		skillID, skillName, skillNeeded = 0, "Jeweler", def.Parameter2
+	default:
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter1
+	}
+	return
+}
+
 // completeCraft creates the finished item for jewelry, weaving, or wood crafts and resets state.
 func (e *GameEngine) completeCraft(ctx context.Context, player *Player, completionMsg, broadcastMsg string) *CommandResult {
 	var craftDef *gameworld.ItemDef
@@ -3452,17 +3491,15 @@ func (e *GameEngine) completeCraft(ctx context.Context, player *Player, completi
 	}
 	player.Inventory = append(player.Inventory, item)
 
-	// Jewelry/weaving items always carry difficulty on Parameter2 (Parameter1 unused
-	// there). Wood Lore items are inconsistent in the source data — many non-launcher
-	// items (instruments, staves, etc.) never got a Parameter2 assigned, so fall back
-	// to Parameter1 (their only other small, per-item difficulty-shaped field) rather
-	// than silently awarding zero.
-	xpAward := 0
-	if craftDef.Parameter2 > 0 {
-		xpAward = craftDef.Parameter2 * 20
-	} else if craftDef.Parameter1 > 0 {
-		xpAward = craftDef.Parameter1 * 20
-	}
+	// XP scales with the same skill level gating whether the player could craft
+	// this item at all (craftSkillRequirement) — NOT a blind "whichever of
+	// Parameter1/Parameter2 is nonzero" guess. That naive guess double-counted as
+	// difficulty a field that means something else entirely on some item types —
+	// e.g. a BOW_WEAPON's Parameter2 is its ammunition item number (a sling has
+	// Parameter2=433, the sling-stone archetype), not a difficulty rating, and was
+	// paying out 433*20 = 8660 XP for a skill-2 craft.
+	_, _, skillNeeded := craftSkillRequirement(craftDef)
+	xpAward := skillNeeded * 20
 	if xpAward > 0 {
 		player.Experience += xpAward
 	}
