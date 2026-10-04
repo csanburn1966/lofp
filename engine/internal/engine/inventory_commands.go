@@ -122,20 +122,33 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 		return result
 	}
 
-	// Check all player items: inventory, worn, wielded, and off-hand
-	allPlayerItems := make([]InventoryItem, 0, len(player.Inventory)+len(player.Worn)+2)
-	allPlayerItems = append(allPlayerItems, player.Inventory...)
-	allPlayerItems = append(allPlayerItems, player.Worn...)
-	wieldedIdx, offHandIdx := -1, -1
+	// Check all player items: worn/wielded/off-hand take priority over plain
+	// inventory. An interactive effect (e.g. an amulet's RUB/TAP/CONCENTRATE
+	// script) is usually gated on the item actually being equipped (IFITEM -1
+	// WORN/WIELDED) — if the player also happens to be carrying a second, unworn
+	// copy of the same item, matching that one first used to silently no-op the
+	// script instead of the worn copy doing anything (reported: "rub amulet...
+	// targeting an amulet in inventory first instead of the worn amulet").
+	type playerItemCandidate struct {
+		item InventoryItem
+		kind string // "wielded", "offhand", "worn", "inventory"
+		idx  int    // index into player.Worn/player.Inventory; unused for wielded/offhand
+	}
+	var candidates []playerItemCandidate
 	if player.Wielded != nil {
-		wieldedIdx = len(allPlayerItems)
-		allPlayerItems = append(allPlayerItems, *player.Wielded)
+		candidates = append(candidates, playerItemCandidate{*player.Wielded, "wielded", -1})
 	}
 	if player.OffHand != nil {
-		offHandIdx = len(allPlayerItems)
-		allPlayerItems = append(allPlayerItems, *player.OffHand)
+		candidates = append(candidates, playerItemCandidate{*player.OffHand, "offhand", -1})
 	}
-	for idx, ii := range allPlayerItems {
+	for i, w := range player.Worn {
+		candidates = append(candidates, playerItemCandidate{w, "worn", i})
+	}
+	for i, inv := range player.Inventory {
+		candidates = append(candidates, playerItemCandidate{inv, "inventory", i})
+	}
+	for _, c := range candidates {
+		ii := c.item
 		itemDef := e.items[ii.Archetype]
 		if itemDef == nil {
 			continue
@@ -147,21 +160,20 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 				continue
 			}
 			// Same sigil-trap override as the room-item loop above, but resolving a real
-			// pointer back into whichever of Inventory/Worn/Wielded/OffHand this index
-			// came from — allPlayerItems above is a flat copy, so ii itself can't be
+			// pointer back into whichever of Inventory/Worn/Wielded/OffHand this candidate
+			// came from — the candidate list above holds copies, so ii itself can't be
 			// mutated. See castSigilSpell/triggerSigilIfArmed in spells.go.
 			if verbLower == "touch" {
 				var sigilID *int
 				var sigilOwner *string
-				switch {
-				case idx < len(player.Inventory):
-					sigilID, sigilOwner = &player.Inventory[idx].SigilSpellID, &player.Inventory[idx].SigilOwner
-				case idx < len(player.Inventory)+len(player.Worn):
-					wIdx := idx - len(player.Inventory)
-					sigilID, sigilOwner = &player.Worn[wIdx].SigilSpellID, &player.Worn[wIdx].SigilOwner
-				case idx == wieldedIdx:
+				switch c.kind {
+				case "inventory":
+					sigilID, sigilOwner = &player.Inventory[c.idx].SigilSpellID, &player.Inventory[c.idx].SigilOwner
+				case "worn":
+					sigilID, sigilOwner = &player.Worn[c.idx].SigilSpellID, &player.Worn[c.idx].SigilOwner
+				case "wielded":
 					sigilID, sigilOwner = &player.Wielded.SigilSpellID, &player.Wielded.SigilOwner
-				case idx == offHandIdx:
+				case "offhand":
 					sigilID, sigilOwner = &player.OffHand.SigilSpellID, &player.OffHand.SigilOwner
 				}
 				if sigilID != nil {
@@ -177,7 +189,7 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 			// State is set to "WORN"/"WIELDED" so IFITEM -1 WORN/WIELDED checks work.
 			itemState := ii.State
 			if itemState == "" {
-				if idx == wieldedIdx || idx == offHandIdx {
+				if c.kind == "wielded" || c.kind == "offhand" {
 					itemState = "WIELDED"
 				} else if ii.WornSlot != "" {
 					itemState = "WORN"
@@ -306,7 +318,54 @@ func (e *GameEngine) doBreak(ctx context.Context, player *Player, args []string)
 	return result
 }
 
+// pickupEcho selects what onlookers see when doGetFloor picks an item up.
+type pickupEcho int
+
+const (
+	pickupEchoNormal    pickupEcho = iota // "<Name> picks up <item>."
+	pickupEchoSilent                      // nothing (a successful FILCH)
+	pickupEchoSomething                   // "Something picks up <item>." (failed FILCH while invisible)
+)
+
+// pickupBroadcast returns the onlooker line for picking up itemName under echo
+// (nil for pickupEchoSilent).
+func pickupBroadcast(player *Player, itemName string, echo pickupEcho) []string {
+	switch echo {
+	case pickupEchoSilent:
+		return nil
+	case pickupEchoSomething:
+		return []string{fmt.Sprintf("Something picks up %s.", itemName)}
+	}
+	return []string{fmt.Sprintf("%s picks up %s.", player.DisplayNameCap(), itemName)}
+}
+
+// getOutcome reports what doGetFloor picked up, for callers (FILCH) that
+// rewrite its messages: Name is what was targeted ("a gold coin", "some
+// coins"), Taken is the pickup message minus its "You pick up " prefix (e.g.
+// "5 gold crowns."), and PickedUp is false if nothing was taken.
+type getOutcome struct {
+	PickedUp bool
+	Name     string
+	Taken    string
+}
+
+func (o *getOutcome) set(name, pickupMsg string) {
+	if o == nil {
+		return
+	}
+	o.PickedUp = true
+	o.Name = name
+	o.Taken = strings.TrimPrefix(pickupMsg, "You pick up ")
+}
+
 func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, args []string) *CommandResult {
+	return e.doGetFloor(ctx, player, verb, args, pickupEchoNormal, nil)
+}
+
+// doGetFloor is doGet with a choice of room echo (see pickupEcho) — FILCH
+// (legerdemain.go) uses it to pick up a floor item silently. A non-normal echo
+// also skips the monster GET-script fallback, since FILCH only takes items.
+func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string, args []string, echo pickupEcho, outcome *getOutcome) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Get what?"}}
 	}
@@ -328,10 +387,12 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 			room.Items = append(room.Items[:i], room.Items[i+1:]...)
 			e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_remove", ItemRef: ri.Ref})
 			pickupMsg := e.addCoinsToPlayer(player, ri.Archetype, coins)
+			outcome.set("some coins", pickupMsg)
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
-				Messages:      []string{pickupMsg},
-				RoomBroadcast: []string{fmt.Sprintf("%s picks up some coins.", player.DisplayNameCap())},
+				Messages:             []string{pickupMsg},
+				RoomBroadcast:        pickupBroadcast(player, "some coins", echo),
+				ConcealedBroadcastOK: echo == pickupEchoSomething,
 			}
 		}
 
@@ -372,6 +433,12 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 		// top of the default pickup, not a replacement for it — fall through so the item
 		// actually gets added to inventory, carrying the script's messages along.
 		scriptMsgs, scriptRoomMsgs, scriptGMMsgs := sc.Messages, sc.RoomMsgs, sc.GMMsgs
+		if echo == pickupEchoSomething {
+			// ConcealedBroadcastOK below lets the anonymized pickup line past the
+			// concealed-actor filter; script echoes (which may name the player) would
+			// otherwise ride along, so drop them as a normal concealed GET would.
+			scriptRoomMsgs = nil
+		}
 
 		// The script may have consumed the item itself (e.g. REMOVEITEM -1 on the lens of
 		// worlds' "crumbles to dust" branch) without setting CLEARVERB. Re-locate it by ref
@@ -408,11 +475,13 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 			room.Items = append(room.Items[:curIdx], room.Items[curIdx+1:]...)
 			e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_remove", ItemRef: ri.Ref})
 			pickupMsg := e.addCoinsToPlayer(player, ri.Archetype, coins)
+			outcome.set(e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend), pickupMsg)
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
-				Messages:      append(scriptMsgs, pickupMsg),
-				RoomBroadcast: append(scriptRoomMsgs, fmt.Sprintf("%s picks up some coins.", player.DisplayNameCap())),
-				GMBroadcast:   scriptGMMsgs,
+				Messages:             append(scriptMsgs, pickupMsg),
+				RoomBroadcast:        append(scriptRoomMsgs, pickupBroadcast(player, "some coins", echo)...),
+				GMBroadcast:          scriptGMMsgs,
+				ConcealedBroadcastOK: echo == pickupEchoSomething,
 			}
 		}
 
@@ -433,6 +502,7 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 				Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
 				Sharpness: ri.Sharpness,
 				HardnessMod: ri.HardnessMod,
+			CraftedValue: ri.CraftedValue,
 				ItemBits:  ri.ItemBits,
 				State:     ri.State,
 				Tail:      ri.Extend,
@@ -444,6 +514,7 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 			player.Inventory = append(player.Inventory, newItem)
 			room.Items = append(room.Items[:curIdx], room.Items[curIdx+1:]...)
 			e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_remove", ItemRef: ri.Ref})
+			outcome.set(fullName, fmt.Sprintf("You pick up %s.", fullName))
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
 				Messages:      append(scriptMsgs, append(guardPlayerMsgs, fmt.Sprintf("You pick up %s.", fullName))...),
@@ -459,6 +530,7 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 			Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
 			Sharpness: ri.Sharpness,
 			HardnessMod: ri.HardnessMod,
+			CraftedValue: ri.CraftedValue,
 			ItemBits:  ri.ItemBits,
 			State:     ri.State,
 			Tail:      ri.Extend,
@@ -472,11 +544,34 @@ func (e *GameEngine) doGet(ctx context.Context, player *Player, verb string, arg
 		// Remove from room
 		room.Items = append(room.Items[:curIdx], room.Items[curIdx+1:]...)
 		e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_remove", ItemRef: ri.Ref})
+		outcome.set(fullName, fmt.Sprintf("You pick up %s.", fullName))
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
-			Messages:      append(scriptMsgs, fmt.Sprintf("You pick up %s.", fullName)),
-			RoomBroadcast: append(scriptRoomMsgs, fmt.Sprintf("%s picks up %s.", player.DisplayNameCap(), fullName)),
-			GMBroadcast:   scriptGMMsgs,
+			Messages:             append(scriptMsgs, fmt.Sprintf("You pick up %s.", fullName)),
+			RoomBroadcast:        append(scriptRoomMsgs, pickupBroadcast(player, fullName, echo)...),
+			GMBroadcast:          scriptGMMsgs,
+			ConcealedBroadcastOK: echo == pickupEchoSomething,
+		}
+	}
+
+	if echo != pickupEchoNormal {
+		return &CommandResult{Messages: []string{"You don't see that here."}}
+	}
+
+	// No matching room item — check for a monster with a GET handler, e.g. the
+	// sheep's non-lethal wool-clipping script (MONSTERS.SCR MNUMBER 200
+	// SCRIPTMACRO 99 → INDOOR.SCR MACRO 99): catching an awake sheep is a
+	// Dyeing/Weaving skill check, a sleeping one is a guaranteed clip, and a
+	// dead one just ruins the wool. includeDead so that last branch (which
+	// depends on seeing the corpse, not finding nothing) still fires.
+	if monInst, monDef := e.findMonsterInRoomIncludeDead(player, target); monDef != nil {
+		sc := e.RunMonsterPreverbScript(player, room, monDef, monInst, "GET", nil, nil)
+		if len(sc.DeferredSegments) > 0 {
+			e.scheduleScriptSegments(player, sc.DeferredSegments)
+		}
+		if sc.Blocked || len(sc.Messages) > 0 || len(sc.RoomMsgs) > 0 {
+			e.SavePlayer(ctx, player)
+			return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 		}
 	}
 
@@ -574,6 +669,7 @@ func (e *GameEngine) doDrop(ctx context.Context, player *Player, args []string) 
 				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
 				Sharpness: ii.Sharpness,
 				HardnessMod: ii.HardnessMod,
+			CraftedValue: ii.CraftedValue,
 				ItemBits:  ii.ItemBits,
 				State:     ii.State,
 				Extend:    ii.Tail,
@@ -620,7 +716,14 @@ func (e *GameEngine) addCoinsToPlayer(player *Player, arch, val1 int) string {
 			return "You pick up 1 silver shilling."
 		}
 		return fmt.Sprintf("You pick up %d silver shillings.", val1)
-	default: // arch=0 or copper: Val1 is total copper
+	default:
+		// A regional MONEY item (PARAMETER2 = money type) — Val1 is a count of
+		// that currency (currency.go).
+		if md := e.currencyForItem(arch); md != nil {
+			addFunds(player, md, val1)
+			return fmt.Sprintf("You pick up %s.", formatCurrency(md, val1))
+		}
+		// arch=0 or copper: Val1 is total copper
 		player.Copper += val1
 		player.Silver += player.Copper / 10
 		player.Copper = player.Copper % 10
@@ -675,7 +778,20 @@ func (e *GameEngine) doDropCoins(ctx context.Context, player *Player, amount int
 			displayName = fmt.Sprintf("%d copper pennies", amount)
 		}
 	default:
-		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currency)}}
+		// Regional currency (currency.go): dropped as a pile of its MONEY item.
+		md := e.currencyByName(currency)
+		if md == nil {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currency)}}
+		}
+		if have := playerFunds(player, md); have < amount {
+			if have == 0 {
+				return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currencyPlural(md))}}
+			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("You only have %s.", formatCurrency(md, have))}}
+		}
+		e.spendFunds(player, md, amount)
+		arch = md.ItemNum
+		displayName = formatCurrency(md, amount)
 	}
 
 	coinItem := gameworld.RoomItem{
@@ -828,7 +944,7 @@ func (e *GameEngine) doStatus(player *Player) *CommandResult {
 
 	// Attack/Defense modifiers
 	weaponDef := e.currentWeaponDef(player)
-	atkRating := playerAttackRating(player, weaponDef)
+	atkRating := e.playerAttackRating(player, weaponDef)
 	defRating := playerDefenseRating(player) + armorEnchantBonus(player, e.items) + shieldDefenseBonus(player, e.items) + e.massProtectionGroupBonus(player)
 	stanceLabel := stanceNames[player.Stance]
 
@@ -899,6 +1015,24 @@ var wornSlotMax = map[string]int{
 	"WORN_AROUND": 2, // pendant + brooch pinned to clothing
 	"WORN_EAR":    2, // earrings
 	"WORN_DON":    2, // two pendants/medallions
+}
+
+// damagedWeaponWarning warns a player wielding a DAMAGED weapon (see the clash
+// code in combat.go) that its next clash will destroy it. Returns nil otherwise.
+func (e *GameEngine) damagedWeaponWarning(def *gameworld.ItemDef, w *InventoryItem) []string {
+	if w.State != "DAMAGED" {
+		return nil
+	}
+	// Leave out the "damaged" adjective (83, stamped by the clash) so it doesn't
+	// read "Your damaged steel sword is damaged".
+	adjs := [3]int{w.Adj1, w.Adj2, w.Adj3}
+	for i := range adjs {
+		if adjs[i] == 83 {
+			adjs[i] = 0
+		}
+	}
+	name := e.formatItemNameNoArticle(def, adjs[0], adjs[1], adjs[2], w.Tail)
+	return []string{fmt.Sprintf("Your %s is damaged, you risk it being destroyed if you continue using it!", name)}
 }
 
 func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -997,7 +1131,7 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 					e.SavePlayer(ctx, player)
 					fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 					return &CommandResult{
-						Messages:      []string{fmt.Sprintf("You wield %s in your off hand.", fullName)},
+						Messages:      append([]string{fmt.Sprintf("You wield %s in your off hand.", fullName)}, e.damagedWeaponWarning(itemDef, &offhand)...),
 						RoomBroadcast: []string{fmt.Sprintf("%s wields %s in their off hand.", player.DisplayNameCap(), fullName)},
 					}
 				}
@@ -1013,7 +1147,7 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 		e.SavePlayer(ctx, player)
 		fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You wield %s.", fullName)},
+			Messages:      append([]string{fmt.Sprintf("You wield %s.", fullName)}, e.damagedWeaponWarning(itemDef, &wielded)...),
 			RoomBroadcast: []string{fmt.Sprintf("%s wields %s.", player.DisplayNameCap(), fullName)},
 		}
 	}
@@ -1926,10 +2060,18 @@ func (e *GameEngine) doGive(ctx context.Context, player *Player, args []string) 
 		target := e.findPlayerInRoom(player, targetName)
 		if target == nil {
 			// No matching player — check for a monster with a GIVE handler (e.g. tribute).
-			if _, monDef := e.findMonsterInRoom(player, targetName); monDef != nil {
+			if monInst, monDef := e.findMonsterInRoom(player, targetName); monDef != nil {
 				room := e.rooms[player.RoomNumber]
 				itemCopy := ii
-				sc := e.RunMonsterPreverbScript(player, room, monDef, "GIVE", &itemCopy, itemDef)
+				sc := e.RunMonsterPreverbScript(player, room, monDef, monInst, "GIVE", &itemCopy, itemDef)
+				// PLREVENT/CONTPLREVENT/SETEVENT/CONTEVENT-deferred actions must be scheduled,
+				// or everything after the delay is lost — e.g. Ming-K'Tuk's tribute-accepted
+				// branch (MONSTERS.SCR MNUMBER 294 SCRIPTMACRO 21) defers its follow-up
+				// riddle question ("Tell me mortal, am I the mightiest of dragons?") behind
+				// SETEVENT 85 2 ALWAYS / CONTEVENT 85, which never fired without this.
+				if len(sc.DeferredSegments) > 0 {
+					e.scheduleScriptSegments(player, sc.DeferredSegments)
+				}
 				if len(sc.Messages) == 0 && len(sc.RoomMsgs) == 0 {
 					fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 					return &CommandResult{Messages: []string{fmt.Sprintf("%s doesn't seem interested in %s.", FormatMonsterName(monDef, e.monAdjs), fullName)}}
@@ -1972,6 +2114,35 @@ func (e *GameEngine) doGive(ctx context.Context, player *Player, args []string) 
 			TargetName:           target.FirstName,
 			TargetMsg:            []string{fmt.Sprintf("%s gives you %s.", giverName, fullName)},
 			PlayerState:          player,
+		}
+	}
+
+	// Not found loose in inventory — check worn/wielded/off-hand before giving up,
+	// so a player trying to give away something they have equipped gets told to
+	// unequip it first instead of the misleading "You don't have that."
+	for _, ii := range player.Worn {
+		itemDef := e.items[ii.Archetype]
+		if itemDef == nil {
+			continue
+		}
+		name := e.getItemNounName(itemDef)
+		if matchesTarget(name, itemName, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			return &CommandResult{Messages: []string{fmt.Sprintf("You'll need to remove %s before you can give it away.", fullName)}}
+		}
+	}
+	for _, ii := range []*InventoryItem{player.Wielded, player.OffHand} {
+		if ii == nil {
+			continue
+		}
+		itemDef := e.items[ii.Archetype]
+		if itemDef == nil {
+			continue
+		}
+		name := e.getItemNounName(itemDef)
+		if matchesTarget(name, itemName, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			return &CommandResult{Messages: []string{fmt.Sprintf("You'll need to unwield %s before you can give it away.", fullName)}}
 		}
 	}
 	return &CommandResult{Messages: []string{"You don't have that."}}
@@ -2051,45 +2222,20 @@ func (e *GameEngine) doGiveMoney(ctx context.Context, giver, receiver *Player, a
 			currencyDisplay += "ies"
 		}
 	default:
-		// Regional currencies — these are handled as inventory items with MONEY type
-		// Find the currency item in giver's inventory
-		for i, ii := range giver.Inventory {
-			def := e.items[ii.Archetype]
-			if def == nil || def.Type != "MONEY" {
-				continue
-			}
-			noun := strings.ToLower(e.nouns[def.NameID])
-			if noun == currency || strings.HasPrefix(noun, currency) {
-				coins := ii.Val1
-				if coins < amount {
-					return &CommandResult{Messages: []string{fmt.Sprintf("You only have %d %s.", coins, currency)}}
-				}
-				if coins == amount {
-					// Transfer the whole stack
-					receiver.Inventory = append(receiver.Inventory, ii)
-					giver.Inventory = append(giver.Inventory[:i], giver.Inventory[i+1:]...)
-				} else {
-					// Split the stack
-					giver.Inventory[i].Val1 -= amount
-					newItem := ii
-					newItem.Val1 = amount
-					receiver.Inventory = append(receiver.Inventory, newItem)
-				}
-				currencyDisplay = fmt.Sprintf("%d %s", amount, currency)
-				if amount != 1 {
-					currencyDisplay += "s"
-				}
-				e.SavePlayer(ctx, giver)
-				e.SavePlayer(ctx, receiver)
-				return &CommandResult{
-					Messages:      []string{fmt.Sprintf("You give %s to %s.", currencyDisplay, receiver.DisplayName())},
-					RoomBroadcast: []string{fmt.Sprintf("%s gives some coins to %s.", giver.DisplayNameCap(), receiver.DisplayName())},
-					TargetName:    receiver.FirstName,
-					TargetMsg:     []string{fmt.Sprintf("%s gives you %s.", giver.DisplayName(), currencyDisplay)},
-				}
-			}
+		// Regional currency (currency.go), carried as a purse counter.
+		md := e.currencyByName(currency)
+		if md == nil {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currency)}}
 		}
-		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currency)}}
+		if have := playerFunds(giver, md); have < amount {
+			if have == 0 {
+				return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s.", currencyPlural(md))}}
+			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("You only have %s.", formatCurrency(md, have))}}
+		}
+		e.spendFunds(giver, md, amount)
+		addFunds(receiver, md, amount)
+		currencyDisplay = formatCurrency(md, amount)
 	}
 
 	e.SavePlayer(ctx, giver)
@@ -2261,37 +2407,12 @@ func (e *GameEngine) doBuy(ctx context.Context, player *Player, args []string) *
 			continue
 		}
 
-		// Check affordability
-		totalCopper := player.Gold*100 + player.Silver*10 + player.Copper
-		if totalCopper < si.Price {
-			priceStr := formatPrice(si.Price)
-			return &CommandResult{Messages: []string{fmt.Sprintf("You can't afford that. %s costs %s.", name, priceStr)}}
-		}
-
-		// Deduct currency efficiently (spend copper first, then silver, then gold)
-		remaining := si.Price
-		if player.Copper >= remaining {
-			player.Copper -= remaining
-			remaining = 0
-		} else {
-			remaining -= player.Copper
-			player.Copper = 0
-		}
-		if remaining > 0 {
-			silverNeeded := (remaining + 9) / 10 // round up
-			if player.Silver >= silverNeeded {
-				player.Silver -= silverNeeded
-				player.Copper += silverNeeded*10 - remaining
-				remaining = 0
-			} else {
-				remaining -= player.Silver * 10
-				player.Silver = 0
-			}
-		}
-		if remaining > 0 {
-			goldNeeded := (remaining + 99) / 100 // round up
-			player.Gold -= goldNeeded
-			player.Copper += goldNeeded*100 - remaining
+		// Check affordability and pay. A shop in a currency region (currency.go)
+		// prices its STOREITEMs in that currency — e.g. Kragenholm's blacksmith
+		// asks 220 kragenmarks for a broadsword, not 220 copper.
+		md := e.roomCurrency(player.RoomNumber)
+		if !e.spendFunds(player, md, si.Price) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You can't afford that. %s costs %s.", name, formatCurrency(md, si.Price))}}
 		}
 
 		// Give item to player
@@ -2306,12 +2427,25 @@ func (e *GameEngine) doBuy(ctx context.Context, player *Player, args []string) *
 			// value per GMSCRIPT.DOC). Crafting propagates this so a finished item's sale
 			// price can be capped relative to what the material actually cost — see
 			// player.CraftingVal1 in doWork/crafting.go.
-			item.Val1 = si.Price
+			item.Val1 = currencyToCopper(md, si.Price) // VAL1 is always a base (copper) value
+		}
+		if itemDef.Type == "AMMO" && itemDef.Parameter2 > 0 {
+			// Val3 = units remaining in this bundle (GMSCRIPT.DOC: "For ammunition,
+			// [PARAMETER2] defines the number of individual units of ammunition
+			// included in a bundle" — confirmed against FAYDINDR.SCR's arrow/bolt
+			// bundling machine, which reads/writes a deposited bundle's own ITEMVAL3
+			// as its count). A fresh purchase starts full; see doLoadWeapon, which
+			// decrements this per shot instead of discarding the whole bundle.
+			item.Val3 = itemDef.Parameter2
 		}
 		player.Inventory = append(player.Inventory, item)
 		e.SavePlayer(ctx, player)
 
-		displayName := e.formatItemName(itemDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)
+		// No-article form here: both templates already supply their own
+		// possessive/definite article ("your"/"the"), and formatItemName's
+		// own article (e.g. "some" on a MATERIAL) would double up into
+		// "retrieve your some steel".
+		displayName := e.formatItemNameNoArticle(itemDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You hand over your money and retrieve your %s.", displayName)},
 			RoomBroadcast: []string{fmt.Sprintf("%s purchases the %s.", player.DisplayNameCap(), displayName)},
@@ -2377,14 +2511,14 @@ func (e *GameEngine) doSell(ctx context.Context, player *Player, args []string) 
 			displayName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 			sellValue := e.computeSellValue(itemDef, &player.Inventory[i])
 			player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
-			// Add coins
-			player.Gold += sellValue / 100
-			player.Silver += (sellValue % 100) / 10
-			player.Copper += sellValue % 10
+			// Paid in the local currency in a currency region (currency.go).
+			md := e.roomCurrency(player.RoomNumber)
+			payout := copperToCurrency(md, sellValue)
+			addFunds(player, md, payout)
 			e.SavePlayer(ctx, player)
 			return &CommandResult{Messages: []string{
 				fmt.Sprintf("The merchant inspects %s closely.", displayName),
-				fmt.Sprintf("The merchant takes the item and hands you %s.", formatPrice(sellValue)),
+				fmt.Sprintf("The merchant takes the item and hands you %s.", formatCurrency(md, payout)),
 			}}
 		}
 	}
@@ -2419,7 +2553,11 @@ func (e *GameEngine) doSell(ctx context.Context, player *Player, args []string) 
 // from capture data; Alexandrite, Aquamarine, Coral, Garnet, Jacinth, Onyx, Opal,
 // Ruby, Sardonyx, and Stone have no capture sales at all and are interpolated into the
 // tier their real-world rarity suggests — treat those ten as rough placeholders pending
-// more capture evidence.
+// more capture evidence. Turquoise (123) sits just past the Agate-Topaz block and was
+// missing entirely, which fell through computeSellValue's generic fallback
+// (Val1/CraftedValue both unset → itemDef.Weight+1 == 2, halved to 1 copper regardless
+// of quality/size) — it's added here at the common tier alongside Agate/Citrine/Obsidian,
+// its real-world rarity peers, since no capture sale exists to calibrate against.
 var gemArchetypeSellBase = map[int]int{
 	99:  145,   // Agate — plain sales avg 72c → base 145 (data)
 	100: 6500,  // Alexandrite — no data; placed in the precious tier (real alexandrite often outvalues emerald)
@@ -2445,6 +2583,7 @@ var gemArchetypeSellBase = map[int]int{
 	120: 1200,  // Sardonyx — no data; same tier as onyx (its close relative)
 	121: 1380,  // Topaz — chipped sale 414c, quality mult 0.6 → base 1380 (data)
 	122: 1000,  // Tourmaline — tiny sale 254c, size mult 0.5 → base 1000 (data)
+	123: 140,   // Turquoise — no data; common tier alongside agate/citrine/obsidian
 }
 
 // gemValueVariance returns a random multiplier in [0.85, 1.15] applied when a gem's
@@ -2500,7 +2639,15 @@ func (e *GameEngine) computeSellValue(itemDef *gameworld.ItemDef, ii *InventoryI
 		}
 		return sellValue
 	}
-	sellValue := ii.Val1
+	// CraftedValue (completeCraft) takes priority over Val1 — some craftable
+	// items' own scripts repurpose Val1 for unrelated per-instance state (e.g.
+	// item 968's harp uses ITEMVAL1 as its current tune), so their fair sell
+	// value is tracked separately rather than fighting over the same field. See
+	// InventoryItem.CraftedValue's doc comment.
+	sellValue := ii.CraftedValue
+	if sellValue <= 0 {
+		sellValue = ii.Val1
+	}
 	if sellValue <= 0 {
 		sellValue = itemDef.Weight + 1
 	}
@@ -2549,6 +2696,13 @@ func (e *GameEngine) doAppraise(ctx context.Context, player *Player, args []stri
 		}
 	}
 	if !canBuy {
+		// Away from a merchant, Legerdemain gives the player's own estimate.
+		if player.Skills[legerdemainSkill] >= 1 {
+			if res := e.doLegerdemainAppraise(ctx, player, target, skip); res != nil {
+				return res
+			}
+			return &CommandResult{Messages: []string{"You don't have that."}}
+		}
 		return &CommandResult{Messages: []string{"There is no merchant here to appraise your items."}}
 	}
 	for i := range player.Inventory {
@@ -2569,9 +2723,10 @@ func (e *GameEngine) doAppraise(ctx context.Context, player *Player, args []stri
 			if !hadValue && player.Inventory[i].Val1 > 0 {
 				e.SavePlayer(ctx, player) // lock in a freshly-rolled gem value
 			}
+			md := e.roomCurrency(player.RoomNumber)
 			return &CommandResult{Messages: []string{
 				fmt.Sprintf("The merchant examines %s carefully.", displayName),
-				fmt.Sprintf("\"I'd give you %s for that.\"", formatPrice(sellValue)),
+				fmt.Sprintf("\"I'd give you %s for that.\"", formatCurrency(md, copperToCurrency(md, sellValue))),
 			}}
 		}
 	}
@@ -3247,8 +3402,23 @@ func (e *GameEngine) doDeposit(ctx context.Context, player *Player, args []strin
 		return &CommandResult{Messages: []string{"Deposit what? Specify an amount (e.g. DEPOSIT 5 GOLD) or an item name."}}
 	}
 
+	// Each bank handles one currency (GMSCRIPT.DOC): a bank in a currency
+	// region (currency.go) takes only that region's money.
+	md := e.roomCurrency(player.RoomNumber)
+
 	// If the first arg is numeric, this is a currency deposit.
 	amount := 0
+	if n, err := fmt.Sscanf(args[0], "%d", &amount); n == 1 && err == nil && amount > 0 && md != nil {
+		if len(args) >= 2 && e.currencyByName(args[1]) != md {
+			return &CommandResult{Messages: []string{fmt.Sprintf("This bank only deals in %s.", currencyPlural(md))}}
+		}
+		if !e.spendFunds(player, md, amount) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have %s.", formatCurrency(md, amount))}}
+		}
+		addBankFunds(player, md, amount)
+		e.SavePlayer(ctx, player)
+		return &CommandResult{Messages: []string{fmt.Sprintf("You deposit %s.", formatCurrency(md, amount))}}
+	}
 	if n, err := fmt.Sscanf(args[0], "%d", &amount); n == 1 && err == nil && amount > 0 {
 		// Parse optional denomination suffix (GOLD / SILVER / COPPER, default copper)
 		denom := "copper"
@@ -3281,10 +3451,10 @@ func (e *GameEngine) doDeposit(ctx context.Context, player *Player, args []strin
 		return &CommandResult{Messages: []string{fmt.Sprintf("You deposit %s.", formatPrice(amountCopper))}}
 	}
 
-	// Item deposit — costs 1 gold (100 copper).
-	const itemFee = 100
-	if player.Gold*100+player.Silver*10+player.Copper < itemFee {
-		return &CommandResult{Messages: []string{"Depositing an item costs 1 gold crown. You cannot afford the fee."}}
+	// Item deposit — costs 1 gold crown, or its local equivalent.
+	itemFee := copperToCurrency(md, 100)
+	if playerFunds(player, md) < itemFee {
+		return &CommandResult{Messages: []string{fmt.Sprintf("Depositing an item costs %s. You cannot afford the fee.", formatCurrency(md, itemFee))}}
 	}
 	if len(player.BankItems) >= 20 {
 		return &CommandResult{Messages: []string{"Your safety deposit box is full (20 items maximum)."}}
@@ -3355,10 +3525,10 @@ func (e *GameEngine) doDeposit(ctx context.Context, player *Player, args []strin
 	}
 
 	// Charge the fee and store the item
-	e.deductCopper(player, itemFee)
+	e.spendFunds(player, md, itemFee)
 	player.BankItems = append(player.BankItems, c.item)
 	e.SavePlayer(ctx, player)
-	return &CommandResult{Messages: []string{fmt.Sprintf("You deposit %s into your safety deposit box. You are charged 1 gold crown.", itemName)}}
+	return &CommandResult{Messages: []string{fmt.Sprintf("You deposit %s into your safety deposit box. You are charged %s.", itemName, formatCurrency(md, itemFee))}}
 }
 
 func (e *GameEngine) doWithdraw(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -3370,8 +3540,22 @@ func (e *GameEngine) doWithdraw(ctx context.Context, player *Player, args []stri
 		return &CommandResult{Messages: []string{"Withdraw what? Specify an amount (e.g. WITHDRAW 5 GOLD) or an item name."}}
 	}
 
+	// A bank in a currency region holds only that currency (see doDeposit).
+	md := e.roomCurrency(player.RoomNumber)
+
 	// If the first arg is numeric, this is a currency withdrawal.
 	amount := 0
+	if n, err := fmt.Sscanf(args[0], "%d", &amount); n == 1 && err == nil && amount > 0 && md != nil {
+		if len(args) >= 2 && e.currencyByName(args[1]) != md {
+			return &CommandResult{Messages: []string{fmt.Sprintf("This bank only deals in %s.", currencyPlural(md))}}
+		}
+		if !spendBankFunds(player, md, amount) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have %s in the bank.", formatCurrency(md, amount))}}
+		}
+		addFunds(player, md, amount)
+		e.SavePlayer(ctx, player)
+		return &CommandResult{Messages: []string{fmt.Sprintf("You withdraw %s.", formatCurrency(md, amount))}}
+	}
 	if n, err := fmt.Sscanf(args[0], "%d", &amount); n == 1 && err == nil && amount > 0 {
 		denom := "copper"
 		if len(args) >= 2 {
@@ -3478,6 +3662,90 @@ func containsModifier(mods []string, mod string) bool {
 	return false
 }
 
+// doWriteNote handles "WRITE <item> WITH <text>" — inscribing arbitrary player
+// text onto a WRITEABLE item (e.g. item 940, a plain paper note; see
+// updates.html changelog #69: "Players can now WRITE on items scripted as
+// WRITEABLE"). Returns nil (not an error result) whenever the input doesn't
+// actually look like a real write attempt — no " with " clause, or no item in
+// the player's possession matches the named target at all — so the WRITE
+// dispatch case in engine.go can fall back to the plain "You write something."
+// roleplay emote exactly as it always has for freeform flavor text. Once a
+// real WRITEABLE item is identified, every further problem (empty text, too
+// long, item isn't WRITEABLE) returns a real, explicit CommandResult instead.
+func (e *GameEngine) doWriteNote(ctx context.Context, player *Player, args []string, rawInput string) *CommandResult {
+	rawLower := strings.ToLower(strings.Join(args, " "))
+	itemTarget, _ := parseWithClause(rawLower)
+	if itemTarget == rawLower {
+		return nil // no " with " clause — not a write-note invocation, let it fall through to the emote
+	}
+	itemTarget, ordSkip := parseOrdinal(itemTarget)
+	skip := ordSkip
+
+	rawInputLower := strings.ToLower(rawInput)
+	withIdx := strings.Index(rawInputLower, " with ")
+	noteText := ""
+	if withIdx >= 0 {
+		noteText = strings.TrimSpace(rawInput[withIdx+6:])
+	}
+
+	type writeCandidate struct {
+		item *InventoryItem
+		kind string // "inventory", "worn", "wielded"
+	}
+	var candidates []writeCandidate
+	for i := range player.Inventory {
+		candidates = append(candidates, writeCandidate{&player.Inventory[i], "inventory"})
+	}
+	for i := range player.Worn {
+		candidates = append(candidates, writeCandidate{&player.Worn[i], "worn"})
+	}
+	if player.Wielded != nil {
+		candidates = append(candidates, writeCandidate{player.Wielded, "wielded"})
+	}
+
+	var target *InventoryItem
+	var targetDef *gameworld.ItemDef
+	for _, c := range candidates {
+		def := e.items[c.item.Archetype]
+		if def == nil {
+			continue
+		}
+		if !matchesTarget(e.getItemNounName(def), itemTarget, e.getAdjName(c.item.Adj1), e.getAdjName(c.item.Adj2), e.getAdjName(c.item.Adj3)) {
+			continue
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		target = c.item
+		targetDef = def
+		break
+	}
+	if target == nil {
+		return nil // no matching item carried — let it fall through to the emote
+	}
+
+	if !containsFlag(targetDef.Flags, "WRITEABLE") {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You can't write on %s.", e.formatItemName(targetDef, target.Adj1, target.Adj2, target.Adj3, target.Tail))}}
+	}
+	if noteText == "" {
+		return &CommandResult{Messages: []string{"What would you like to write? Usage: WRITE <item> WITH <text>"}}
+	}
+	if len(noteText) > 500 {
+		return &CommandResult{Messages: []string{"That's too much to write at once (maximum 500 characters)."}}
+	}
+
+	target.WrittenText = noteText
+	e.SavePlayer(ctx, player)
+
+	itemName := e.formatItemName(targetDef, target.Adj1, target.Adj2, target.Adj3, target.Tail)
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You write on %s.", itemName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s writes something on %s.", player.DisplayNameCap(), itemName)},
+		PlayerState:   player,
+	}
+}
+
 func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Read what?"}}
@@ -3503,8 +3771,18 @@ func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 				skip--
 				continue
 			}
-			// Run IFPREVERB READ scripts first — they may supply the read text
+			// Run IFPREVERB READ scripts first — they may supply the read text. Also
+			// run IFVERB READ (RunPreverbScripts skips true IFVERB blocks by design —
+			// see its preverbOnly flag — deferring them to RunVerbScripts here), e.g.
+			// item 1578's Menelian's-cottage map: "IFVERB READ -1 ... ECHO PLAYER ...".
+			// Without this second call, any item using IFVERB (rather than IFPREVERB)
+			// for its READ text silently fell through to "There is nothing written on it."
 			sc := e.RunPreverbScripts(player, room, "READ", &room.Items[i], itemDef)
+			sc2 := e.RunVerbScripts(player, room, "READ", &room.Items[i], itemDef)
+			sc.Messages = append(sc.Messages, sc2.Messages...)
+			sc.RoomMsgs = append(sc.RoomMsgs, sc2.RoomMsgs...)
+			sc.Blocked = sc.Blocked || sc2.Blocked
+			sc.DeferredSegments = append(sc.DeferredSegments, sc2.DeferredSegments...)
 			// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
 			// after the delay is lost.
 			if len(sc.DeferredSegments) > 0 {
@@ -3534,6 +3812,31 @@ func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 			if skip > 0 {
 				skip--
 				continue
+			}
+			// Run IFPREVERB/IFVERB READ scripts (e.g. item 1578's ragged map, whose
+			// IFVERB READ -1 reveals the crevice location) — mirroring the room-item
+			// branch above. Without this, an item's READ script only ever fired while
+			// it was still lying on the ground; once picked up (Ref=-1) it silently
+			// fell through to the generic "nothing written on it" message below.
+			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
+				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				ItemBits: ii.ItemBits}
+			sc := e.RunPreverbScripts(player, room, "READ", &tempRI, itemDef)
+			sc2 := e.RunVerbScripts(player, room, "READ", &tempRI, itemDef)
+			sc.Messages = append(sc.Messages, sc2.Messages...)
+			sc.RoomMsgs = append(sc.RoomMsgs, sc2.RoomMsgs...)
+			sc.Blocked = sc.Blocked || sc2.Blocked
+			sc.DeferredSegments = append(sc.DeferredSegments, sc2.DeferredSegments...)
+			if len(sc.DeferredSegments) > 0 {
+				e.scheduleScriptSegments(player, sc.DeferredSegments)
+			}
+			if sc.Blocked || len(sc.Messages) > 0 {
+				return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs}
+			}
+			// Player-written text (WRITE <item> WITH <text> — see doWriteNote).
+			if ii.WrittenText != "" {
+				return &CommandResult{Messages: []string{ii.WrittenText}}
 			}
 			return &CommandResult{Messages: []string{"There is nothing written on it."}}
 		}
@@ -3651,11 +3954,13 @@ func (e *GameEngine) doBalance(player *Player) *CommandResult {
 
 	var msgs []string
 
-	total := player.BankGold*100 + player.BankSilver*10 + player.BankCopper
+	// Each bank keeps the account for its own currency (currency.go).
+	md := e.roomCurrency(player.RoomNumber)
+	total := bankFunds(player, md)
 	if total == 0 {
 		msgs = append(msgs, "A clerk shuffles through some documents and then informs you that your account contains no funds.")
 	} else {
-		msgs = append(msgs, fmt.Sprintf("A clerk shuffles through some documents and then informs you that your account now contains %s.", formatPrice(total)))
+		msgs = append(msgs, fmt.Sprintf("A clerk shuffles through some documents and then informs you that your account now contains %s.", formatCurrency(md, total)))
 	}
 
 	if len(player.BankItems) > 0 {
@@ -3713,18 +4018,32 @@ func (e *GameEngine) doLoadWeapon(ctx context.Context, player *Player, args []st
 		if !strings.HasPrefix(strings.ToLower(ammoName), ammoTarget) {
 			continue
 		}
-		// Check ammo type match
+		// Check ammo type match — continue (not return) so a name-matching but
+		// wrong-type stack (e.g. carrying both "arrows" and another AMMO item
+		// whose noun happens to share the typed prefix) doesn't block the search
+		// from reaching the actual correct ammo elsewhere in inventory.
 		if ammoType > 0 && ii.Archetype != ammoType {
-			return &CommandResult{Messages: []string{fmt.Sprintf("You can't load your %s with that.", wepName)}}
+			continue
 		}
 		// Load the weapon: set Val3 > 0 to indicate loaded
 		player.Wielded.Val3 = ii.Archetype
-		// Remove one ammo from inventory (or reduce bundle count)
-		player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+		// Consume one unit from the bundle (Val3 = units remaining — GMSCRIPT.DOC:
+		// "For ammunition, [PARAMETER2] defines the number of individual units of
+		// ammunition included in a bundle"; see doBuy/completeCraft, which stamp a
+		// fresh bundle's Val3 from the archetype's Parameter2). Only remove the
+		// whole stack once it's actually empty — previously this always removed
+		// the entire "some arrows" stack on a single NOCK regardless of how many
+		// were in it, so a bundle of 24 behaved as if it held exactly one.
+		if ii.Val3 > 1 {
+			player.Inventory[i].Val3--
+		} else {
+			player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+		}
 		e.SavePlayer(ctx, player)
 
 		ammoDisplayName := e.formatItemName(ammoDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
-		wepDisplayName := e.formatItemName(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
+		// No-article form: both templates below already supply "your"/possessive.
+		wepDisplayName := e.formatItemNameNoArticle(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You load your %s with %s.", wepDisplayName, ammoDisplayName)},
 			RoomBroadcast: []string{fmt.Sprintf("%s loads %s %s.", player.FirstName, player.Possessive(), wepDisplayName)},

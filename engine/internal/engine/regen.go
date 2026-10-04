@@ -13,7 +13,7 @@ import (
 //
 // Regen rates (per tick):
 //   - Fatigue: Constitution / 20 (min 1)
-//   - Mana: (Willpower + Empathy) / 30 (min 1)
+//   - Mana: Empathy / 30 (min 1)
 //   - PSI: Willpower / 20 (min 1)
 //   - Body Points: Constitution / 50 (min 1, only when injured)
 //
@@ -83,7 +83,7 @@ func (e *GameEngine) regenTick() {
 
 		// Mana regen
 		if p.Mana < p.MaxMana {
-			base := (p.Willpower + p.Empathy) / 30
+			base := p.Empathy / 30
 			if base < 1 {
 				base = 1
 			}
@@ -258,6 +258,16 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
+		// Check for expired melee-crit stun (see monsterAttackPlayer)
+		if p.Stunned && !p.StunExpiry.IsZero() && time.Now().After(p.StunExpiry) {
+			p.Stunned = false
+			p.StunExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"You shake off the stun and can act again."})
+			}
+		}
+
 		// Check for expired strength buff
 		if p.StrengthBuffID > 0 && !p.StrengthBuffExpiry.IsZero() && time.Now().After(p.StrengthBuffExpiry) {
 			p.Strength -= p.StrengthBuffBonus
@@ -385,6 +395,16 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
+		// Check for expired Divine Blessing buff (spell 347)
+		if p.DivineBlessingBonus > 0 && !p.DivineBlessingExpiry.IsZero() && time.Now().After(p.DivineBlessingExpiry) {
+			p.DivineBlessingBonus = 0
+			p.DivineBlessingExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"The divine light fades from you."})
+			}
+		}
+
 		// Check for expired Haste buff
 		if !p.HasteExpiry.IsZero() && time.Now().After(p.HasteExpiry) {
 			p.HasteExpiry = time.Time{}
@@ -442,14 +462,26 @@ func (e *GameEngine) regenTick() {
 			p.FlyExpiry = time.Time{}
 			p.CanFly = false
 			changed = true
-			if p.Position == 4 {
-				p.Position = 0
-				if e.roomBroadcast != nil {
-					e.roomBroadcast(p.RoomNumber, []string{fmt.Sprintf("%s drifts to the ground as the magic fades.", p.FirstName)})
+			// Over open sky there's no ground to settle onto — fall instead
+			// (skyfall.go). A Drakin still flies on their own, so stays aloft.
+			if fallMsgs := e.fallIfFlightLost(context.Background(), p, true); fallMsgs != nil {
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, append([]string{"The magic sustaining your flight fades!"}, fallMsgs...))
 				}
-			}
-			if e.sendToPlayer != nil {
-				e.sendToPlayer(p.FirstName, []string{"The magic sustaining your flight fades. You settle back to the ground."})
+			} else if p.IsFlying() {
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"The magic of your Fly spell fades, but your own wings keep you aloft."})
+				}
+			} else {
+				if p.Position == 4 {
+					p.Position = 0
+					if e.roomBroadcast != nil {
+						e.roomBroadcast(p.RoomNumber, []string{fmt.Sprintf("%s drifts to the ground as the magic fades.", p.FirstName)})
+					}
+				}
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"The magic sustaining your flight fades. You settle back to the ground."})
+				}
 			}
 		}
 

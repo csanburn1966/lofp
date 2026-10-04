@@ -9,6 +9,727 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.4.0 &mdash; October 4, 2026</h2>
+            <p className="text-gray-400 mb-3">Backstab is now a real skill: you need training in it, a puncture weapon, and a target with a back, and every successful backstab strikes that back. Potions can be poured together again to top them off or gamble on a mix, as in the original game. Locked chests turn up a little more often, a damaged weapon warns you before it breaks, and experienced skinners rarely ruin a corpse. Also: winter spawns in the Dark Keep are back to normal, and you can take out items that were placed in a room&rsquo;s containers.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Backstab Requires Training</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">BACKSTAB</code> used to work for anyone hidden with a dagger or rapier. You now need training in the Backstab skill, and Stealth is required before you can train it</li>
+                  <li>You still need to be hidden and holding a puncture weapon. If you fight with two weapons and have Two Weapons training, a dagger or rapier in your off hand works too, and your main weapon follows up with a normal swing</li>
+                  <li>Your chance to hit comes from your weapon skill, as with any attack. Every hit lands on the target&rsquo;s back for full damage, and each level of Backstab adds to that damage</li>
+                  <li>You close in on the target as part of the strike, so you don&rsquo;t need to <code className="text-amber-300">ADVANCE</code> first</li>
+                  <li>Creatures with no back, such as snakes, slimes, mists, and some insects, can&rsquo;t be backstabbed</li>
+                  <li>A backstab that can&rsquo;t go ahead (wrong target, no back, still in round time) now leaves you hidden. Before, it revealed you anyway</li>
+                  <li>The Weaponmaster&rsquo;s yard in Kragenholm trains both Stealth and Backstab, and you don&rsquo;t have to join a guild to use it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Pouring Potions Together</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">POUR</code> into a container that already holds liquid now mixes the two instead of refusing</li>
+                  <li>The same kind of potion combines into more sips, though the mixture changes color. Water or ale simply tops off water or ale</li>
+                  <li>Two different potions also combine into more sips, but what you end up with is a gamble: usually one of the two original potions, sometimes a completely different potion, a Body Destruction potion, or a useless liquid. Occasionally the mixture explodes and destroys the container</li>
+                  <li>Mixing water or ale into a potion dilutes it, and the magic is lost</li>
+                  <li>A container holds 12 sips. Pour in more than that and the extra spills away</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Improved: Damaged Weapon Warning</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Wielding a damaged weapon now warns you: &ldquo;Your steel broadsword is damaged, you risk it being destroyed if you continue using it!&rdquo; Another weapon clash will break it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Improved: Enchanted Item Names</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The Enchantment I, II, and III spells now put their word first, so you get &ldquo;an ensorcelled randar broadsword&rdquo; rather than &ldquo;a randar ensorcelled broadsword&rdquo;. Items enchanted before this release keep their current names</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Advancing on Something Already Advancing on You</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>After you <code className="text-amber-300">ADVANCE</code>d on a creature, it could still announce &ldquo;advances towards you&rdquo; a moment later. Once you&rsquo;ve closed in, it now just fights you</li>
+                  <li><code className="text-amber-300">ADVANCE</code> on a creature or player that has already closed in on you now tells you &ldquo;You are already engaging&rdquo; them instead of advancing a second time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Taking Items Out of Room Containers</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Items placed in a room&rsquo;s cabinet, chest, or other container by the room itself showed up when you looked inside, but <code className="text-amber-300">GET</code> claimed &ldquo;You don&rsquo;t see that in there.&rdquo; Now you can take them, one at a time or all at once</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: Skinning, Treasure, and the Dark Keep</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Expert skinners ruin far fewer corpses. With enough Sagecraft and Wood Lore, a skin now fails about 1 time in 100 rather than 1 in 20. Beginners&rsquo; chances are unchanged</li>
+                  <li>When a creature drops an item, a locked chest turns up a little more often (about 1 in 5 item drops instead of about 1 in 7). Armor drops are a little rarer to make room</li>
+                  <li>The last release cut the Dark Keep&rsquo;s winter spawns too far, so it was much quieter than in other seasons. Winter now spawns at the same rate as the rest of the year</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>New <code className="text-amber-300">ADJCVT &lt;digit&gt; &lt;value&gt;</code> stores an adjective&rsquo;s word in <code className="text-amber-300">%0</code>&ndash;<code className="text-amber-300">%9</code>, where <code className="text-amber-300">STRCVT</code> would store the number. The value can be a number or a variable (<code className="text-amber-300">ITEMADJ3</code>, <code className="text-amber-300">ITEMPARAM1</code>...). It treats any value as an adjective number, so use it only on values that really are adjectives. 0 or an unknown number gives an empty string</li>
+                  <li><code className="text-amber-300">%0</code>&ndash;<code className="text-amber-300">%9</code> are one shared set: <code className="text-amber-300">STRCVT</code>, <code className="text-amber-300">ADJCVT</code>, <code className="text-amber-300">STRCPY</code>, and <code className="text-amber-300">STRCAT</code> all write the same ten slots, so reusing a digit replaces what was there. The slots start empty each time a script runs and after a <code className="text-amber-300">PLREVENT</code> delay</li>
+                  <li>New read-only variables <code className="text-amber-300">ITEMPARAM1</code>&ndash;<code className="text-amber-300">ITEMPARAM3</code> give the current item&rsquo;s PARAMETER1&ndash;3 values. These belong to the item definition, so <code className="text-amber-300">EQUAL ITEMPARAM1 ...</code> does nothing</li>
+                  <li><code className="text-amber-300">NEWPUT</code> now accepts variables for the item number and every <code className="text-amber-300">ADJ</code>/<code className="text-amber-300">VAL</code> value, so a container&rsquo;s PUT script can store a copy of what was put in: <code className="text-amber-300">NEWPUT 0 ARCHNUM ADJ1=ITEMADJ1 ADJ2=ITEMADJ2 ADJ3=ITEMADJ3 VAL1=0</code>. The first number is the container&rsquo;s item tag in the room, not <code className="text-amber-300">-1</code></li>
+                  <li><code className="text-amber-300">IFIN &lt;tag&gt; &lt;item # or variable&gt;</code> checks both what players have put in a container and what scripts placed there. It doesn&rsquo;t yet set the &ldquo;current item&rdquo; as GMSCRIPT.DOC describes</li>
+                  <li>Backstab (skill 2) now requires Stealth (33) to train. Creatures defined only with <code className="text-amber-300">PART</code> lines need <code className="text-amber-300">PART 2</code> (back) to be backstabbed; <code className="text-amber-300">HUMAN</code>, <code className="text-amber-300">ANIMAL</code>, and <code className="text-amber-300">AVINE</code> creatures always have one</li>
+                  <li>Monster group 47 (Dark Keep) in <code className="text-amber-300">WINOUT.SCR</code>: 15/15/11 &rarr; 40/40/30, matching the other three seasons</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.3.0 &mdash; September 30, 2026</h2>
+            <p className="text-gray-400 mb-3">Ming K&rsquo;Tuk&rsquo;s elkyri door works on every visit now, not just the first: a door the dragon had shut again no longer answers your knock with &ldquo;The door is open, fool!&rdquo; while staying firmly closed. The Dark Keep no longer sends a horde at you as soon as winter arrives, while the undead of the Fayd cemetery rise more often. Walking out of the Golden Chalice saloon no longer claims you can&rsquo;t go that way, and GMs get a friendlier <code className="text-amber-300">@editem</code>.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Ming K&rsquo;Tuk&rsquo;s Door Stuck Shut After Its First Opening</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Once the heavy elkyri door in the Deep Realms had swung shut again at noon or midnight, knocking on it made the dragon face insist &ldquo;The door is open, fool! Stop knocking and go in!&rdquo; &mdash; but the door stayed closed, no riddle was given, and the way was blocked until the server restarted</li>
+                  <li>A door that has been shut and locked now counts as closed, so knocking gives you a riddle again and the right answer opens it, however many times it has closed before</li>
+                  <li>The same fix applies to any door or container in the world whose script checks whether it&rsquo;s closed, locked, or unlocked. A few that could never respond correctly before now do</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: The Dark Keep in Winter</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>In winter, every creature type inside the Dark Keep appeared on every spawn check, so a fresh wave arrived before you could finish the last one &mdash; a problem dating back to the original winter data, not something new. Winter spawns in the keep are now in line with the rest of the game</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: More Undead in the Fayd Cemetery</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>You could walk every row of the cemetery for minutes and meet only a skeleton or two. Skeletons, zombies, ghouls, lesser wights, and phantom caretakers now rise several times as often, in every season. The cemetery holds no more of them at once than before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: &ldquo;You can&rsquo;t go that way&rdquo; Leaving the Saloon</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Going <code className="text-amber-300">OUT</code> through the swinging doors of the Golden Chalice saloon took you to the bazaar and then also told you &ldquo;You can&rsquo;t go that way.&rdquo; You now simply step out into the bazaar</li>
+                  <li>People left in the saloon now see you go out through the swinging doors; before, that message appeared out in the bazaar instead</li>
+                  <li>This applies to any exit whose room script moves the whole group through it, including <code className="text-amber-300">ASCEND</code> and <code className="text-amber-300">DESCEND</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@editem</code> no longer refuses when several items match. It edits the <strong>last</strong> matching item in inventory (normally the one most recently picked up) and lists every match with a <code className="text-amber-300">*</code> beside the one it changed. If nothing in inventory matches, it uses the last wielded, worn, or container match</li>
+                  <li><code className="text-amber-300">@editem</code> and <code className="text-amber-300">@iexamine</code> accept adjectives in any order and by prefix, so <code className="text-amber-300">@edit steel rapier tail polished to a high sheen</code> or <code className="text-amber-300">@iexamine pol rap</code> finds &ldquo;a polished steel rapier&rdquo;</li>
+                  <li><code className="text-amber-300">IFITEM &lt;ref&gt; CLOSED</code> is now true for a locked item, and <code className="text-amber-300">IFITEM &lt;ref&gt; UNLOCKED</code> is true for anything that isn&rsquo;t locked, so open/closed and locked/unlocked can be tested independently as the original scripts do (e.g. <code className="text-amber-300">NEWCITY.SCR</code> nests <code className="text-amber-300">CLOSED</code> around <code className="text-amber-300">LOCKED</code>)</li>
+                  <li>Script <code className="text-amber-300">CLOSE</code> no longer unlocks an item that&rsquo;s already locked, and script <code className="text-amber-300">UNLOCK</code> leaves the item closed, as the player <code className="text-amber-300">UNLOCK</code> command does. Previously a script-unlocked door could be walked through without being opened</li>
+                  <li>A <code className="text-amber-300">MOVEGROUP</code> in an <code className="text-amber-300">IFPREVERB</code> on a direction or <code className="text-amber-300">ASCEND</code>/<code className="text-amber-300">DESCEND</code> now always ends the command, with pre-move echoes sent to the room being left</li>
+                  <li>Monster group 47 (Dark Keep) in <code className="text-amber-300">WINOUT.SCR</code>: 400/400/300 &rarr; 15/15/11. Monster group 4 (Fayd cemetery, all five Fayd files): skeleton/zombie 10, ghoul 6, wight 4, caretaker 6</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.2.0 &mdash; September 29, 2026</h2>
+            <p className="text-gray-400 mb-3">First and most important: the server no longer throws everyone out of the game every minute or so. A crash introduced with the last release took the whole server down whenever a monster wandered, and the server itself now shrugs off that kind of failure instead of disconnecting every player at once. Beyond that, fighting with two weapons finally lands proper critical hits on a stunned or fallen foe, the sharkhors along the Inner Sea turn up more often, and wolf spiders now make their home on the forested hilltop of Nyraine &mdash; which means the spider fangs one of the fold&rsquo;s quests asks for can finally be found.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Everyone Disconnected Every 15 to 60 Seconds</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Shortly after the last update, every player was being dropped from the game at the same moment, over and over. The cause was the new &ldquo;a monster has appeared&rdquo; announcement: under some server setups it could crash the whole game the moment any creature anywhere wandered from one room to another. That can no longer happen</li>
+                  <li>More broadly, if something goes wrong while monsters are acting or a timed room event is firing, the server now logs the problem and carries on instead of shutting down and disconnecting everyone</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Off-Hand Attacks Never Scored Critical Hits</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>With two weapons, your off-hand swing always reported a plain &ldquo;Hit!&rdquo; and dealt ordinary damage &mdash; even on a natural 96 or better, and even against a creature your main hand had just knocked off its feet or stunned</li>
+                  <li>The off hand now follows the same rule as the main hand: a roll of 96+, or any hit on a stunned or knocked-down target, is an <strong>Excellent Hit</strong> (or <strong>Devastating Critical</strong>) with the bonus damage to match, and onlookers see it too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Wolf Spiders in Nyraine</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Wolf spiders now hunt the hilltop firs, poplars, and meadow at the edge of the Nyraine forest, in every season</li>
+                  <li>They&rsquo;re the only creature whose fangs can be skinned as <strong>spider fangs</strong> &mdash; until now wolf spiders never appeared in the world on their own, so the fold&rsquo;s quest that asks for spider fangs couldn&rsquo;t be completed without a GM&rsquo;s help</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: More Sharkhors Along the Inner Sea</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Sharkhors and sharkhor priests on the slippery rocks of the Inner Sea were appearing too rarely to be worth the trip. They now turn up about half again as often, in every season</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Nyraine Pond Was Empty in Spring</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The pond in the Nyraine forest had its usual creatures in summer, autumn, and winter, but none at all in spring. It now matches the other seasons</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Items can now listen for speech: an <code className="text-amber-300">IFSAY</code> block on an item a player is wielding, wearing, or carrying fires when they say the phrase, with that item as the script&rsquo;s item (so <code className="text-amber-300">ITEMVAL</code>, <code className="text-amber-300">ITEMBIT</code>, and <code className="text-amber-300">IFITEM -1 WORN</code> all work). Previously only rooms could respond to speech, so original items with spoken triggers never reacted</li>
+                  <li>When something a player says or pays for moves them (<code className="text-amber-300">MOVE</code> from an <code className="text-amber-300">IFSAY</code> or <code className="text-amber-300">PAY</code> script), the script&rsquo;s own echoes now go to the right place: lines echoed before the <code className="text-amber-300">MOVE</code> are seen in the room they left, and lines after an <code className="text-amber-300">AFFECT</code> to the destination are seen where they arrive. The generic &ldquo;leaves&rdquo;/&ldquo;arrives&rdquo; lines are used only when the script doesn&rsquo;t supply its own</li>
+                  <li><code className="text-amber-300">MOVE</code> now ignores a room number that doesn&rsquo;t exist instead of stranding the player in it &mdash; useful when the destination comes from an item value a GM sets</li>
+                  <li>Nyraine&rsquo;s hilltop rooms 1953&ndash;1955 use the new monster group 122 (<code className="text-amber-300">MLIST 122 94 10 3</code>)</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.1.0 &mdash; September 26, 2026</h2>
+            <p className="text-gray-400 mb-3">This release is about knowing what&rsquo;s in the room with you and getting a fair chance to react. Hostile creatures now wait a moment before closing to melee when you walk in, so a traveler moving at a normal pace can pass through without being pinned down by every creature that happens to be there. Players with <code className="text-amber-300">BATTLEBRIEF</code> on were never told when a monster appeared, wandered in, or wandered off &mdash; that&rsquo;s fixed, and a creature summoned by a script is now announced to everyone, including whoever set it off. Monsters also no longer notice or go after invisible players. And for anyone who has stood at the elkyri door in the Deep Realms giving the right answer to no effect: the door opens now.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Monsters Give You a Moment Before Advancing</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A hostile creature used to advance on you the instant you entered its room &mdash; often before you&rsquo;d even seen the room description or the exits. It now waits 3 seconds after you arrive, long enough to read the room and keep moving</li>
+                  <li>The same 3-second wait applies when a creature already in the room first notices you</li>
+                  <li>Leaving a room and coming back no longer triggers an instant advance left over from your earlier visit</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Monsters Sometimes Appeared Without Any Message</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>With <code className="text-amber-300">BATTLEBRIEF</code> on, you never saw a monster appear, wander in, or wander off. <code className="text-amber-300">BATTLEBRIEF</code> now does only what the manual describes &mdash; it hides creatures&rsquo; flavor actions and trims combat scroll &mdash; and monsters arriving or leaving are always shown</li>
+                  <li>When a room or item script summons a creature, the player whose action caused it now sees it appear too &mdash; before, only everyone else in the room did</li>
+                  <li>A creature summoned while the player who triggered it is hidden or invisible is still announced to the whole room</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Monsters Could Go After Invisible Players</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Hostile creatures could notice and advance on a player who was invisible or in Phantom Form. Monsters now never pick a hidden, invisible, or Phantom Form player as a target, and a creature whose target vanishes that way gives up on them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: The Elkyri Door Riddle</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Answering the draconic door&rsquo;s riddle correctly announced that the doors swing open, but the door stayed shut. It now actually unlocks and opens</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Stray &ldquo;%b&rdquo; in Item Messages</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Putting things into certain items &mdash; the mortar, a few garments, the hole in the clouds &mdash; showed a literal &ldquo;%b&rdquo; where the item&rsquo;s name belonged (&ldquo;You place a dried herb into %b&rdquo;). The name now appears</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Script text now supports <code className="text-amber-300">%b</code>/<code className="text-amber-300">%B</code>: in an <code className="text-amber-300">IFPREVERB2 PUT</code> block, <code className="text-amber-300">%a</code> is the item being put in and <code className="text-amber-300">%b</code> is the item that owns the script (the container)</li>
+                  <li><code className="text-amber-300">IFVAR ITEMFLAG&lt;name&gt;</code> works with any item flag, not just DYE and SKIN &mdash; e.g. <code className="text-amber-300">ITEMFLAGCRAFTABLE</code>, <code className="text-amber-300">ITEMFLAGDYEABLE</code>, <code className="text-amber-300">ITEMFLAGLIGHTABLE</code></li>
+                  <li>Newly forged weapons, armor, and shields now store their sell value in <code className="text-amber-300">CraftedValue</code> (shown by <code className="text-amber-300">@iex</code>) instead of Val1, like every other crafted item. Items forged earlier keep their Val1 value and sell for exactly what they did before</li>
+                  <li>Script macros no longer drop steps like <code className="text-amber-300">UNLOCK</code> and <code className="text-amber-300">OPEN</code> &mdash; the cause of the stuck elkyri door</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.0.0 &mdash; September 24, 2026</h2>
+            <p className="text-gray-400 mb-3">A major addition: regional currencies. The original game defined its own money for the far-flung regions &mdash; kragenmarks in Kragenholm and the Deep Realms, shards in Idemmu Ag and Salicae, darktars in Ilzar &mdash; but until now nothing actually used them, so every shop, bank, and healer in those regions charged and paid gold, silver, and copper. Monsters there now carry the local currency, and the local merchants, banks, and physicians deal in it. Alongside that, the Legerdemain skill finally does what it says: appraising items, filching, picking pockets, and shoplifting are all live. Skinning now depends on Sagecraft and Wood Lore the way the manual always described, being stunned actually stops you from doing things, and running out of flight while over open sky now drops you to the ground instead of leaving you stranded in mid-air.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Regional Currencies</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Kragenholm and the Deep Realms use <strong>kragenmarks</strong> (12 to the gold crown), Idemmu Ag and Salicae use <strong>shards</strong> (3 to the crown), and Ilzar uses <strong>darktars</strong> (100 to the crown)</li>
+                  <li>Monsters in those regions carry the local money &mdash; always in Ilzar, most of the time in the Deep Realms and Idemmu Ag, exactly as the original region definitions set it. A creature decides once what it&rsquo;s carrying, so its dropped coins, the coins in any chest it leaves, a <code className="text-amber-300">SEARCH</code> of its corpse, and a successful <code className="text-amber-300">ROB</code> all pay in the same currency</li>
+                  <li>Shops in those regions sell at their posted local prices and pay local money for anything you <code className="text-amber-300">SELL</code>; <code className="text-amber-300">APPRAISE</code> quotes in it too. Banks there keep a separate account in their own currency (<code className="text-amber-300">DEPOSIT 50</code>, <code className="text-amber-300">WITHDRAW 50</code>, <code className="text-amber-300">BALANCE</code>), and physicians charge in it</li>
+                  <li><code className="text-amber-300">GET</code>, <code className="text-amber-300">DROP</code>, <code className="text-amber-300">GIVE</code>, and <code className="text-amber-300">SPLIT</code> all work with regional coins &mdash; e.g. <code className="text-amber-300">GIVE 20 KRAGENMARKS TO ARIS</code> or <code className="text-amber-300">SPLIT 90 SHARDS</code></li>
+                  <li><code className="text-amber-300">WEALTH</code> now lists only what you&rsquo;re actually carrying: one line for your crowns, shillings, and pennies (leaving out any you have none of), then one line for each regional currency you hold</li>
+                  <li>There&rsquo;s no money changer &mdash; the original game never had one. Money earned in a region is spent in that region</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Legerdemain &mdash; Appraise, Filch, Pickpocket, and Shoplift</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">APPRAISE &lt;item&gt;</code> away from a merchant now gives your own estimate of what a merchant would pay. It&rsquo;s within 40% at level 1, tightening by 10% per level, and exact from level 5. Appraising the same item again gives the same answer</li>
+                  <li><code className="text-amber-300">FILCH</code> (or <code className="text-amber-300">STEAL</code>) <code className="text-amber-300">&lt;item&gt;</code> picks something up off the ground without anyone seeing you do it. If the attempt fails you still get the item, but everyone sees you pick it up &mdash; or sees &ldquo;something&rdquo; pick it up, if you&rsquo;re invisible</li>
+                  <li><code className="text-amber-300">ROB</code> or <code className="text-amber-300">PICKPOCKET</code> (shortest form <code className="text-amber-300">PICKP</code> &mdash; <code className="text-amber-300">PICK</code> is still lockpicking) <code className="text-amber-300">&lt;player or creature&gt;</code> lifts coins from their purse. A player who notices only feels a tug on their coin purse, never who did it. <code className="text-amber-300">ROB</code> or <code className="text-amber-300">STEAL</code> with no target, in a shop, lifts coins from the till &mdash; up to one gold crown&rsquo;s worth per skill level</li>
+                  <li>Your odds improve with Agility, Quickness, and skill, at night, in an unlit dark room, and while invisible; a player target&rsquo;s Perception works against you. Every attempt shows your chance and roll, is capped at 95%, and costs 5 seconds of round time (halved by Haste)</li>
+                  <li>Each player, creature, or shop can only be robbed once per game day, and a successful rob earns 50 experience per Legerdemain level</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Skinning Now Uses Sagecraft and Wood Lore</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SKIN</code> never checked any skill at all &mdash; anyone could do it and it never failed. It now requires Sagecraft or Wood Lore, as the manual describes, and can fail; a failed attempt ruins the corpse</li>
+                  <li>Both skills raise your odds of success, and higher Sagecraft can salvage a second or even third specimen from the same creature</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Being Stunned Actually Stops You</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A stunned player could still <code className="text-amber-300">ADVANCE</code>, <code className="text-amber-300">RETREAT</code>, <code className="text-amber-300">FLEE</code>, and even walk out of the room. Now no physical action works until the stun wears off &mdash; you can still look around, check your status, talk, and use telepathy</li>
+                  <li>The psychic shock from losing a summoned creature is now a real stun rather than just a round-time delay</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: Bows and Crossbows Hold Up Better in a Weapon Clash</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Light missile weapons were damaged by almost every weapon clash, often before their owners even reached a hunting ground. Bows, crossbows, slings, and blowguns now get a large bonus to clash resistance</li>
+                  <li>They get an extra bonus if made from mirmach, oak, rosewood, or uquart, and +10/+20/+30 when enchanted, ensorcelled, or eldritch &mdash; including crafted bows whose enchantment never showed in their name</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Combat Tweaks</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A creature that&rsquo;s already on the ground &mdash; knocked down, asleep, or still getting up &mdash; can&rsquo;t be knocked down again until it&rsquo;s back on its feet; the critical hit stuns it instead. The same goes for players, who must be standing to be knocked down</li>
+                  <li><code className="text-amber-300">ADVANCE</code> on a creature that another creature is guarding now runs into the guard, and you advance on the guard instead &mdash; matching how <code className="text-amber-300">ATTACK</code> already worked</li>
+                  <li>Earth Wave&rsquo;s knockdown now lasts as long as its stun, instead of the creature being back up within a few seconds</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Stranded in the Sky When Flight Ran Out</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>If a Fly spell ran out &mdash; including while you were logged out &mdash; or you let go of psionic Flight, or had Fly dispelled while over open sky, you were left &ldquo;standing&rdquo; in mid-air, unable to <code className="text-amber-300">DESCEND</code> and with no way down. You now fall to the ground below and take some crushing damage (never enough to kill you)</li>
+                  <li>Drakin, who fly on their own wings, no longer get grounded when a Fly spell on them runs out, and anyone who can still fly is put back in the air if they log in over open sky</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Mushroom Wine and Stew at the Drunken Murg</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The tavern in Kragenholm advertised mushroom wine and mushroom stew, but <code className="text-amber-300">BUY MUSHROOM WINE</code> said it wasn&rsquo;t for sale &mdash; the items were stocked under a different name. They now sell as advertised</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: GM Tools for Regional Money</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@set</code> / <code className="text-amber-300">@setp</code> accept any currency name for a player&rsquo;s purse (<code className="text-amber-300">@set kragenmarks 50</code>) and <code className="text-amber-300">bank</code> + the name for their bank account (<code className="text-amber-300">@set bankshards 20</code>), plus the new <code className="text-amber-300">bankgold</code>/<code className="text-amber-300">banksilver</code>/<code className="text-amber-300">bankcopper</code>. <code className="text-amber-300">@peek</code> reads them, and <code className="text-amber-300">@qstat</code>, <code className="text-amber-300">@edpl</code>, and the admin panel show them</li>
+                  <li><code className="text-amber-300">@rdata</code> now shows a room&rsquo;s region and which currency it uses</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.14.0 &mdash; September 23, 2026</h2>
+            <p className="text-gray-400 mb-3">Today&rsquo;s headline is a real progression bug: several non-combat sources of experience (crafting, lockpicking, first aid) added XP directly without ever checking for a level-up themselves, relying on some later action to notice a level threshold had been crossed. But the two most common such actions &mdash; <code className="text-amber-300">STATUS</code> and <code className="text-amber-300">EXP</code> &mdash; quietly advanced a character&rsquo;s level to match without granting any of the level-up bonus, and once that happened it could never self-correct, leaving Body Points/Fatigue/Mana/Psi stuck at their starting values no matter how many levels followed. A related formula bug meant Mana was also being padded by Willpower on top of Empathy at every level and regen tick; it&rsquo;s now Empathy alone, matching the manual. Also fixed: a stunned player could stay stunned for up to a full minute instead of the intended few seconds, <code className="text-amber-300">Divine Blessing</code> couldn&rsquo;t be cast on a summoned or controlled creature (the same gap <code className="text-amber-300">Haste</code>/<code className="text-amber-300">Strength</code>/<code className="text-amber-300">Agility</code>/<code className="text-amber-300">Mystic Armor</code> had before last release), and turquoise was quietly worthless to sell no matter its quality.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Body Points, Fatigue, Mana, and Psi Could Stop Growing With Level</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Several non-combat experience sources (crafting, lockpicking, healing/first aid) added XP straight to a character&rsquo;s total without ever triggering a level-up check, leaving it to whatever happened next to notice. But checking <code className="text-amber-300">STATUS</code> or <code className="text-amber-300">EXP</code> before your next kill silently synced your level to match your experience with zero stat bonus granted &mdash; and because the next real check saw your level already &ldquo;caught up,&rdquo; the missed bonus could never be recovered on its own. A character who leveled this way could be stuck at their starting Body Points/Fatigue/Mana/Psi indefinitely</li>
+                  <li>Fixed at the source: the level-up bonus is now applied for every level actually gained, no matter which code path is the one that notices the change &mdash; including a big multi-level jump from a single large experience award, which now grants every level&rsquo;s worth of bonus instead of just one</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Mana Wrongly Scaled With Willpower</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Both the per-level Mana bonus and passive Mana regeneration were factoring in Willpower alongside Empathy. Willpower governs Psi, not Mana &mdash; Mana growth and regen are now based on Empathy alone</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Player Stuns Could Drag On for Up to a Minute</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A melee crit&rsquo;s stun is only meant to last 3&ndash;6 seconds, and always has for monsters &mdash; but a stunned player&rsquo;s flag was only ever cleared by the once-a-minute background regen tick, so it could visibly pin a player for up to a full minute (averaging around 30 seconds) after it should have worn off. It now clears the instant your next command is processed, as soon as it&rsquo;s actually expired</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Divine Blessing Couldn&rsquo;t Target a Summoned or Controlled Creature</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">Divine Blessing</code> still used old player-only targeting logic, so casting it on your own caretaker or another player&rsquo;s pet failed with &ldquo;you don&rsquo;t see it here&rdquo; &mdash; the same gap <code className="text-amber-300">Haste</code>/<code className="text-amber-300">Strength</code>/<code className="text-amber-300">Agility</code>/<code className="text-amber-300">Mystic Armor</code> had before last release&rsquo;s fix. It now recognizes a summoned/controlled creature by name and grants it the same combat bonus for a minute</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Turquoise Always Sold for 1 Copper</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Turquoise was missing entirely from the gem valuation table, so selling or appraising it to a merchant fell through to a generic near-zero fallback regardless of quality or size. It now has a proper base value like every other gem</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.13.0 &mdash; September 21, 2026</h2>
+            <p className="text-gray-400 mb-3">A big batch driven almost entirely by player reports about summoned and controlled creatures. Commanding one to <code className="text-amber-300">ATTACK</code> used to permanently strip its guard/follow duty instead of just pausing it, its kills paid the summoner zero experience, and none of <code className="text-amber-300">Haste</code>, <code className="text-amber-300">Strength</code>, <code className="text-amber-300">Agility</code>, <code className="text-amber-300">Mystic Armor</code>, or the Globe of Protection family actually took effect on it despite the spell reporting success &mdash; all four traced back to the same root cause, a buff being written to a throwaway copy of the creature instead of the real one. Monster pacing got two genuine fixes too: a hostile monster now waits a beat (1&ndash;2 seconds) after first spotting you before it advances, instead of jumping a player who&rsquo;s just passing through a room, and a knocked-down creature now stays down long enough for a follow-up hit to actually land the automatic critical it&rsquo;s supposed to grant, instead of scrambling back up almost instantly. Also fixed: <code className="text-amber-300">RUB</code>/<code className="text-amber-300">TAP</code>/<code className="text-amber-300">CONCENTRATE</code> could target an unworn spare copy of an item instead of the one you&rsquo;re actually wearing, silently no-opping any script gated on it being equipped; <code className="text-amber-300">REPAIR</code> only ever recognized Weaponsmithing at a forge, so a Wood Lore crafter could never repair the bows they themselves made; and a scripting-engine bug was quietly leaking Fayd&rsquo;s &ldquo;Day of Rebellion&rdquo; region&rsquo;s ambient war echoes into unrelated rooms clear across the map. On the lighter side: commands can now be chained on one line with <code className="text-amber-300">;</code> like a MUD client, sheep can be sheared for wool without killing them, and yes &mdash; <code className="text-amber-300">CURSE ME</code> does what you remember.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Summoned &amp; Controlled Creatures &mdash; Guard Duty, Kill XP, and Buffs</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">COMMAND ATTACK</code> deliberately stops a creature from following you while it fights (so a room move can&rsquo;t yank it off a live target), but nothing ever resumed that duty afterward &mdash; a creature commanded to attack even once was permanently detached from guarding and following you. It now automatically resumes guarding/following as soon as its fight ends</li>
+                  <li>A kill by your summoned or controlled creature only ever sent you a flavor-text notice (&ldquo;Your skeleton has slain a goblin!&rdquo;) with zero actual reward. It now runs the same experience/loot/treasure/level-up pipeline a normal kill does</li>
+                  <li><code className="text-amber-300">Haste</code>, <code className="text-amber-300">Strength I/II/III</code>, <code className="text-amber-300">Agility I/II/III</code>, <code className="text-amber-300">Mystic Armor</code>, and the Globe of Protection/Mass Protection/Spectral Shield/Ride the Lightning family all reported a successful cast on a summoned/controlled creature but never actually applied &mdash; the write was silently landing on a temporary snapshot instead of the creature the game actually simulates. All five now take effect for real</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Monsters Jumped Players Instantly, and Knockdowns Ended Too Fast</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A hostile monster used to lock onto and advance on a player the very first moment it noticed them &mdash; often within a second or two of just walking through a room. It now waits a randomized 1&ndash;2 seconds after first spotting someone before actually closing in, giving players passing through a beat to keep moving</li>
+                  <li>A monster guarded by another creature or a player using Combat Maneuvering&rsquo;s <code className="text-amber-300">GUARD</code> already couldn&rsquo;t be approached &mdash; hostile monsters now respect that too, announcing that they tried to advance but were blocked, instead of aggroing the guarded player anyway</li>
+                  <li>A knocked-down creature used to recover on its own very next action tick, which could be faster than a player&rsquo;s follow-up swing &mdash; so the &ldquo;any hit against a downed target is an automatic critical&rdquo; bonus (added last release) rarely had a real target to apply to. Knockdown now lasts a proper 3&ndash;6 second window, the same way Stun already does</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: RUB/TAP/CONCENTRATE Could Grab the Wrong Copy of an Item</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>If you were carrying a second, unworn copy of an item (e.g. a spare amulet next to the one you&rsquo;re wearing), <code className="text-amber-300">RUB</code>/<code className="text-amber-300">TAP</code>/<code className="text-amber-300">CONCENTRATE</code> and similar verbs always matched the unworn one first. Since most such effects are scripted to only work while the item is actually equipped, this silently did nothing. Worn and wielded items are now checked before plain inventory</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: REPAIR Excluded Wood Lore Crafters</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">REPAIR</code> only ever checked for a forge and Weaponsmithing skill, so a Wood Lore crafter could never repair a damaged bow or other wooden weapon &mdash; not even one they crafted themselves. It now recognizes Wood Lore at a fletcher&rsquo;s workshop for wood-substance weapons, the same split <code className="text-amber-300">CRAFT</code>/<code className="text-amber-300">WORK</code> already use</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: A Scripting Bug Leaked Ambient Echoes Into the Wrong Rooms</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The script interpreter&rsquo;s <code className="text-amber-300">RANDOM</code> command silently dropped its optional offset argument, which several original scripts rely on to shift a roll into an absolute range (e.g. picking a specific room number). Fayd&rsquo;s &ldquo;Day of Rebellion&rdquo; region script used this to pick one of its own war-torn rooms to echo ambient text into &mdash; with the offset dropped, the roll landed as a tiny 1&ndash;24 value instead, and any unrelated room that happened to share that number (a report traced it to the Foundry) received Fayd&rsquo;s rebellion-era ambient echoes out of nowhere. Fixed at the source, so every script depending on this pattern is corrected</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Chain Commands on One Line with &ldquo;;&rdquo;</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Like most MUD clients, multiple commands can now be stacked in a single line separated by <code className="text-amber-300">;</code> &mdash; <code className="text-amber-300">retreat; go east</code> or just <code className="text-amber-300">ret;e</code>. Quoted speech and <code className="text-amber-300">SAY</code> are exempt, since a semicolon there is just punctuation, not a separator</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Sheep Can Be Sheared Without Killing Them</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">GET</code> on a live sheep attempts to catch and clip it for wool instead of just refusing &mdash; a Dyeing/Weaving skill check against an awake sheep (miss and it dodges, badly miss and it bites back), or a guaranteed clip against one put to sleep with the Slumber spell. A dead sheep&rsquo;s wool is ruined; skin it for a pelt instead</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Also Today</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">CURSE ME</code> is back &mdash; a private &ldquo;Having a bad day?&rdquo; only you ever see</li>
+                  <li>Wolflings must unwield any weapon and shield before <code className="text-amber-300">TRANSFORM</code>-ing into wolf form, instead of transforming with them still equipped</li>
+                  <li>GM command <code className="text-amber-300">@lwho</code> now shows each online character&rsquo;s account/login name alongside their character name</li>
+                  <li>A container script&rsquo;s <code className="text-amber-300">IFIN</code> check now sees items a player has actually put into a room container at runtime, not just a script&rsquo;s own starting contents</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.12.0 &mdash; September 19, 2026</h2>
+            <p className="text-gray-400 mb-3">A big one today. The headline is a real combat-mechanics addition: a stunned or knocked-down target &mdash; player or monster &mdash; is now defenseless, and any successful hit against one is an automatic critical, not just a lucky roll. Player stuns and knockdowns are a genuinely new mechanic as part of this; monsters have always been able to stagger you, but nothing ever actually happened when they did. <code className="text-amber-300">FLEE</code> also got a serious overhaul: it never learned about the newer <code className="text-amber-300">ADVANCE</code>/<code className="text-amber-300">RETREAT</code> system, so it could leave other attackers still locked onto you even after a &ldquo;successful&rdquo; escape, and it wrongly refused to work at all unless you&rsquo;d already landed a hit. Three new player conveniences: <code className="text-amber-300">SAYTO</code> for addressing one person publicly, <code className="text-amber-300">WRITE</code>/<code className="text-amber-300">READ</code> for leaving notes on writable items, and <code className="text-amber-300">INVENTORY</code> now accepts a search term. On the bug side: missile ammo bundles are finally tracked as real stacks instead of behaving like a single unit no matter how many you&rsquo;re carrying, a subtle bug could silently drop the message and effects of certain scripted room arrivals, and several item messages had an awkward doubled word like &ldquo;retrieve your some steel.&rdquo;</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Automatic Critical Hits Against Stunned or Knocked-Down Targets</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A stunned or knocked-down opponent can&rsquo;t defend itself, so any successful hit against one now lands as an excellent/critical hit automatically &mdash; not just when the attack roll itself happens to be a natural 96 or better. This applies both ways: players benefit from it against staggered monsters, and monsters benefit from it against a staggered player</li>
+                  <li>Player stuns and knockdowns are new: an excellent hit against a healthy, standing player now has a chance to stun them (briefly unable to act) or knock them down (forced to stand back up before doing anything else), mirroring the stagger mechanic monsters have always had. A flying player can only be stunned, never knocked down, since there&rsquo;s no ground to knock them onto</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: FLEE Didn&rsquo;t Know About ADVANCE/RETREAT</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">FLEE</code> predates the <code className="text-amber-300">ADVANCE</code>/<code className="text-amber-300">RETREAT</code> melee system and was never updated for it. If more than one monster had closed in on you, fleeing only broke off the most recent one &mdash; the rest stayed locked on as if you&rsquo;d never left. It now fully disengages from everything, the same way <code className="text-amber-300">RETREAT</code> does</li>
+                  <li><code className="text-amber-300">FLEE</code> also refused to work at all (&ldquo;You are not in combat&rdquo;) unless you&rsquo;d already landed an attack &mdash; so a player who&rsquo;d only been advanced on or noticed a monster closing in, but hadn&rsquo;t swung yet, had no way to run. It now works whenever you&rsquo;re actually engaged, attack or not</li>
+                  <li>A panicked flight now only ever picks a compass direction (N/S/E/W/NE/NW/SE/SW) out of the room, never up, down, or through a portal</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: SAYTO &mdash; Speak Publicly to One Person</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SAYTO &lt;player&gt; &lt;message&gt;</code> is a public statement addressed to someone specific &mdash; everyone in the room hears it (unlike <code className="text-amber-300">WHISPER</code>, which is private), but it&rsquo;s clear who you&rsquo;re speaking to: others see &ldquo;<em>Name</em> says to <em>Player</em>, &lsquo;message&rsquo;&rdquo; and you see &ldquo;You say to <em>Player</em>, &lsquo;message&rsquo;&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: WRITE and READ &mdash; Leave a Note on an Item</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Items scripted as writeable (like a blank note) can now actually be written on and read back &mdash; <code className="text-amber-300">WRITE &lt;item&gt; WITH &lt;text&gt;</code> followed by <code className="text-amber-300">READ &lt;item&gt;</code>. Previously the writeable flag was silently ignored, <code className="text-amber-300">WRITE</code> was just flavor text with no real effect, and nothing was ever saved to read back</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: INVENTORY Accepts a Search Term</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">INV vial</code> now lists every vial you&rsquo;re carrying &mdash; glass, onyx, crystal, whatever &mdash; instead of making you scroll your whole pack looking for it. Narrow further with an adjective (<code className="text-amber-300">INV glass vial</code>) the same way <code className="text-amber-300">GET</code>/<code className="text-amber-300">DROP</code> already let you target items. Plain <code className="text-amber-300">INVENTORY</code> still lists everything as before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Ammo Bundles Behaved as a Single Unit</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Loading a bow or crossbow from &ldquo;some arrows&rdquo; consumed the entire stack in one shot, no matter how many were actually in it &mdash; a bundle of 24 behaved exactly like a single arrow. Bundles now track their real count and deplete one unit at a time</li>
+                  <li>Bundling machines like the Bowyer &amp; Fletcher&rsquo;s in Faydindria couldn&rsquo;t distinguish between two same-named deposit slots (arrows vs. bolts) &mdash; the first one always won even when it explicitly rejected what you were putting in it. Ordinal targeting (<code className="text-amber-300">PUT bolts IN 2nd slot</code>) now actually reaches the second one</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Some Scripted Room Arrivals Silently Dropped Their Message</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A script that moves a player into a room with its own arrival reaction (a warning, damage, or being sent right back) could compute that reaction correctly but never actually deliver it &mdash; the player was just silently teleported with no explanation. This affected every script using that mechanism, including the Dark Cathedral&rsquo;s inner chancel, whose guardian wards deal a punishing shock and send you straight back out if you&rsquo;re not carrying a properly bonded ritual dagger</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Doubled Article in Item Messages</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Several messages read awkwardly with a repeated word, like &ldquo;You hand over your money and retrieve your some steel&rdquo; when buying raw material from a merchant. Buying, loading a weapon with ammo, repairing a weapon at the forge, and molding/polishing a gem are all corrected</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.11.0 &mdash; September 18, 2026</h2>
+            <p className="text-gray-400 mb-3">The headline is a follow-up correction to yesterday&rsquo;s monster-resistance fix: the penalty math had a hidden bug that doubled up a baseline penalty, making most monsters far more resistant to magic than intended, and a resisted cast still announced &ldquo;Success!&rdquo; right before saying the target resisted &mdash; which read exactly like the two-chance bug it was supposed to fix, even though the roll itself really was a single one. Both are corrected, and GMs now properly bypass resistance checks entirely, as their guaranteed casting success was always meant to imply. Also today: weapons damaged in combat are now sheathed automatically instead of staying in your hand where the next clash could destroy them outright, only creatures with legs &mdash; and not the truly massive &mdash; can be knocked off their feet in melee, dyeing an item can no longer erase an existing adjective like a metal&rsquo;s type, <code className="text-amber-300">WORK</code> now accepts a metal&rsquo;s full descriptive name and never drops part of it when matching by a shorter word, and a short, pluralized guess like <code className="text-amber-300">SELL BAS</code> can no longer grab a completely unrelated item. Three smaller content fixes round out the day.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Monster Resistance Penalty Was Miscalibrated, and Falsely Announced &ldquo;Success&rdquo; Before Failing</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Yesterday&rsquo;s fix made resistance a modifier on your single casting roll instead of a second roll, which was the right idea &mdash; but the formula used to size that modifier effectively applied an unconditional extra penalty even when your skill and the monster&rsquo;s resistance were evenly matched, making most monsters resist far more often than intended, sometimes almost always. That baseline is removed: an even matchup now costs no penalty at all, and only a real skill deficit or a genuinely tough monster reduces your odds</li>
+                  <li>Separately, a cast that ended up resisted still displayed &ldquo;[Success: X%, Roll Y] Success!&rdquo; before the message explaining the target resisted &mdash; two contradictory lines for what is mechanically one outcome. A resisted cast now correctly reads &ldquo;Failure&rdquo; from the start</li>
+                  <li>GMs&rsquo; casting success is hardcoded to 100% so their spells never fail for testing purposes, but a resisted cast could still slip through that guarantee. Resistance checks are now fully bypassed for GMs, matching how their cast-success roll already worked</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Damaged Weapons Are Sheathed Automatically</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A weapon that takes damage in a clash is now put away the instant it happens, with a warning that you sheathed it before it could break completely. Previously it stayed in hand, and a player who didn&rsquo;t notice the damage message could keep swinging until the next clash destroyed the weapon outright</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Melee Knockdown Applied to Every Creature Equally</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>An excellent melee hit had a chance to knock any target off its feet, including creatures with no feet to knock out from under them &mdash; a rattlesnake could be &ldquo;knocked off its feet&rdquo; the same as a troll. Knockdown now checks the creature&rsquo;s actual anatomy (legs or no legs) and size; giants, dragons, and other truly massive creatures are also too big to topple. A creature that can&rsquo;t be knocked down still gets stunned instead on the same roll, so an excellent hit still has some effect on it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Dyeing an Item Could Erase Its Existing Adjectives</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">DYE</code> used to write a dye&rsquo;s color words into fixed slots on the target item, overwriting whatever adjective already happened to live there. Dyeing a piece of elkyri metal, for example, could erase &ldquo;elkyri&rdquo; from its name entirely. Dye colors are now added in front of whatever&rsquo;s already there instead of overwriting it; if there truly isn&rsquo;t room for both, dyeing is refused with a message rather than silently destroying something</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: WORK Could Drop a Metal&rsquo;s Other Adjectives, and Now Accepts Its Full Name</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Working a decorated metal like &ldquo;sparkling green steel&rdquo; by its base name alone (<code className="text-amber-300">WORK STEEL</code>) kept only &ldquo;steel&rdquo; and silently dropped &ldquo;sparkling&rdquo; and &ldquo;green&rdquo; from the finished item &mdash; a weaponsmith crafting a kite shield from that metal ended up with a plain steel shield. All of a metal&rsquo;s adjectives are now preserved no matter which word you worked it by. <code className="text-amber-300">WORK</code> also now accepts a metal&rsquo;s complete descriptive name (<code className="text-amber-300">WORK SPARKLING GREEN STEEL</code>), not just a single word from it &mdash; this also benefits <code className="text-amber-300">REINFORCE</code>, which shares the same lookup</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Short, Pluralized Item Names Could Match the Wrong Item</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Typing a short item name ending in &ldquo;s&rdquo; (treated as a possible plural) could match a completely unrelated item if stripping the &ldquo;s&rdquo; left a very short leftover that happened to prefix another item&rsquo;s name &mdash; <code className="text-amber-300">SELL BAS</code>, intended for a basinet, could instead sell a backpack, since &ldquo;bas&rdquo; minus its &ldquo;s&rdquo; is &ldquo;ba,&rdquo; which prefixes &ldquo;backpack&rdquo; too. This affected every item-targeting command, not just <code className="text-amber-300">SELL</code>. A minimum length now applies to that shortened form, so a coincidental two-letter overlap like this can no longer happen</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Subway Control Panel&rsquo;s Lights Never Updating</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Turning the knob on the panel in the Subway station-master&rsquo;s office correctly cycled its internal state and said the lights changed, but looking at the panel always showed the same description no matter what you&rsquo;d turned it to. Examining a room item now correctly runs the scripts that report on its current state, the same way examining a carried item already did</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Subway Token Machine Taking Your Coins and Giving Nothing</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">PAY</code> at the Subway terminal&rsquo;s token machine deducted your coins immediately but never followed through on the delayed &ldquo;clunk&rdquo; step that actually hands you the token</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Deeplander Battleaxe Not For Sale</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The Blacksmith shop&rsquo;s sign advertised a Deeplander Battleaxe for 500 Kragenmarks, but it referenced an item number nothing in the game actually defines, so it could never be bought under any name. It&rsquo;s now a real, purchasable weapon</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.10.0 &mdash; September 17, 2026</h2>
+            <p className="text-gray-400 mb-3">A big batch today. Two psionic disciplines that never worked &mdash; <code className="text-amber-300">Strengthen Steel</code> and <code className="text-amber-300">Transform Steel</code> &mdash; are real now, and <code className="text-amber-300">Yshtarin&rsquo;s Confounding Translocation</code> is implemented for the first time. Two new GM commands, <code className="text-amber-300">@freenum</code> and <code className="text-amber-300">@spawning</code>. The headline fix, though, is how monster magic and psionic resistance actually works: monsters were quietly getting two independent chances to shrug off a spell or psionic attack instead of one, which is not how the original game worked &mdash; that&rsquo;s corrected everywhere it applied, across every offensive spell and psionic discipline in the game. Also: <code className="text-amber-300">Earth Wave</code> finally stuns and knocks down its target the way it was always documented to, snared creatures (webbed, tentacled, entangled) can&rsquo;t recover from being knocked down or asleep until the snare itself wears off, and eight smaller bugs are fixed, including a room players could become stuck in forever.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Monster Magic and Psionic Resistance</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Casting a spell or projecting a psionic discipline at a resistant monster used to roll twice: once for your own casting skill, and then &mdash; only if that already succeeded &mdash; a completely separate roll for whether the monster resisted. That gave resistant monsters an unintended second chance to avoid being affected. Resistance now works as a modifier on the single roll you already made, lowering your effective chance to affect that specific target, instead of being a second independent check stacked on top of it. This touches every direct-damage spell, Chain Lightning and Flaming Arrows&rsquo; per-target rolls, Siryx&rsquo;s Terrible Tentacles, Slumber, Web, Sunray, Fear, Charm, Silence, Imprison, and offensive psionic disciplines</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Strengthen Steel Actually Does Something</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Mind over Matter discipline 7 has been a pure flavor no-op since it was added &mdash; activating it printed a message and nothing else happened. While maintained, it now grants a wielded steel weapon +15 to attack rating and +15 to its break-resistance in a weapon clash, matching its documented &ldquo;more sturdy and sharper&rdquo; effect. Both bonuses disappear the instant you deactivate it or stop wielding a steel weapon</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Transform Steel</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Mind over Matter discipline 13 (level 15) permanently transforms a wielded steel weapon into elkyri, randar, or truesteel and imprints a random +3 to +17 magical bonus &mdash; &ldquo;the results are unpredictable,&rdquo; per the discipline&rsquo;s own description. Refuses anything that isn&rsquo;t a wielded steel weapon, and refuses a weapon that&rsquo;s already magically enchanted rather than overwriting it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Yshtarin&rsquo;s Confounding Translocation</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Spell 246 sends up to the first four creatures in your <code className="text-amber-300">TARGET</code> list to a marked room &mdash; the mirror image of Bend Space I: the caster stays put and the targets go instead. A moved creature loses track of what it was attacking. <code className="text-amber-300">CAST</code> at an unmarked or invalid mark number reports the target location as invalid rather than silently failing</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New GM Commands: @freenum and @spawning</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@freenum &lt;item|room|monster|noun|adj&gt; [count]</code> lists unused numbers in a numbering space &mdash; gaps left by deleted content plus a safe unused block above the highest number in use &mdash; for finding a number to practice scripting with, instead of guessing</li>
+                  <li><code className="text-amber-300">@spawning room off/on</code> or <code className="text-amber-300">@spawning world off/on</code> toggles natural monster spawning for the room you&rsquo;re standing in, or the entire game, without affecting manually staged <code className="text-amber-300">@spawn</code>/<code className="text-amber-300">@genmon</code> monsters</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Earth Wave Stuns and Knocks Down Its Target</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Earth Wave was a plain damage spell with no secondary effect. A successful hit that doesn&rsquo;t kill its target now also stuns it briefly and knocks it down, matching its documented &ldquo;stuns, knocks down&rdquo; description</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Snared Creatures Stay Down Until the Snare Clears</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A knocked-down or sleeping creature that&rsquo;s also currently webbed, tentacled, or (for a player) entangled in roots no longer recovers on schedule &mdash; it stays down until the snare itself wears off, then recovers normally. Also fixed a related bug where a summoned or controlled creature specifically could scramble back to its feet while still snared, when an ordinary monster in the same situation already correctly couldn&rsquo;t</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: TARGET Command&rsquo;s Nine-Creature Cap</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">TARGET</code> capped out at 6 creatures; it&rsquo;s meant to allow 9 (Chain Lightning, Flaming Arrows, and Siryx&rsquo;s Terrible Tentacles all benefit), with only Yshtarin&rsquo;s Confounding Translocation limited to the first four of whatever&rsquo;s targeted</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Bend Space I Bringing Along a Following Pet</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Bend Space I is documented to teleport only the caster, but it was also dragging along any summoned creature (elemental, familiar, guard) currently set to follow. Bend Space II, which is meant to bring your whole group and their pets, is unaffected</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Bend Space II Leaving Group Members Behind</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A group member who was sitting, laying down, or still in round time got silently dropped from the group by Bend Space II instead of being swept along &mdash; that &ldquo;can&rsquo;t keep up&rdquo; rule belongs to walking through an exit, not to a spell that teleports the whole group magically. Everyone in the group now arrives together regardless of position or round time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Speed (Psi 42) Surviving Logout</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Deactivating the Speed discipline by logging out instead of typing <code className="text-amber-300">PSI 42</code> again left its round-time-halving effect permanently active on the character, even though <code className="text-amber-300">PSI</code>&rsquo;s own listing correctly showed it as inactive. Logging back in now correctly clears it, the same way Flight already does</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: GM Login/Logout Announcements</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A GM connecting or disconnecting normally &mdash; not hidden, not invisible &mdash; still triggered the global &ldquo;has just entered/left the Realms&rdquo; announcement every player sees. GMs log in and out frequently for admin work; that announcement (and the matching room-arrival line) is suppressed for them now, the same as it already was for a hidden or invisible GM</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Overly Fast Spawning at the City Wall</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Room 1070&rsquo;s spawn probabilities summed to 204% per check &mdash; a spectral lord and a rakshasha alone were each rolling at 94% and 68% &mdash; producing near-constant spawns. Rescaled down to roughly half that, matching how the same over-spawning bug was fixed elsewhere before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: A Room Players Could Get Stuck in Forever</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The cloud room high above the ground &mdash; meant to toss you around briefly and then drop you back to earth &mdash; never actually triggered its own drop. Two separate script bugs conspired to keep it from ever firing; both are fixed, so the timed fall out of the clouds works again</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: SKIN Command Double Space</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SKIN</code> reported skinning &ldquo;a&nbsp;&nbsp;ghoul&rdquo; with a double space before the creature&rsquo;s name, both to the skinner and to the room</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.9.0 &mdash; September 15, 2026</h2>
+            <p className="text-gray-400 mb-3"><code className="text-amber-300">Divine Blessing</code> is a real spell for the first time &mdash; it used to just print a message and do nothing. Also fixed four bugs: <code className="text-amber-300">DESCEND</code> refusing to land you when you&rsquo;re already as low as you can fly, <code className="text-amber-300">SEARCH</code> letting you skip its own round-time delay entirely, Body Restoration claiming to heal someone who was already at full body points, and every bow, instrument, and piece of jewelry or woven cloth crafted outside a forge selling for a single copper no matter how it was made.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Divine Blessing Actually Does Something</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">Divine Blessing</code> (spell 347) has sat in the spellbook as a pure no-op &mdash; casting it printed a flavor message and nothing else happened. The original documentation was mislabeled under a typo (&ldquo;Diving Blessing&rdquo;), which is likely why the effect was lost: it grants +3 ranks of weapon skill for one minute, on yourself or another player. Like True Aim, Haste, and Slow, recasting it doesn&rsquo;t stack &mdash; it just resets the timer back to a full minute</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: DESCEND Refusing to Land at Your Lowest Altitude</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Flying and typing <code className="text-amber-300">DESCEND</code> somewhere with no lower point to drop to gave a flat &ldquo;nowhere to descend&rdquo; error. It now lands you instead, matching the documented behavior</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: SEARCH Ignoring Its Own Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SEARCH</code> &mdash; scanning a room, searching a corpse, or searching an item &mdash; never actually checked whether you were still in round time before acting, letting it be spammed with no delay at all. It&rsquo;s gated like every other timed action now</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Body Restoration Claiming to Heal Someone Already at Full Health</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Casting Body Restoration I, II, or III on a target already at full body points still reported &ldquo;healing X body points&rdquo; &mdash; the roll happened, it just silently had nowhere to go. It now correctly says the target is already at full health instead of claiming a heal that never occurred</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Crafted Bows, Jewelry, and Woven Goods Selling for a Single Copper</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Anything finished at a fletcher&rsquo;s bench, jeweler&rsquo;s workbench, or loom &mdash; bows, musical instruments, rings, cloth and leather goods &mdash; never had a real sell value set, so it always sold to a merchant for the shop&rsquo;s absolute minimum regardless of how demanding it was to craft. These items are now priced the same way forged weapons and armor already were: scaled by the crafting skill required and capped at half the raw material&rsquo;s own cost</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v12.8.0 &mdash; September 12, 2026</h2>
+            <p className="text-gray-400 mb-3"><code className="text-amber-300">Slow</code> now works as an offensive spell against monsters instead of only the caster, and two script commands that were parsed but never actually executed &mdash; one-time quest experience awards and a monster permanently changing the world on death &mdash; are wired up for the first time. Also fixed six bugs: skinned trophies always selling for a single copper piece regardless of their real value, a whole class of commands silently failing whenever you typed an item&rsquo;s own displayed name back at it, <code className="text-amber-300">READ</code> ignoring the more common form of item script, <code className="text-amber-300">FLY</code> refusing to work in rooms explicitly built around flying, undead still vulnerable to poison and disease, and a long-unreachable dragon-tribute puzzle in the Deep Realms.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Slow Can Target Monsters</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">Slow</code> (spell 211) could previously only be cast on yourself or another player &mdash; aiming it at a monster returned &ldquo;You don&rsquo;t see &lsquo;X&rsquo; here&rdquo; even when it was standing right there. It now works on any monster in the room, doubling its action interval the same way it already doubles a hasted player&rsquo;s cast time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: AWARD and Monster-Death World-Flag Script Commands</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">AWARD</code>, used in 14 places across 11 script files for one-time quest experience (including 2,500 experience for first crossing the natural bridge deep in the Realms), was parsed but never actually executed. It now grants each reward exactly once per character, no matter how many times the triggering room is revisited</li>
+                  <li>A monster dying can now permanently flip a world flag its own script defines &mdash; used by Ming-K&rsquo;Tuk, the great wyrm guarding the Deep Realms&rsquo; treasure hoard, so that killing him instead of appeasing him no longer leaves his lair&rsquo;s script convinced he&rsquo;s still alive forever after</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Dragon Tribute Puzzle in the Deep Realms</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Giving Ming-K&rsquo;Tuk a valuable tribute always accepted it, but his delayed follow-up &mdash; the roared question you&rsquo;re supposed to flatter him about before he&rsquo;ll let you pass &mdash; never actually fired, because handing an item to a monster wasn&rsquo;t scheduling the script&rsquo;s delayed continuation. The full tribute-then-flattery-then-passage sequence works end to end now</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Skinned Trophies Always Selling for a Single Copper</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Skinning a dead monster never carried over the skin&rsquo;s own script-defined value, so every trophy &mdash; a muldragun claw, a dragon scale, anything skinned from anything &mdash; fell back to a near-zero generic price when sold to a merchant, regardless of how valuable the source creature&rsquo;s hide was meant to be</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Commands Failing When You Type an Item&rsquo;s Own Displayed Name</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Many items display with a built-in article &mdash; &ldquo;some water,&rdquo; for instance &mdash; but typing that back verbatim (<code className="text-amber-300">DRINK SOME WATER</code>) failed to match, since leading articles were only ever stripped before matching a monster or summoned creature&rsquo;s name, not a general item&rsquo;s. <code className="text-amber-300">GET</code>, <code className="text-amber-300">DRINK</code>, <code className="text-amber-300">EAT</code>, and every other item-targeting command strip them now too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: READ Ignoring an Item&rsquo;s Own Script</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">READ</code> only ever checked the less common of an item&rsquo;s two script forms, silently skipping the other &mdash; used by 20 different readable items across 11 script files, including the ragged map in Menelian&rsquo;s Cottage that&rsquo;s supposed to reveal a hidden crevice&rsquo;s location. Both forms fire correctly now, whether the item is still on the ground or already in your pack</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: FLY Blocked in Rooms Explicitly Built Around Flying</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">FLY</code> refused to work in any cave or indoor-tagged room, even ones built entirely around flying &mdash; like a Deep Realms waterfall chamber whose only way down is a pair of exits that can only ever be used while airborne. Rooms that define one of those exits now allow flight regardless of terrain</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Undead Immune to Poison and Disease</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Undead already couldn&rsquo;t bleed from wounds; they now can&rsquo;t be poisoned or diseased either, matching the same &ldquo;no living body to affect&rdquo; logic, whether the source is a monster&rsquo;s bite, weapon venom, or a trap</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v12.7.0 &mdash; September 10, 2026</h2>
             <p className="text-gray-400 mb-3">New enchantment spell <code className="text-amber-300">Disenchant</code> and an optional reagent for <code className="text-amber-300">Siryx&rsquo;s Terrible Tentacles</code>, plus a throttle on how fast Body Restoration and Body Destruction shift your alignment. Also fixed a bug that could strand a flying player in mid-air unable to descend, an experience exploit in weaponsmithing tin weapons, targeting commands for controlled/summoned creatures that only worked with a full name, and several spells that silently consumed their reagent with no &ldquo;turns to dust&rdquo; message to anyone.</p>
 

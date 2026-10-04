@@ -959,6 +959,7 @@ SPELL 524
 SPELLSKILL 141
 SPELLUSE 100
 STRATEGY 501
+TREASURE 10
 TEXD collapses to the ground and turns to dust.
 TEXI The %s merely bounces off the lich!
 TEXS A lich rasps a foul incantation.

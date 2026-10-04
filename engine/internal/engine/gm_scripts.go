@@ -197,6 +197,14 @@ func (e *GameEngine) ApplyParsedData(parsed *gameworld.ParsedData) ScriptApplySt
 	for i := range parsed.BreakMods {
 		e.breakMods[parsed.BreakMods[i].AdjID] = parsed.BreakMods[i].Modifier
 	}
+	for i := range parsed.MoneyDefs {
+		if md := parsed.MoneyDefs[i]; md.ID >= 1 && md.ID <= 9 && md.ExchangeRate > 0 {
+			if e.moneyDefs == nil {
+				e.moneyDefs = map[int]*gameworld.MoneyDef{}
+			}
+			e.moneyDefs[md.ID] = &md
+		}
+	}
 	for _, v := range parsed.Variables {
 		name := strings.ToUpper(v.Name)
 		if !e.namedVarNames[name] {
@@ -273,28 +281,40 @@ func (e *GameEngine) StartCEventLoop() {
 		for range ticker.C {
 			tick++
 			for _, ce := range e.cevents {
-				if ce.Cycles > 0 && tick%ce.Cycles == 0 {
-					room := e.rooms[ce.Room]
-					if room == nil {
-						continue
-					}
-					sc := &ScriptContext{Room: room, Engine: e, Player: &Player{}}
-					for _, block := range ce.Scripts {
-						if block.Type == "ACTION" {
-							for _, action := range block.Actions {
-								sc.execAction(action)
-							}
-						} else {
-							sc.execBlock(block)
-						}
-					}
-					// Deliver ECHO messages from CEVENT scripts to players in the room
-					if e.roomBroadcast != nil && len(sc.RoomMsgs) > 0 {
-						e.roomBroadcast(ce.Room, sc.RoomMsgs)
-					}
-					e.Events.Publish("cevent", fmt.Sprintf("CEVENT %d fired in room %d (%s)", ce.ID, ce.Room, room.Name))
+				// Cycles<=0 (e.g. "CEVENT 91 0 350") means fire every tick, not never —
+				// several original scripts (KREETEK's subway timer, EVILFAYD's ambient
+				// echoes) rely on a 0 interval and roll their own internal randomization
+				// or counters for pacing.
+				if ce.Cycles <= 0 || tick%ce.Cycles == 0 {
+					e.runCEvent(ce)
 				}
 			}
 		}
 	}()
+}
+
+// runCEvent fires one cyclic event. Split out of StartCEventLoop so a panic in one
+// event's script is logged (recoverBackground) and skipped instead of killing the
+// whole server.
+func (e *GameEngine) runCEvent(ce gameworld.CEvent) {
+	defer recoverBackground(fmt.Sprintf("CEVENT %d (room %d)", ce.ID, ce.Room))
+	room := e.rooms[ce.Room]
+	if room == nil {
+		return
+	}
+	sc := &ScriptContext{Room: room, Engine: e, Player: &Player{}}
+	for _, block := range ce.Scripts {
+		if block.Type == "ACTION" {
+			for _, action := range block.Actions {
+				sc.execAction(action)
+			}
+		} else {
+			sc.execBlock(block)
+		}
+	}
+	// Deliver ECHO messages from CEVENT scripts to players in the room
+	if e.roomBroadcast != nil && len(sc.RoomMsgs) > 0 {
+		e.roomBroadcast(ce.Room, sc.RoomMsgs)
+	}
+	e.Events.Publish("cevent", fmt.Sprintf("CEVENT %d fired in room %d (%s)", ce.ID, ce.Room, room.Name))
 }

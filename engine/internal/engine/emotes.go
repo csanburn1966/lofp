@@ -108,6 +108,7 @@ var emoteTable = map[string]emoteEntry{
 	"CLAW":      {Self: "You claw at the air.", Room: "%N claws at the air.", SelfTarget: "You claw at %T.", RoomTarget: "%N claws at %T."},
 	"CURSE":     {Self: "You curse.", Room: "%N curses."},
 	"DUCK":      {Self: "You duck.", Room: "%N ducks."},
+	"FUCK":      {Self: "You curse.", Room: "%N curses."},
 	"HISS":      {Self: "You hiss.", Room: "%N hisses.", SelfTarget: "You hiss at %T.", RoomTarget: "%N hisses at %T."},
 	"HOLD":      {Self: "You hold your hands together.", Room: "%N holds %P hands together.", SelfTarget: "You hold %T.", RoomTarget: "%N holds %T."},
 	"HULA":      {Self: "You do a little hula dance.", Room: "%N does a little hula dance."},
@@ -311,6 +312,24 @@ func (e *GameEngine) processEmote(player *Player, verb string, args []string) *C
 }
 
 func (e *GameEngine) processEmoteCore(player *Player, verb string, args []string) *CommandResult {
+	// CURSE ME is a private one-off joke from the original game, not a real
+	// emote — a dry "Having a bad day?" sent only to the player, with no room
+	// broadcast at all (unlike every other verb+"me" case in selfOverrides).
+	// Checked before the Hidden-reveal below since nothing about this is ever
+	// visible to anyone else in the first place.
+	if verb == "CURSE" && len(args) > 0 {
+		targetName := strings.ToLower(strings.Join(args, " "))
+		if targetName == "me" || targetName == "myself" || targetName == "self" {
+			return &CommandResult{Messages: []string{"Having a bad day?"}}
+		}
+	}
+	if verb == "FUCK" && len(args) > 0 {
+		targetName := strings.ToLower(strings.Join(args, " "))
+		if targetName == "me" || targetName == "myself" || targetName == "self" {
+			return &CommandResult{Messages: []string{"Having a bad day?"}}
+		}
+	}
+
 	// Emotes always reveal you
 	if player.Hidden {
 		player.Hidden = false

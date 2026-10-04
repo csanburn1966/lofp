@@ -62,6 +62,17 @@ type InventoryItem struct {
     // base and any adjective BREAKMODs. GM-editable via @editem; kept as its own field
     // rather than a Val slot since Val1-5 are all already claimed for other weapon uses.
     HardnessMod int    `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+    // CraftedValue is the copper sell value stamped by completeCraft (Wood Lore,
+    // Jewelry, Weaving — crafting.go) for a freshly-made item. It deliberately does
+    // NOT reuse Val1 the way GMSCRIPT.DOC's generic sell-value convention normally
+    // would (see project_item_val_fields memory): some craftable items' own original
+    // scripts already repurpose Val1 for unrelated per-instance state — e.g. item
+    // 968's harp uses ITEMVAL1 as its current tune (1-5, cycled by CONCENTRATE) —
+    // and stamping a sell price into Val1 there would corrupt that state (and vice
+    // versa, make the "sell value" drift every time the item's script touches Val1).
+    // computeSellValue checks this before falling back to Val1, so crafted items
+    // still sell for a fair price without the original script needing to change.
+    CraftedValue int  `bson:"craftedValue,omitempty" json:"craftedValue,omitempty"`
     // ItemBits holds the 0-19 boolean flags documented as ITEMBIT(#) in MANUAL.DOC — a
     // per-instance bitmask distinct from VAL1-5 (each of which already has its own
     // documented meaning; see project_item_val_fields memory). Bit N corresponds to
@@ -69,6 +80,13 @@ type InventoryItem struct {
     ItemBits  int    `bson:"itemBits,omitempty" json:"itemBits,omitempty"`
     State     string `bson:"state,omitempty" json:"state,omitempty"`
     Tail      string `bson:"tail,omitempty" json:"tail,omitempty"`
+    // WrittenText is player-supplied content stamped by WRITE on a WRITEABLE item
+    // (e.g. item 940's plain paper note) and shown back by READ. Deliberately a
+    // separate field from Tail, which is a short display-name suffix (ENGRAVE's
+    // inscriptions) — WrittenText can be a full short letter and is never folded
+    // into the item's name, only shown when someone reads it. See updates.html
+    // changelog #69: "Players can now WRITE on items scripted as WRITEABLE."
+    WrittenText string `bson:"writtenText,omitempty" json:"writtenText,omitempty"`
     WornSlot  string `bson:"wornSlot,omitempty" json:"wornSlot,omitempty"`
     // Container contents — populated when this item is an open container.
     Contents  []InventoryItem `bson:"contents,omitempty" json:"contents,omitempty"`
@@ -175,6 +193,15 @@ type Player struct {
 	Bleeding     bool    `bson:"bleeding" json:"bleeding"` // derived: recomputed from Wounds after every add/remove
 	Wounds       []Wound `bson:"wounds,omitempty" json:"wounds,omitempty"`
 	Stunned      bool `bson:"stunned" json:"stunned"`
+	// StunExpiry is when a melee-crit stun (see monsterAttackPlayer) wears off —
+	// cleared by regenTick, mirroring MonsterInstance.StunExpiry. Transient: a
+	// stun surviving a disconnect/relog wouldn't make sense to resume.
+	StunExpiry time.Time `bson:"-" json:"-"`
+	// KnockedDown mirrors MonsterInstance.KnockedDown — a melee-crit stagger (see
+	// monsterAttackPlayer) that also forces Position to 2 (laying), matching
+	// LEGENDS.DOC: "a -50 penalty is imposed on your defense until you stand up
+	// again." Cleared by STAND, same as the Position it forces.
+	KnockedDown bool `bson:"knockedDown,omitempty" json:"knockedDown,omitempty"`
 	Diseased     bool `bson:"diseased" json:"diseased"`
 	DiseaseLevel int  `bson:"diseaseLevel,omitempty" json:"diseaseLevel,omitempty"`
 	Poisoned     bool `bson:"poisoned" json:"poisoned"`
@@ -199,11 +226,26 @@ type Player struct {
 	// Combat
 	Stance        int           `bson:"-" json:"-"`          // StanceNormal..StanceBerserk
 	CombatTarget  *CombatTarget `bson:"-" json:"-"`          // current combat target
-	Targets       []int         `bson:"-" json:"-"`          // TARGET command: up to 6 monster instance IDs for multi-target spells
+	Targets       []int         `bson:"-" json:"-"`          // TARGET command: up to 9 monster instance IDs for multi-target spells (see maxTargets in target.go)
 	DefenseBonus  int           `bson:"-" json:"-"`          // from spells/psi
 	PreparedPsi   int           `bson:"-" json:"-"`          // prepared psi discipline ID
 	ActivePsi     map[int]bool `bson:"-" json:"-"`          // currently maintained psi disciplines
 	BackstabNext  bool          `bson:"-" json:"-"`          // next attack is a backstab
+
+	// Melee engagement (ADVANCE/RETREAT — see advance.go). A melee-range weapon
+	// can only be used against a target the player has advanced on, or that has
+	// itself closed to melee with the player (see isEngagedInMelee). Room-scoped
+	// and transient like CombatTarget above — never persisted, always empty on
+	// login, and cleared whenever the player actually changes rooms.
+	AdvancedOnMonsters []int    `bson:"-" json:"-"` // monster instance IDs this player has advanced on
+	AdvancedOnPlayers  []string `bson:"-" json:"-"` // player FirstNames this player has advanced on
+	AdvancedByPlayers  []string `bson:"-" json:"-"` // player FirstNames who have advanced on this player
+
+	// RoomEntrySeq is bumped by scheduleEntryAggro on every room entry, so a pending
+	// entry-aggro timer can tell whether it still belongs to the player's *current*
+	// visit (a timer from an earlier visit to the same room must not fire the
+	// instant they walk back in).
+	RoomEntrySeq int `bson:"-" json:"-"`
 	TelepathyActive bool      `bson:"telepathyActive,omitempty" json:"telepathyActive,omitempty"`
 	TelepathyExpiry time.Time `bson:"telepathyExpiry,omitempty" json:"telepathyExpiry,omitempty"`
 	Emotional       bool      `bson:"emotional,omitempty" json:"emotional,omitempty"`
@@ -261,6 +303,15 @@ type Player struct {
 	// Skills[33] itself, so SKILLS display/prerequisites still reflect real training.
 	CamouflageBonus  int       `bson:"camouflageBonus,omitempty" json:"camouflageBonus,omitempty"`
 	CamouflageExpiry time.Time `bson:"camouflageExpiry,omitempty" json:"camouflageExpiry,omitempty"`
+
+	// Temporary Divine Blessing buff (spell 347): +3 effective weapon skill
+	// ranks (whichever skill applies to the player's current weapon, or
+	// Martial Arts if unarmed — see playerAttackRating in combat.go). Unlike
+	// most timed buffs, recasting doesn't stack or extend the duration; it
+	// resets straight back to the full 1 minute (per magic.txt: Divine
+	// Blessing, True Aim, Haste and Slow don't stack like other buffs).
+	DivineBlessingBonus  int       `bson:"divineBlessingBonus,omitempty" json:"divineBlessingBonus,omitempty"`
+	DivineBlessingExpiry time.Time `bson:"divineBlessingExpiry,omitempty" json:"divineBlessingExpiry,omitempty"`
 
 	// Resist Weather (spell 506): while active, ignores the Hurricane knockdown
 	// chance (regen.go) and the weather-based to-hit penalty (combat.go weatherMod).
@@ -329,6 +380,15 @@ type Player struct {
 
 	// Guard: who/what this player is guarding (transient, room-specific)
 	GuardTargets []string `bson:"-" json:"-"` // player FirstNames being guarded
+	// RobAttempts records the absolute game day (see robGameDay) of this player's
+	// last ROB/PICKPOCKET attempt on each target, keyed by robTargetKey — one
+	// attempt per target per game day (legerdemain.go). Persisted so relogging
+	// doesn't reset it; entries from earlier days are pruned on each write.
+	RobAttempts map[string]int `bson:"robAttempts,omitempty" json:"-"`
+	// LoginNotices are messages queued by LoadPlayer (e.g. falling out of the sky
+	// because a Fly spell expired while logged out — see skyfall.go) and shown
+	// ahead of the room look by EnterRoom.
+	LoginNotices []string `bson:"-" json:"-"`
 	GuardPortals []int    `bson:"-" json:"-"` // portal item archetypes being guarded (CM level 3+)
 	GuardItems   []int    `bson:"-" json:"-"` // item archetypes on the ground being guarded
 
@@ -380,6 +440,11 @@ type Player struct {
 	BankGold   int `bson:"bankGold,omitempty" json:"bankGold,omitempty"`
 	BankSilver int `bson:"bankSilver,omitempty" json:"bankSilver,omitempty"`
 	BankCopper int `bson:"bankCopper,omitempty" json:"bankCopper,omitempty"`
+	// Currencies / BankCurrencies hold regional money (currency.go), keyed by
+	// MONEYDEF type number (2 = kragenmark, 4 = shard, 5 = darktar, ...) — the
+	// counterpart of Gold/Silver/Copper and BankGold/BankSilver/BankCopper.
+	Currencies     map[int]int `bson:"currencies,omitempty" json:"currencies,omitempty"`
+	BankCurrencies map[int]int `bson:"bankCurrencies,omitempty" json:"bankCurrencies,omitempty"`
 
 	// Safety deposit box (up to 20 items)
 	BankItems []InventoryItem `bson:"bankItems,omitempty" json:"bankItems,omitempty"`
@@ -401,6 +466,15 @@ type Player struct {
 
 	// Internal variables (INTNUM0-99, flags, etc.)
 	IntNums map[int]int `bson:"intNums" json:"intNums"`
+
+	// AwardFlags tracks one-time AWARD script actions (AWARD <id> <xp>) already granted
+	// to this player, keyed by the award's id. A dedicated map rather than reusing
+	// IntNums — scripts across the game reuse the same small integers AWARD uses (4, 57,
+	// 61, etc.) as ordinary INTNUM story variables for entirely unrelated purposes (e.g.
+	// INTNUM57 holds a 1-10 totem choice in the Tiewaz storyline, INTNUM61 gates a sword
+	// on the value 79), so keying AWARD's one-time gate off IntNums would silently
+	// corrupt those. See doAward.
+	AwardFlags map[int]bool `bson:"awardFlags,omitempty" json:"awardFlags,omitempty"`
 
 	// Transient flags (reset on room entry)
 	Flag1 int `bson:"-" json:"-"`
@@ -573,6 +647,16 @@ func effectiveStealthSkill(p *Player) int {
 		skill += p.CamouflageBonus
 	}
 	return skill
+}
+
+// divineBlessingBonus returns the player's active Divine Blessing (spell 347)
+// weapon skill bonus, or 0 if it isn't active. See playerAttackRating in
+// combat.go for where this is applied.
+func divineBlessingBonus(p *Player) int {
+	if p.DivineBlessingBonus > 0 && !p.DivineBlessingExpiry.IsZero() && time.Now().Before(p.DivineBlessingExpiry) {
+		return p.DivineBlessingBonus
+	}
+	return 0
 }
 
 // Pronoun returns "he" or "she".

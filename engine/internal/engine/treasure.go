@@ -58,7 +58,8 @@ func nextRoomItemRef(room *gameworld.Room) int {
 // generateTreasure creates loot items in a room when a monster dies.
 // treasureLevel = monster's TREASURE value (0 = nothing, 1-127 = increasing rewards).
 // Returns messages describing what dropped.
-func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int) []string {
+// md is the currency the dying monster carries (monsterCurrency; nil = base).
+func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int, md *gameworld.MoneyDef) []string {
 	if treasureLevel <= 0 {
 		return nil
 	}
@@ -73,29 +74,35 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int) []string {
 	copperBase := treasureLevel * 5
 	coins := copperBase + rand.Intn(copperBase+1)
 	if coins > 0 {
-		// Drop as a money item in the room
+		// In a currency region (currency.go) the monster may carry the local
+		// money instead — same value, converted by the MONEYDEF exchange rate.
+		arch, amount := newCoinPileValue(md, coins)
 		ref := nextRoomItemRef(room)
 		room.Items = append(room.Items, gameworld.RoomItem{
 			Ref:       ref,
-			Archetype: 0, // special: money on ground
-			Val1:      coins,
+			Archetype: arch, // 0 = base coins (Val1 copper); else the regional MONEY item
+			Val1:      amount,
 			State:     "MONEY",
 		})
-		gold := coins / 100
-		silver := (coins % 100) / 10
-		copper := coins % 10
-		var parts []string
-		if gold > 0 {
-			parts = append(parts, fmt.Sprintf("%d gold", gold))
-		}
-		if silver > 0 {
-			parts = append(parts, fmt.Sprintf("%d silver", silver))
-		}
-		if copper > 0 {
-			parts = append(parts, fmt.Sprintf("%d copper", copper))
-		}
-		if len(parts) > 0 {
-			msgs = append(msgs, fmt.Sprintf("Some coins scatter on the ground. (%s)", joinParts(parts)))
+		if md != nil {
+			msgs = append(msgs, fmt.Sprintf("Some %s scatter on the ground. (%d)", currencyPlural(md), amount))
+		} else {
+			gold := coins / 100
+			silver := (coins % 100) / 10
+			copper := coins % 10
+			var parts []string
+			if gold > 0 {
+				parts = append(parts, fmt.Sprintf("%d gold", gold))
+			}
+			if silver > 0 {
+				parts = append(parts, fmt.Sprintf("%d silver", silver))
+			}
+			if copper > 0 {
+				parts = append(parts, fmt.Sprintf("%d copper", copper))
+			}
+			if len(parts) > 0 {
+				msgs = append(msgs, fmt.Sprintf("Some coins scatter on the ground. (%s)", joinParts(parts)))
+			}
 		}
 	}
 
@@ -132,17 +139,19 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int) []string {
 				msgs = append(msgs, "A scroll lies among the remains.")
 			}
 
-		case roll < 55:
-			// Locked container
+		case roll < 60:
+			// Locked container (20% of item drops — raised from 15% after
+			// playtesting showed containers dropping less often than in the
+			// original game captures; the extra 5 came out of armor's band)
 			if item := e.randomChestDrop(treasureLevel); item != nil {
 				ref := nextRoomItemRef(room)
 				item.Ref = ref
 				room.Items = append(room.Items, *item)
-				e.populateContainerLoot(roomNum, item.Ref, treasureLevel)
+				e.populateContainerLoot(roomNum, item.Ref, treasureLevel, md)
 				msgs = append(msgs, "A container lies among the remains.")
 			}
 
-		case roll < 70:
+		case roll < 75:
 			// Potion drop
 			if item := e.randomPotionDrop(treasureLevel); item != nil {
 				ref := nextRoomItemRef(room)
@@ -156,7 +165,7 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int) []string {
 			}
 
 		case roll < 88:
-			// Armor drop
+			// Armor drop (13% of item drops)
 			if item := e.randomArmorDrop(treasureLevel); item != nil {
 				ref := nextRoomItemRef(room)
 				item.Ref = ref
@@ -169,7 +178,7 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int) []string {
 			}
 
 		default:
-			// Jewelry drop (remaining 25% of item drops, requires treasure >= 5)
+			// Jewelry drop (remaining 12% of item drops, requires treasure >= 5)
 			if treasureLevel >= 5 {
 				if item := e.randomJewelryDrop(treasureLevel); item != nil {
 					ref := nextRoomItemRef(room)

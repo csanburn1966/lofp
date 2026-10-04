@@ -643,7 +643,10 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 				if e.monsterMgr.instances[i].ID == instID {
 					e.monsterMgr.instances[i].Target = targetPlayer.FirstName
 					e.monsterMgr.instances[i].MonsterTargetID = 0
-					e.monsterMgr.instances[i].GuardingPlayers = nil
+					// GuardingPlayers is intentionally left alone — guarding and attacking
+					// on command aren't mutually exclusive (see the "purely additive"
+					// comment in the "guard" case above), so a creature ordered to attack
+					// keeps intercepting attacks on whoever it's guarding.
 					e.monsterMgr.instances[i].FollowTarget = ""
 					break
 				}
@@ -687,7 +690,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 				if e.monsterMgr.instances[i].ID == instID {
 					e.monsterMgr.instances[i].MonsterTargetID = monsterTargetID
 					e.monsterMgr.instances[i].Target = ""
-					e.monsterMgr.instances[i].GuardingPlayers = nil
+					// GuardingPlayers left alone — see the player-target attack branch above.
 					e.monsterMgr.instances[i].FollowTarget = ""
 					break
 				}

@@ -12,11 +12,11 @@ import (
 
 // MonsterInstance represents a spawned monster in the world.
 type MonsterInstance struct {
-	ID           int       `json:"id"`
-	DefNumber    int       `json:"defNumber"`
-	RoomNumber   int       `json:"roomNumber"`
-	Alive        bool      `json:"alive"`
-	Sedated      bool      `json:"sedated"`
+	ID         int  `json:"id"`
+	DefNumber  int  `json:"defNumber"`
+	RoomNumber int  `json:"roomNumber"`
+	Alive      bool `json:"alive"`
+	Sedated    bool `json:"sedated"`
 	// Stunned/KnockedDown: LEGENDS.DOC says an excellent hit (roll > 95) "may result
 	// in stunning you or knocking you off your feet. In the case of a stun ... you are
 	// unable to attack or move again until the stun wears off. If you are knocked down
@@ -24,20 +24,42 @@ type MonsterInstance struct {
 	// crit roll, not the same thing. Stunned lasts for StunExpiry (a duration; no exact
 	// seconds is documented for a melee-crit stun specifically, only for psi spells, so
 	// 3-6 seconds is a judgment call — see the roll site in doAttackMonster) and gives
-	// a bonus to hit it (see the +20 attack rating above). KnockedDown has no duration;
-	// it costs exactly one combat tick to stand back up, mirroring SleepStand below.
-	Stunned      bool      `json:"-"`
-	StunExpiry   time.Time `json:"-"`
-	KnockedDown  bool      `json:"-"` // knocked off its feet; must stand up (one skipped tick) before acting
-	Skinned      bool      `json:"-"` // already skinned
-	DefenseBonus int       `json:"-"` // from active psi defenses
-	CurrentHP  int       `json:"currentHP"`
-	MaxHP      int       `json:"maxHP"`
-	Wounds     []Wound   `json:"-"` // in-memory only, not persisted
-	Target     string    `json:"-"`
-	Searched   bool      `json:"-"` // already searched for loot
-	DeathTime  time.Time `json:"-"` // when it died (for corpse decay)
-	LastAttacker string  `json:"-"` // name of the last player to damage this monster (set in damageMonster), for death XP attribution when it dies with no single decisive blow (bleed-out, etc.)
+	// a bonus to hit it (see the +20 attack rating above). KnockedDown originally cleared
+	// on the monster's own next AI tick ("one skipped tick"), but that tick fires on a
+	// fixed 3-9 second cadence (monsterTick's ticker × speed) with no relationship to how
+	// fast a player can react — in practice the creature was almost always back on its
+	// feet before the player's follow-up attack landed, silently swallowing the "+50
+	// attack rating, forced excellent hit" bonus below (reported: "crits don't seem to
+	// work for a downed creature"). Now duration-based like Stunned, same 3-6s reasoning,
+	// so there's a real window regardless of tick timing.
+	Stunned           bool      `json:"-"`
+	StunExpiry        time.Time `json:"-"`
+	KnockedDown       bool      `json:"-"` // knocked off its feet; must stand up before acting
+	KnockedDownExpiry time.Time `json:"-"`
+	Skinned           bool      `json:"-"` // already skinned
+	// CoinType/CoinTypeSet: which currency this creature carries (0 = base
+	// gold/silver/copper, else a MONEYDEF type), decided once by
+	// monsterCurrency so its death drop, SEARCH and ROB all agree.
+	CoinType     int     `json:"-"`
+	CoinTypeSet  bool    `json:"-"`
+	DefenseBonus int     `json:"-"` // from active psi defenses
+	CurrentHP    int     `json:"currentHP"`
+	MaxHP        int     `json:"maxHP"`
+	Wounds       []Wound `json:"-"` // in-memory only, not persisted
+	Target       string  `json:"-"`
+	// PendingAggro holds, per player name, the moment a hostile monster that has
+	// just spotted them in the room may actually advance and set Target — first
+	// sighting plus a fixed aggroDelay (3s), not an instant lock-on. Without
+	// this, a monster set its Target the very next 3-second aggro-scan tick after a
+	// player merely walked through the room (reported: "monsters in a room instantly
+	// advance on players just trying to pass through" / "creatures advance too
+	// quickly when a player enters the area, making travel annoying"). Keyed by name
+	// rather than a single pending slot because OnlinePlayers() iteration order isn't
+	// stable, so tracking only "the last player noticed" could keep resetting.
+	PendingAggro map[string]time.Time `json:"-"`
+	Searched     bool                 `json:"-"` // already searched for loot
+	DeathTime    time.Time            `json:"-"` // when it died (for corpse decay)
+	LastAttacker string               `json:"-"` // name of the last player to damage this monster (set in damageMonster), for death XP attribution when it dies with no single decisive blow (bleed-out, etc.)
 	// CarriedItems holds items a GM silently staged into this monster with
 	// "@give <item> to <monster>" (see gmGiveToMonster in gm_commands.go) so they
 	// drop as loot when it dies (dropMonsterCarriedItems in combat.go). In-memory
@@ -45,20 +67,20 @@ type MonsterInstance struct {
 	CarriedItems []InventoryItem `json:"-"`
 
 	// Spell status effects
-	Sleeping    bool      `json:"-"` // Slumber spell: no attack, no flee
-	SleepExpiry time.Time `json:"-"`
-	SleepStand  bool      `json:"-"` // woke up but still rising; skip one attack tick
-	Webbed      bool      `json:"-"` // Web spell: no attack, no flee
-	WebExpiry   time.Time `json:"-"`
-	Feared      bool      `json:"-"` // Fear spell: only flees, never attacks
-	FearExpiry  time.Time `json:"-"`
-	Charmed        bool      `json:"-"` // Charm spell: won't attack the caster
-	CharmExpiry    time.Time `json:"-"`
-	CharmTarget    string    `json:"-"` // player name who charmed it
-	Silenced       bool      `json:"-"` // Silence spell: cannot cast unless def.SilenceIgnore
-	SilenceExpiry  time.Time `json:"-"`
-	Imprisoned     bool      `json:"-"` // Imprison spell: cannot attack or cast at all
-	ImprisonExpiry time.Time `json:"-"`
+	Sleeping           bool      `json:"-"` // Slumber spell: no attack, no flee
+	SleepExpiry        time.Time `json:"-"`
+	SleepStand         bool      `json:"-"` // woke up but still rising; skip one attack tick
+	Webbed             bool      `json:"-"` // Web spell: no attack, no flee
+	WebExpiry          time.Time `json:"-"`
+	Feared             bool      `json:"-"` // Fear spell: only flees, never attacks
+	FearExpiry         time.Time `json:"-"`
+	Charmed            bool      `json:"-"` // Charm spell: won't attack the caster
+	CharmExpiry        time.Time `json:"-"`
+	CharmTarget        string    `json:"-"` // player name who charmed it
+	Silenced           bool      `json:"-"` // Silence spell: cannot cast unless def.SilenceIgnore
+	SilenceExpiry      time.Time `json:"-"`
+	Imprisoned         bool      `json:"-"` // Imprison spell: cannot attack or cast at all
+	ImprisonExpiry     time.Time `json:"-"`
 	Tentacled          bool      `json:"-"` // Siryx's Terrible Tentacles: immobilized, takes periodic crushing damage
 	TentacleExpiry     time.Time `json:"-"`
 	TentacleCasterName string    `json:"-"` // player who cast Tentacles, for death XP attribution on the DOT tick
@@ -67,8 +89,8 @@ type MonsterInstance struct {
 	// CurrentMana is seeded from def.Mana at spawn and never regenerates (per GMSCRIPT.DOC,
 	// unlike players monsters have no mana recovery) — once spent it stays spent for the
 	// rest of the monster's life. SpecAttacksUsed counts against def.SpecUses.
-	CurrentMana     int       `json:"-"`
-	SpecAttacksUsed int       `json:"-"`
+	CurrentMana     int `json:"-"`
+	SpecAttacksUsed int `json:"-"`
 	// Casting tracks an in-progress spell: GMSCRIPT.DOC's CASTLEVEL is the cast's duration
 	// in seconds (TEXS shown when it starts, TEXL + resolution when CastExpiry passes) and
 	// can be interrupted by taking damage before then unless the monster is NONDISRUPTABLE
@@ -92,13 +114,13 @@ type MonsterInstance struct {
 	PsiCastExpiry time.Time `json:"-"`
 
 	// Summoned creature fields (transient)
-	SummonerName    string `json:"-"` // name of the player who summoned this creature
-	IsSummoned      bool   `json:"-"` // true if summoned, not a regular world spawn
-	IsFamiliar      bool   `json:"-"` // true if a familiar (cat/raven/bird/viper) — can WATCH WILL
-	WatchMode       bool   `json:"-"` // familiar is watching a room and forwarding events to summoner
-	FollowTarget    string   `json:"-"` // name of player this creature follows when they move; "" = not following
-	GuardingPlayers []string `json:"-"` // names of players being guarded (for COMMAND GUARD)
-	MonsterTargetID int      `json:"-"` // instance ID of a monster this creature is attacking; 0 = none
+	SummonerName    string    `json:"-"` // name of the player who summoned this creature
+	IsSummoned      bool      `json:"-"` // true if summoned, not a regular world spawn
+	IsFamiliar      bool      `json:"-"` // true if a familiar (cat/raven/bird/viper) — can WATCH WILL
+	WatchMode       bool      `json:"-"` // familiar is watching a room and forwarding events to summoner
+	FollowTarget    string    `json:"-"` // name of player this creature follows when they move; "" = not following
+	GuardingPlayers []string  `json:"-"` // names of players being guarded (for COMMAND GUARD)
+	MonsterTargetID int       `json:"-"` // instance ID of a monster this creature is attacking; 0 = none
 	ControlExpiry   time.Time `json:"-"` // Control Undead: when control lapses and the creature turns hostile again (zero = never expires)
 
 	// Timed buff spells (Strength, Agility, Haste, Mystic Armor) cast on a summoned or
@@ -117,8 +139,18 @@ type MonsterInstance struct {
 	AgilityBuffBonus   int       `json:"-"`
 	AgilityBuffExpiry  time.Time `json:"-"`
 	HasteExpiry        time.Time `json:"-"`
-	MysticArmorBonus   int       `json:"-"`
-	MysticArmorExpiry  time.Time `json:"-"`
+	// SlowExpiry, unlike the buffs above, is a debuff and can be cast on any monster in
+	// the room (see findMonsterInRoom in castSlowSpell), not just a summoned/controlled
+	// creature — see monsterEffectiveSpeed for where it's read.
+	SlowExpiry        time.Time `json:"-"`
+	MysticArmorBonus  int       `json:"-"`
+	MysticArmorExpiry time.Time `json:"-"`
+	// DivineBlessingBonus mirrors the player equivalent (Player.DivineBlessingBonus) —
+	// see divineBlessingBonus in player.go and playerAttackRating in combat.go. Stored
+	// pre-scaled (already the full +15 to-hit/damage swing, not a raw stat point) since
+	// monsterEffectiveAttack adds it directly, same as MysticArmorBonus above.
+	DivineBlessingBonus  int       `json:"-"`
+	DivineBlessingExpiry time.Time `json:"-"`
 	// TimedDefenseBuffs holds every other flat-bonus defense spell (Globe of Protection
 	// I/II, Mass Protection, Spectral Shield, Ride the Lightning — see
 	// castTimedDefenseSpell) currently active, reusing the same TimedDefenseBuff struct
@@ -184,18 +216,33 @@ type monsterManager struct {
 	mu             sync.RWMutex
 	instances      []MonsterInstance
 	nextID         int
-	monstersByRoom map[int][]int    // roomNumber -> slice of instance indices
+	monstersByRoom map[int][]int     // roomNumber -> slice of instance indices
 	roomLastPlayer map[int]time.Time // roomNumber -> last time a player was present
 	lastSpawnCheck map[int]time.Time // roomNumber -> last time spawnForRoom actually ran its checks
+
+	// spawningDisabledWorld/spawningDisabledRooms back the @spawning GM command —
+	// suppresses natural MLIST-based spawning (spawnForRoom) without touching
+	// manual GM spawns (@spawn/@genmon), which don't go through spawnForRoom at all.
+	spawningDisabledWorld bool
+	spawningDisabledRooms map[int]bool
 }
 
 func newMonsterManager() *monsterManager {
 	return &monsterManager{
-		nextID:         1, // 0 is the "no instance" sentinel used by SummonedCreatureID
-		monstersByRoom: make(map[int][]int),
-		roomLastPlayer: make(map[int]time.Time),
-		lastSpawnCheck: make(map[int]time.Time),
+		nextID:                1, // 0 is the "no instance" sentinel used by SummonedCreatureID
+		monstersByRoom:        make(map[int][]int),
+		roomLastPlayer:        make(map[int]time.Time),
+		lastSpawnCheck:        make(map[int]time.Time),
+		spawningDisabledRooms: make(map[int]bool),
 	}
+}
+
+// spawningDisabled reports whether natural monster spawning is currently suppressed
+// for roomNum — either world-wide or just for that specific room (see @spawning).
+func (mm *monsterManager) spawningDisabled(roomNum int) bool {
+	mm.mu.RLock()
+	defer mm.mu.RUnlock()
+	return mm.spawningDisabledWorld || mm.spawningDisabledRooms[roomNum]
 }
 
 // spawnCheckCooldown throttles spawnForRoom per room so a group of players
@@ -242,6 +289,9 @@ func monsterEffectiveAttack(def *gameworld.MonsterDef, inst *MonsterInstance) in
 	if inst.StrengthBuffBonus > 0 && !inst.StrengthBuffExpiry.IsZero() && time.Now().Before(inst.StrengthBuffExpiry) {
 		atk += inst.StrengthBuffBonus / 5
 	}
+	if inst.DivineBlessingBonus > 0 && !inst.DivineBlessingExpiry.IsZero() && time.Now().Before(inst.DivineBlessingExpiry) {
+		atk += inst.DivineBlessingBonus
+	}
 	return atk
 }
 
@@ -270,7 +320,9 @@ func monsterEffectiveDefense(def *gameworld.MonsterDef, inst *MonsterInstance) i
 }
 
 // monsterEffectiveSpeed halves a monster's action-tick interval while Haste is active
-// (minimum 1), the same way applyRoundTime halves a hasted player's round time.
+// (minimum 1), the same way applyRoundTime halves a hasted player's round time. Slow
+// doubles it instead (mirroring effectiveCastTime's player-side Slow handling). Haste
+// takes precedence if somehow both are active at once, same as effectiveCastTime.
 func monsterEffectiveSpeed(def *gameworld.MonsterDef, inst *MonsterInstance) int {
 	speed := def.Speed
 	if speed <= 0 {
@@ -281,6 +333,10 @@ func monsterEffectiveSpeed(def *gameworld.MonsterDef, inst *MonsterInstance) int
 		if speed < 1 {
 			speed = 1
 		}
+		return speed
+	}
+	if !inst.SlowExpiry.IsZero() && time.Now().Before(inst.SlowExpiry) {
+		speed *= 2
 	}
 	return speed
 }
@@ -315,6 +371,12 @@ func (e *GameEngine) spawnForRoom(roomNum int) {
 
 	// Don't spawn monsters in sky/above rooms — only flying players can reach these
 	if room.Terrain == "ABOVE" || room.Terrain == "SKY" {
+		return
+	}
+
+	// @spawning off (world-wide or just this room) suppresses natural MLIST
+	// spawning here, but doesn't affect manual GM spawns (@spawn/@genmon).
+	if e.monsterMgr.spawningDisabled(roomNum) {
 		return
 	}
 
@@ -371,11 +433,11 @@ func (e *GameEngine) spawnForRoom(roomNum int) {
 		if spawned > 0 {
 			name := FormatMonsterName(def, e.monAdjs)
 			genText := def.TextOverrides["TEXG"]
-			if genText != "" && e.localRoomBroadcast != nil {
-				e.localRoomBroadcast(roomNum, []string{genText})
-			} else if spawned == 1 && e.localRoomBroadcast != nil {
+			if genText != "" {
+				e.roomNotice(roomNum, "", []string{genText})
+			} else if spawned == 1 {
 				article := articleFor(name, def.Unique)
-				e.localRoomBroadcast(roomNum, []string{fmt.Sprintf("%s%s appears.", capArticle(article), name)})
+				e.roomNotice(roomNum, "", []string{fmt.Sprintf("%s%s appears.", capArticle(article), name)})
 			}
 		}
 	}
@@ -579,31 +641,38 @@ func (e *GameEngine) StartMonsterLoop() {
 		defer ticker.Stop()
 		for range ticker.C {
 			tick++
-			e.monsterTick(tick)
-			// Corpse decay: remove dead monsters after 60 seconds
-			if tick%20 == 0 {
-				e.cleanupCorpses()
-				e.tentacleDamageTick()
-				e.bleedDamageTick()
-			}
-			// Periodic respawn check near players every ~30 seconds.
-			// (This was temporarily slowed to ~105s while chasing the Crescent
-			// muldragun over-spawning, but that turned out to be caused by
-			// real bugs — duplicate MLIST entries loaded from two script
-			// files, and spawnForRoom being called once per group member on
-			// entry — both fixed at the root now. Slowing this shared,
-			// global tick was an unnecessary blanket nerf on top of that and
-			// made every other monster group in the game respawn too
-			// slowly, so it's reverted back to its original rate.)
-			if tick%10 == 0 {
-				e.respawnNearPlayers()
-			}
-			// Unload distant monsters every ~2 minutes
-			if tick%40 == 0 {
-				e.unloadDistantMonsters()
-			}
+			e.monsterLoopStep(tick)
 		}
 	}()
+}
+
+// monsterLoopStep is one monster-loop tick, split out so recoverBackground can catch
+// a panic in it (monsterTick's own deferred Unlock releases monsterMgr.mu first).
+func (e *GameEngine) monsterLoopStep(tick int) {
+	defer recoverBackground("monster tick")
+	e.monsterTick(tick)
+	// Corpse decay: remove dead monsters after 60 seconds
+	if tick%20 == 0 {
+		e.cleanupCorpses()
+		e.tentacleDamageTick()
+		e.bleedDamageTick()
+	}
+	// Periodic respawn check near players every ~30 seconds.
+	// (This was temporarily slowed to ~105s while chasing the Crescent
+	// muldragun over-spawning, but that turned out to be caused by
+	// real bugs — duplicate MLIST entries loaded from two script
+	// files, and spawnForRoom being called once per group member on
+	// entry — both fixed at the root now. Slowing this shared,
+	// global tick was an unnecessary blanket nerf on top of that and
+	// made every other monster group in the game respawn too
+	// slowly, so it's reverted back to its original rate.)
+	if tick%10 == 0 {
+		e.respawnNearPlayers()
+	}
+	// Unload distant monsters every ~2 minutes
+	if tick%40 == 0 {
+		e.unloadDistantMonsters()
+	}
 }
 
 // respawnNearPlayers spawns monsters in rooms where players are present.
@@ -955,12 +1024,27 @@ func (e *GameEngine) monsterTick(tick int) {
 				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The magical haste fades from the %s.", name)})
 			}
 		}
+		if !inst.SlowExpiry.IsZero() && now.After(inst.SlowExpiry) {
+			inst.SlowExpiry = time.Time{}
+			if e.localRoomBroadcast != nil {
+				name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The magical slowness fades from the %s.", name)})
+			}
+		}
 		if inst.MysticArmorBonus > 0 && !inst.MysticArmorExpiry.IsZero() && now.After(inst.MysticArmorExpiry) {
 			inst.MysticArmorBonus = 0
 			inst.MysticArmorExpiry = time.Time{}
 			if e.localRoomBroadcast != nil {
 				name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The Mystic Armor fades from the %s.", name)})
+			}
+		}
+		if inst.DivineBlessingBonus > 0 && !inst.DivineBlessingExpiry.IsZero() && now.After(inst.DivineBlessingExpiry) {
+			inst.DivineBlessingBonus = 0
+			inst.DivineBlessingExpiry = time.Time{}
+			if e.localRoomBroadcast != nil {
+				name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The golden light fades from the %s.", name)})
 			}
 		}
 		if len(inst.TimedDefenseBuffs) > 0 {
@@ -989,6 +1073,18 @@ func (e *GameEngine) monsterTick(tick int) {
 			continue
 		}
 
+		// A guarding creature whose combat just ended (kill, target fled/died,
+		// whatever) and isn't already following anyone resumes following its
+		// guarded player. COMMAND ATTACK (summons.go doCommand) deliberately
+		// clears FollowTarget when it sets a target — otherwise the next room
+		// move would yank the creature off a live fight via the FollowTarget
+		// relocation in movement.go — but that shouldn't cost it guard duty
+		// forever once the fight is actually over (reported: "if I command them
+		// to attack, they stop guarding and following").
+		if inst.IsSummoned && inst.FollowTarget == "" && len(inst.GuardingPlayers) > 0 {
+			inst.FollowTarget = inst.GuardingPlayers[0]
+		}
+
 		name := FormatMonsterName(def, e.monAdjs)
 
 		// Hostile monsters without a target — look for players in room (skip summoned
@@ -997,11 +1093,55 @@ func (e *GameEngine) monsterTick(tick int) {
 		if def.Strategy >= 301 && !def.Guardian && inst.Target == "" && !inst.IsSummoned {
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.RoomNumber == inst.RoomNumber && !p.Dead && !p.Hidden && !p.GMInvis {
-						inst.Target = p.FirstName
-						if e.sendToPlayer != nil {
-							e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("A %s snarls and attacks you!", name)})
+					if p.RoomNumber == inst.RoomNumber && !p.Dead && !p.IsConcealed() {
+						article := articleFor(name, def.Unique)
+						// The player already ADVANCEd on this monster, so the two are
+						// already in melee — lock on silently rather than announcing
+						// a second, redundant "advances towards you".
+						if containsInt(p.AdvancedOnMonsters, inst.ID) {
+							delete(inst.PendingAggro, p.FirstName)
+							inst.Target = p.FirstName
+							break
 						}
+						// GUARD (Combat Maneuvering) blocks a monster's aggro advance the
+						// same way it blocks a player's ADVANCE (see isPlayerGuarded in
+						// advance.go) — the monster can't close to melee with this player
+						// while someone's guarding them. Skip to the next candidate rather
+						// than picking a target, so an unguarded player in the room can
+						// still be aggro'd this same pass.
+						if guard := e.guardianOf(p); guard != nil {
+							e.broadcastCombatRoom(inst.RoomNumber, nil, []string{fmt.Sprintf("%s%s tries to advance towards %s, but is blocked by %s!", capArticle(article), name, p.DisplayName(), guard.DisplayName())})
+							delete(inst.PendingAggro, p.FirstName)
+							continue
+						}
+						// A monster doesn't lock onto the first player it notices —
+						// see PendingAggro's field comment. First sighting starts an
+						// aggroDelay (3s) timer; only once that elapses does it
+						// actually advance.
+						aggroAt, noticed := inst.PendingAggro[p.FirstName]
+						if !noticed {
+							if inst.PendingAggro == nil {
+								inst.PendingAggro = make(map[string]time.Time)
+							}
+							inst.PendingAggro[p.FirstName] = time.Now().Add(aggroDelay)
+							continue
+						}
+						if time.Now().Before(aggroAt) {
+							continue
+						}
+						delete(inst.PendingAggro, p.FirstName)
+						inst.Target = p.FirstName
+						// "A stone ogre advances towards Wolfbane." — the monster's own
+						// version of the player ADVANCE command's room broadcast (see
+						// doAdvance in advance.go), matching shirla.cap exactly: hostile
+						// aggro is announced to the whole room, not just the target, so
+						// bystanders see the monster close to melee the same way they'd
+						// see a player ADVANCE. Previously this was a target-only "snarls
+						// and attacks you!" line that nobody else in the room ever saw.
+						if e.sendToPlayer != nil {
+							e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s%s advances towards you.", capArticle(article), name)})
+						}
+						e.broadcastCombatRoom(inst.RoomNumber, p, []string{fmt.Sprintf("%s%s advances towards %s.", capArticle(article), name, p.DisplayName())})
 						break
 					}
 				}
@@ -1095,16 +1235,16 @@ func (e *GameEngine) monsterTick(tick int) {
 			// Departure message
 			moveText := def.TextOverrides["TEXM"]
 			if moveText != "" {
-				e.localRoomBroadcast(inst.RoomNumber, []string{moveText + " " + dirName + "."})
+				e.roomNotice(inst.RoomNumber, "", []string{moveText + " " + dirName + "."})
 			} else {
 				article := "A"
 				if len(name) > 0 && strings.ContainsRune("aeiouAEIOU", rune(name[0])) {
 					article = "An"
 				}
 				if def.Unique {
-					e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("%s wanders %s.", name, dirName)})
+					e.roomNotice(inst.RoomNumber, "", []string{fmt.Sprintf("%s wanders %s.", name, dirName)})
 				} else {
-					e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("%s %s wanders %s.", article, name, dirName)})
+					e.roomNotice(inst.RoomNumber, "", []string{fmt.Sprintf("%s %s wanders %s.", article, name, dirName)})
 				}
 			}
 
@@ -1114,16 +1254,16 @@ func (e *GameEngine) monsterTick(tick int) {
 			// Arrival message
 			entryText := def.TextOverrides["TEXE"]
 			if entryText != "" {
-				e.localRoomBroadcast(chosen.destID, []string{entryText})
+				e.roomNotice(chosen.destID, "", []string{entryText})
 			} else {
 				article := "A"
 				if len(name) > 0 && strings.ContainsRune("aeiouAEIOU", rune(name[0])) {
 					article = "An"
 				}
 				if def.Unique {
-					e.localRoomBroadcast(chosen.destID, []string{fmt.Sprintf("%s has arrived.", name)})
+					e.roomNotice(chosen.destID, "", []string{fmt.Sprintf("%s has arrived.", name)})
 				} else {
-					e.localRoomBroadcast(chosen.destID, []string{fmt.Sprintf("%s %s has arrived.", article, name)})
+					e.roomNotice(chosen.destID, "", []string{fmt.Sprintf("%s %s has arrived.", article, name)})
 				}
 			}
 		}

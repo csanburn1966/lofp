@@ -51,6 +51,9 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	// Normal movement reveals hidden players (but not Ethereal Projection — that's psi-maintained)
 	if player.Hidden && !player.EtherealActive {
 		player.Hidden = false
@@ -93,7 +96,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 
 	player.RoomNumber = destNum
 	player.Submitting = false // moving clears submit state
-	e.disengageCombat(player) // moving clears combat
+	e.disengageCombat(player) // moving clears any non-melee combat lock
 	player.GuardTargets = nil // guard is room-specific
 	player.GuardPortals = nil
 	player.GuardItems = nil
@@ -119,7 +122,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// If this happened after doLook (as it used to), the leader's own room
 	// render would list who's present in destNum before the group/summons had
 	// actually been moved there, making it look like they didn't follow.
-	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum)
+	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
 		e.monsterMgr.mu.Lock()
@@ -226,6 +229,10 @@ func (e *GameEngine) EnterRoom(ctx context.Context, player *Player) *CommandResu
 
 	result := e.doLook(player)
 	result.Messages = append([]string{timeMsg}, result.Messages...)
+	if len(player.LoginNotices) > 0 {
+		result.Messages = append(append([]string{}, player.LoginNotices...), result.Messages...)
+		player.LoginNotices = nil
+	}
 	room := e.rooms[player.RoomNumber]
 	if room != nil {
 		e.applyEntryScripts(ctx, player, room, result)
@@ -357,7 +364,8 @@ func (e *GameEngine) applyEntryScripts(ctx context.Context, player *Player, room
 	e.spawnForRoom(room.Number)
 
 	// Check if hostile monsters should aggro on the player entering the room
-	go e.monsterCheckAggro(player, room.Number)
+	// (after an aggroDelay (3s) wait — see scheduleEntryAggro)
+	e.scheduleEntryAggro(player, room.Number)
 }
 
 // scheduleScriptSegments fires SETEVENT/CONTEVENT-deferred script segments in background goroutines.
@@ -414,9 +422,13 @@ func (e *GameEngine) scheduleScriptSegments(player *Player, segments []ScriptSeg
 	}
 }
 
+// doSteal handles STEAL/FILCH. An item's own IFPREVERB STEAL script wins first
+// (some alley portals use STEAL as a sneak-through verb); otherwise STEAL <floor
+// item> is a FILCH, STEAL <player|creature> picks a pocket, and a bare STEAL
+// robs the store — see legerdemain.go.
 func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Steal what?"}}
+		return e.doRob(ctx, player, nil)
 	}
 	target := strings.ToLower(strings.Join(args, " "))
 	room := e.rooms[player.RoomNumber]
@@ -475,14 +487,29 @@ func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string)
 				e.applyEntryScripts(ctx, player, dest, result)
 			}
 		}
+		if len(result.Messages) == 0 && len(result.RoomBroadcast) == 0 && !sc.Blocked {
+			// No STEAL script reacted — it's an ordinary item on the floor.
+			return e.doFilch(ctx, player, args)
+		}
 		if len(result.Messages) == 0 {
 			result.Messages = []string{"You can't steal that."}
 		}
 		return result
 	}
 
-	// No scripted item matched — pick-pockets / creature steal (TODO)
-	return &CommandResult{Messages: []string{"[Stealing from creatures coming soon.]"}}
+	// Coin piles (State MONEY) have no item definition, so the loop above never
+	// sees them.
+	switch target {
+	case "coins", "coin", "money", "gold", "silver", "copper":
+		for _, ri := range room.Items {
+			if ri.State == "MONEY" {
+				return e.doFilch(ctx, player, args)
+			}
+		}
+	}
+
+	// Not a floor item — pick a player's or creature's pocket.
+	return e.doRob(ctx, player, args)
 }
 
 func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -689,6 +716,9 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	// Check if portal is closed — Mist Form and Slime Form seep through the cracks
 	// of a closed door/gate/etc. without opening it, unless the portal is SEALED
 	// (GMSCRIPT.DOC: "may not be seeped through if a player is in mist form").
@@ -808,7 +838,7 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 
 	// Relocate followers and summoned creatures BEFORE rendering any room look
 	// (see doMove for why — otherwise the group looks like it didn't follow).
-	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum)
+	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
 		e.monsterMgr.mu.Lock()
@@ -899,6 +929,9 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
+	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
 	}
 	target := strings.ToLower(strings.Join(args, " "))
 	target, ordSkip := parseOrdinal(target)

@@ -96,7 +96,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		}
 		// Coin piles
 		if ri.State == "MONEY" {
-			result.Items = append(result.Items, "some coins")
+			result.Items = append(result.Items, e.coinPileRoomName(ri.Archetype))
 			continue
 		}
 		itemDef := e.items[ri.Archetype]
@@ -248,46 +248,21 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 			if !hasExit && dir == "D" {
 				destNum, hasExit = room.Exits["BELOW"]
 			}
-			if hasExit {
-				if dest := e.rooms[destNum]; dest != nil {
-					msgs := []string{fmt.Sprintf("[%s]", dest.Name)}
-					if dest.Description != "" {
-						msgs = append(msgs, descriptionToMessages(dest.Description)...)
-					}
-					// Show players and monsters/NPCs together in one sentence
-					var peopleHere []string
-					if e.sessions != nil {
-						for _, p := range e.sessions.OnlinePlayers() {
-							if p.RoomNumber == destNum && !p.Hidden && !p.Invisible && !p.PhantomForm && !p.GMInvis {
-								peopleHere = append(peopleHere, p.DisplayName())
-							}
-						}
-					}
-					peopleHere = append(peopleHere, e.monsterNamesInRoom(destNum)...)
-					if len(peopleHere) > 0 {
-						msgs = append(msgs, "You see "+joinList(peopleHere)+".")
-					}
-					// Show room items
-					var itemNames []string
-					for _, ri := range dest.Items {
-						if ri.IsPut {
-							continue
-						}
-						itemDef := e.items[ri.Archetype]
-						if itemDef == nil {
-							continue
-						}
-						itemNames = append(itemNames, e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))
-					}
-					if len(itemNames) > 0 {
-						verb := " are here."
-						if len(itemNames) == 1 {
-							verb = " is here."
-						}
-						msgs = append(msgs, capitalize(joinList(itemNames))+verb)
-					}
-					return &CommandResult{Messages: msgs}
-				}
+			if hasExit && e.rooms[destNum] != nil {
+				// Render the destination room's look without moving the player there —
+				// swap RoomNumber just long enough to reuse doLookFull's rendering (same
+				// HIDDEN/ucantsee/anti-item filtering, occupant and exit logic as an
+				// actual LOOK there), then restore it. Mirrors castScrySpell's identical
+				// trick for CAST <mark#>. Only Messages is pulled from the result —
+				// RoomName/RoomDesc/Exits/Items and the GMCP-only RoomExits/RoomTerrain/
+				// RoomRegion fields are deliberately left off the returned result, since
+				// the client's automapper and room-name UI key off those and shouldn't be
+				// told the player is standing in a room they only glanced into.
+				originalRoom := player.RoomNumber
+				player.RoomNumber = destNum
+				lookResult := e.doLookFull(player)
+				player.RoomNumber = originalRoom
+				return &CommandResult{Messages: lookResult.Messages}
 			}
 			return &CommandResult{Messages: []string{"You see nothing of interest in that direction."}}
 		}
@@ -1237,6 +1212,18 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 		result.RoomBroadcast = append(result.RoomBroadcast, sc0.RoomMsgs...)
 	}
 
+	// Run IFPREVERB LOOK scripts on the item (e.g. room 3741's subway panel reporting
+	// the current light state via PVAL53 — examineCarriedItem already does this for
+	// carried items, but the room-item path never called it, so room-scoped
+	// "IFPREVERB LOOK <ref>" blocks silently never fired).
+	scPre := e.RunPreverbScripts(player, room, "LOOK", ri, def)
+	if len(scPre.Messages) > 0 {
+		result.Messages = append(result.Messages, scPre.Messages...)
+	}
+	if len(scPre.RoomMsgs) > 0 {
+		result.RoomBroadcast = append(result.RoomBroadcast, scPre.RoomMsgs...)
+	}
+
 	// Run IFVERB LOOK scripts on the item (can add SHOWROOM output, etc.)
 	sc := e.RunVerbScripts(player, room, "LOOK", ri, def)
 	if len(sc.Messages) > 0 {
@@ -1247,7 +1234,7 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 	}
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
 	// the delay is lost.
-	for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, sc.DeferredSegments} {
+	for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, scPre.DeferredSegments, sc.DeferredSegments} {
 		if len(segs) > 0 {
 			e.scheduleScriptSegments(player, segs)
 		}
@@ -1264,6 +1251,12 @@ func (e *GameEngine) readRoomItem(room *gameworld.Room, def *gameworld.ItemDef, 
 	refStr := fmt.Sprintf("%d", ri.Ref)
 	if desc, ok := room.ItemDescriptions["READ:"+refStr]; ok {
 		return &CommandResult{Messages: descriptionToMessages(desc)}
+	}
+	// Player-written text (WRITE <item> WITH <text> — see doWriteNote) takes over
+	// once a WRITEABLE item has actually been written on; a map-authored READ:
+	// override above still wins if one happens to exist for this room instance.
+	if ri.WrittenText != "" {
+		return &CommandResult{Messages: []string{ri.WrittenText}}
 	}
 	return &CommandResult{Messages: []string{"There is nothing written on it."}}
 }
@@ -1331,6 +1324,12 @@ func parseOrdinal(target string) (string, int) {
 	if num, err := strconv.Atoi(first); err == nil && num >= 1 {
 		return parts[1], num - 1
 	}
+	// Check digit-suffix ordinals: "2nd gate", "1st slot", "3rd box", etc.
+	if stripped := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(first, "st"), "nd"), "rd"), "th"); stripped != first {
+		if num, err := strconv.Atoi(stripped); err == nil && num >= 1 {
+			return parts[1], num - 1
+		}
+	}
 	// Check trailing number: "counter 2" means 2nd counter
 	lastSpace := strings.LastIndex(target, " ")
 	if lastSpace > 0 {
@@ -1371,6 +1370,19 @@ func stripMyPrefix(target string) (string, bool) {
 // "red panties", "icy broadsword", or "icy elkyri broadsword" all match correctly.
 func matchesTarget(nounName, target string, adjNames ...string) bool {
 	t := strings.ToLower(target)
+	// Strip a leading article — many items display with one baked in via their
+	// ARTICLE field (e.g. "some water", formatItemName's ARTICLE SOME case), so a
+	// player typing back exactly what they saw ("drink some water") would otherwise
+	// never match the noun "water". A handful of callers (findMonsterInRoomEx,
+	// findSummonedCreatureInRoom, etc.) already strip this themselves before calling
+	// in; doing it here too covers the many callers — DRINK, GET, EAT, WEAR, and
+	// most other item-targeting commands — that don't.
+	for _, article := range []string{"a ", "an ", "the ", "some "} {
+		if rest, ok := strings.CutPrefix(t, article); ok {
+			t = rest
+			break
+		}
+	}
 	noun := strings.ToLower(nounName)
 
 	// Collect non-empty adjective names in order.
@@ -1417,7 +1429,20 @@ func nounMatches(noun, t string) bool {
 	}
 	if len(t) > 2 && t[len(t)-1] == 's' {
 		stem := t[:len(t)-1]
-		if stem == noun || strings.HasPrefix(noun, stem) {
+		if stem == noun {
+			return true
+		}
+		// The fuzzy prefix check below needs its own minimum length on the
+		// stem (post-'s'-stripping), not just on the original target — "bas"
+		// passes len(t) > 2, but its stem "ba" is only 2 characters, which
+		// would prefix-match almost anything ("backpack", "bag", "ball", ...).
+		// Per a reported bug: SELL BAS was selling a backpack instead of a
+		// basinet, because "bas" -> stem "ba" is a prefix of "backpack" —
+		// even though "bas" is not a shortened/pluralized form of "backpack"
+		// at all. Requiring the stem itself to be 3+ characters keeps this
+		// path only for genuine abbreviated-plural guesses ("hels" -> "hel"),
+		// matching the same minimum abbreviation length used everywhere else.
+		if len(stem) > 2 && strings.HasPrefix(noun, stem) {
 			return true
 		}
 	}
@@ -1481,6 +1506,6 @@ func (e *GameEngine) weaponsmithAppraisalLines(player *Player, def *gameworld.It
 	if player == nil || def == nil || !isWeapon(def.Type) || player.Skills[8] < 1 {
 		return nil
 	}
-	hardness := e.weaponHardnessFor(def, adj1, adj2, adj3, hardnessMod)
+	hardness := e.weaponHardnessFor(def, adj1, adj2, adj3, val2, hardnessMod)
 	return []string{fmt.Sprintf("Your Weaponsmithing expertise reveals: non-magical bonus %+d, magical bonus %+d, hardness rating %d.", sharpness, val2, hardness)}
 }

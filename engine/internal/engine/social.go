@@ -245,6 +245,43 @@ func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *
 	}
 }
 
+// doSayTo handles "SAYTO <player> <message>" — a public, room-wide statement
+// addressed to a specific person, unlike WHISPER which is a private aside.
+// No IFSAY scripts run here: those blocks are original-content triggers for the
+// literal SAY command, and SAYTO has no original precedent (it's a new roleplay
+// convenience command), so it mirrors WHISPER/YELL in staying script-free.
+func (e *GameEngine) doSayTo(player *Player, args []string, rawInput string) *CommandResult {
+	if player.IsSilenced() {
+		return &CommandResult{Messages: []string{"You try to speak, but no sound comes out!"}}
+	}
+	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	if len(args) < 2 {
+		return &CommandResult{Messages: []string{"Say what to whom?"}}
+	}
+	targetName := strings.ToLower(args[0])
+	found := e.findPlayerInRoom(player, targetName)
+	if found == nil {
+		return &CommandResult{Messages: []string{"You don't see that person here."}}
+	}
+	text := extractRawArgs(rawInput, 2)
+	if text == "" {
+		return &CommandResult{Messages: []string{"Say what to whom?"}}
+	}
+	roomLine := fmt.Sprintf("%s says to %s, \"%s\"", player.DisplayNameCap(), found.DisplayName(), text)
+	if player.IsConcealed() {
+		roomLine = fmt.Sprintf("Something says to %s, \"%s\"", found.DisplayName(), text)
+	}
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You say to %s, \"%s\"", found.DisplayName(), text)},
+		RoomBroadcast: []string{roomLine},
+		// roomLine is already anonymized above for a concealed speaker, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
+	}
+}
+
 func (e *GameEngine) doYell(player *Player, args []string, rawInput string) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Yell what?"}}
@@ -416,6 +453,25 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 	}
 }
 
+// finishPreverbMoveGroup builds the result for a direction/ASCEND/DESCEND
+// IFPREVERB that fired MOVEGROUP, then performs the move. sc.RoomMsgs are
+// pre-MOVEGROUP departure echoes, so they go to the room being left rather than
+// whatever room player.RoomNumber points at after the move.
+func (e *GameEngine) finishPreverbMoveGroup(ctx context.Context, player *Player, sc *ScriptContext) *CommandResult {
+	result := &CommandResult{}
+	result.Messages = append(result.Messages, sc.Messages...)
+	result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+	if len(sc.RoomMsgs) > 0 {
+		result.OldRoom = player.RoomNumber
+		result.OldRoomMsg = append(result.OldRoomMsg, sc.RoomMsgs...)
+	}
+	if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
+		result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
+	}
+	e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
+	return result
+}
+
 // moveGroupToRoom moves all online players in srcRoom to destRoom (for MOVEGROUP script command).
 func (e *GameEngine) moveGroupToRoom(ctx context.Context, srcRoom, destRoom int) {
 	dest := e.rooms[destRoom]
@@ -440,7 +496,29 @@ func (e *GameEngine) moveGroupToRoom(ctx context.Context, srcRoom, destRoom int)
 			lookResult := e.doLook(p)
 			e.sendToPlayer(p.FirstName, lookResult.Messages)
 		}
-		e.applyEntryScripts(ctx, p, dest, &CommandResult{})
+		// applyEntryScripts writes into whatever CommandResult it's handed — a bare
+		// &CommandResult{} literal here was a throwaway nobody ever read, so any
+		// IFENTRY reaction (an ECHO PLAYER, a DAMAGEPLR message, even a second
+		// MOVEGROUP bouncing the player straight back out — see EDDIE3.SCR room 76's
+		// "your dagger is not the right one" check) was computed and then silently
+		// dropped: the player would see themselves plucked right back to where they
+		// started with no explanation at all. Capture it and actually deliver it,
+		// the same way scheduleScriptSegments already does for its own IFENTRY calls.
+		entryResult := &CommandResult{}
+		e.applyEntryScripts(ctx, p, dest, entryResult)
+		if len(entryResult.Messages) > 0 && e.sendToPlayer != nil {
+			e.sendToPlayer(p.FirstName, entryResult.Messages)
+		}
+		if len(entryResult.RoomBroadcast) > 0 {
+			if e.roomBroadcastExclude != nil {
+				e.roomBroadcastExclude(p.RoomNumber, p.FirstName, entryResult.RoomBroadcast)
+			} else if e.roomBroadcast != nil {
+				e.roomBroadcast(p.RoomNumber, entryResult.RoomBroadcast)
+			}
+		}
+		if len(entryResult.GMBroadcast) > 0 && e.gmBroadcast != nil {
+			e.gmBroadcast(entryResult.GMBroadcast)
+		}
 	}
 }
 
@@ -514,13 +592,16 @@ func followBlockedReason(p *Player) string {
 
 // moveGroupFollowers relocates a leader's online group members from
 // originalRoom to destNum, for the caller to render along with the leader's
-// own move. A member who is in round time, sitting, laying down, or stunned
-// can't keep up — rather than dragging them along, they're left behind and
-// dropped from the group (mirroring removeFromGroup: their Following is
-// cleared, they come off the leader's GroupMembers list, and the leader loses
-// IsGroupLeader if that was their last member). Returns the members who
-// actually came along.
-func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, originalRoom, destNum int) []*Player {
+// own move. For an on-foot move (bypassFollowCheck false), a member who is in
+// round time, sitting, laying down, or stunned can't keep up — rather than
+// dragging them along, they're left behind and dropped from the group
+// (mirroring removeFromGroup: their Following is cleared, they come off the
+// leader's GroupMembers list, and the leader loses IsGroupLeader if that was
+// their last member). A magical mass-teleport (bypassFollowCheck true — e.g.
+// Bend Space II) sweeps every group member along regardless of that physical
+// state: the spell relocates them, they don't need to walk anywhere to keep
+// up. Returns the members who actually came along.
+func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, originalRoom, destNum int, bypassFollowCheck bool) []*Player {
 	if !leader.IsGroupLeader || len(leader.GroupMembers) == 0 || e.sessions == nil {
 		return nil
 	}
@@ -532,13 +613,15 @@ func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, ori
 			if p.FirstName != memberName || p.RoomNumber != originalRoom || p.Dead {
 				continue
 			}
-			if reason := followBlockedReason(p); reason != "" {
-				leaderDisplay := leader.DisplayName()
-				e.removeFromGroup(p)
-				if e.sendToPlayer != nil {
-					e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("You are %s and fail to follow %s! You are no longer following them.", reason, leaderDisplay)})
+			if !bypassFollowCheck {
+				if reason := followBlockedReason(p); reason != "" {
+					leaderDisplay := leader.DisplayName()
+					e.removeFromGroup(p)
+					if e.sendToPlayer != nil {
+						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("You are %s and fail to follow %s! You are no longer following them.", reason, leaderDisplay)})
+					}
+					break
 				}
-				break
 			}
 			p.RoomNumber = destNum
 			p.Submitting = false
@@ -668,7 +751,7 @@ func (e *GameEngine) groupMates(player *Player) []*Player {
 // The player paying deducts their share for each other member; remainder stays with them.
 func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) < 2 {
-		return &CommandResult{Messages: []string{"Split how much of what? Usage: split <amount> <gold|silver|copper>"}}
+		return &CommandResult{Messages: []string{"Split how much of what? Usage: split <amount> <gold|silver|copper|kragenmarks|...>"}}
 	}
 	amount, err := strconv.Atoi(args[0])
 	if err != nil || amount <= 0 {
@@ -685,7 +768,12 @@ func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string)
 	case "gold", "silver", "copper":
 		// already normalised
 	default:
-		return &CommandResult{Messages: []string{"You can split gold, silver, or copper."}}
+		// A regional currency (currency.go), e.g. "split 30 kragenmarks".
+		if md := e.currencyByName(currency); md != nil {
+			currency = md.Name
+			break
+		}
+		return &CommandResult{Messages: []string{"You can split gold, silver, copper, or a regional currency."}}
 	}
 
 	if !player.IsGroupLeader && player.Following == "" {
@@ -774,6 +862,15 @@ func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string)
 			r.Copper += share
 			e.SavePlayer(ctx, r)
 		}
+	default:
+		md := e.currencyByName(currency)
+		if !e.spendFunds(player, md, totalToGive) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have enough %s to give %s to each of %d members.", currencyPlural(md), formatCurrency(md, share), len(recipients))}}
+		}
+		for _, r := range recipients {
+			addFunds(r, md, share)
+			e.SavePlayer(ctx, r)
+		}
 	}
 	e.SavePlayer(ctx, player)
 
@@ -808,7 +905,10 @@ func splitCurrencyDisplay(amount int, currency string) string {
 		}
 		return fmt.Sprintf("%d copper pennies", amount)
 	}
-	return fmt.Sprintf("%d %s", amount, currency)
+	if amount == 1 {
+		return fmt.Sprintf("1 %s", currency)
+	}
+	return fmt.Sprintf("%d %ss", amount, currency) // regional currency: singular name + "s"
 }
 
 func (e *GameEngine) doWho(player *Player) *CommandResult {
@@ -1109,6 +1209,12 @@ func (e *GameEngine) doPay(ctx context.Context, player *Player) *CommandResult {
 	if sc.NeedsSave {
 		e.SavePlayer(ctx, player)
 	}
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
+	// the delay is lost — e.g. room 3740's token machine gives the token via a
+	// deferred NEWITEM after the "clunk" message, which never fired without this.
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
 	result := &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs}
 	if sc.MoveTo > 0 {
 		e.applySayMove(ctx, player, sc, result)
@@ -1132,6 +1238,23 @@ func (e *GameEngine) applySayMove(ctx context.Context, player *Player, sc *Scrip
 	if origRoom == 0 {
 		origRoom = player.RoomNumber
 	}
+	// Split the room broadcast at the MOVE. doMove moves everything echoed before the
+	// MOVE into sc.PreMoveMsgs and clears sc.RoomMsgs, so sc.RoomMsgs holds only what
+	// was echoed after it; the caller built result.RoomBroadcast as the spoken line (SAY;
+	// nothing for PAY) followed by sc.RoomMsgs. The speech and pre-move echoes (e.g.
+	// "...and she vanishes!") belong to the room being left; post-move echoes (e.g.
+	// AFFECT <dest> + "...appears in a swirl of wind") belong to the destination.
+	// Previously the speech went to the destination and pre-move echoes were dropped.
+	speechLines := result.RoomBroadcast
+	if n := len(result.RoomBroadcast) - len(sc.RoomMsgs); n >= 0 {
+		speechLines = result.RoomBroadcast[:n]
+	}
+	postMove := sc.RoomMsgs
+	oldRoomMsgs := append(append([]string{}, speechLines...), sc.PreMoveMsgs...)
+	if len(sc.PreMoveMsgs) == 0 {
+		oldRoomMsgs = append(oldRoomMsgs, fmt.Sprintf("%s leaves.", player.DisplayNameCap()))
+	}
+
 	player.RoomNumber = sc.MoveTo
 	e.SavePlayer(ctx, player)
 	lookResult := e.doLook(player)
@@ -1141,8 +1264,11 @@ func (e *GameEngine) applySayMove(ctx context.Context, player *Player, sc *Scrip
 	result.Exits = lookResult.Exits
 	result.Items = lookResult.Items
 	result.OldRoom = origRoom
-	result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
-	result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+	result.OldRoomMsg = oldRoomMsgs
+	result.RoomBroadcast = append([]string{}, postMove...)
+	if len(postMove) == 0 {
+		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+	}
 	e.applyEntryScripts(ctx, player, dest, result)
 }
 

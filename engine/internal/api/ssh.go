@@ -366,7 +366,9 @@ func (s *Server) handleSSHSession(channel ssh.Channel, remoteAddr string) {
 	s.gamelog.Log(gamelog.EventGameEnter, player.FullName(), accountID,
 		fmt.Sprintf("ssh from %s", ip), player.RoomNumber, "")
 
-	if !player.GMInvis && !player.GMHidden {
+	// GMs log in and out frequently for admin work — skip the announcement for
+	// them regardless of GMInvis/GMHidden, not just while actively concealed.
+	if !player.GMInvis && !player.GMHidden && !player.IsGM {
 		s.broadcastGlobal(player.FirstName,
 			[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 		s.broadcastToRoom(player.RoomNumber, player.FirstName,
@@ -397,7 +399,8 @@ func (s *Server) handleSSHSession(channel ssh.Channel, remoteAddr string) {
 
 	if isActive {
 		s.engine.HandlePlayerDisconnect(player)
-		if !player.GMInvis && !player.GMHidden {
+		// See the matching entry-side comment above — GMs skip this announcement too.
+		if !player.GMInvis && !player.GMHidden && !player.IsGM {
 			if !session.quitSent {
 				s.broadcastGlobal(player.FirstName,
 					[]string{fmt.Sprintf("** %s has just left the Realms.", player.DisplayNameCap())})
@@ -827,56 +830,63 @@ func (s *Server) sshCommandLoop(ctx context.Context, session *Session, sc *sshCo
 		session.lastActivity = time.Now()
 
 		// Rate limiting (same as telnet)
-		now := time.Now()
-		isGive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(input)), "give ")
-		if now.Sub(session.lastCmdTime) > time.Second {
-			session.cmdCount = 0
-			session.lastCmdTime = now
-		}
-		session.cmdCount++
-		if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
-			sc.writeLine("[Slow down! Too many commands.]")
-			continue
-		}
-
-		cutoff := now.Add(-10 * time.Second)
-		var recentCmds []time.Time
-		for _, t := range session.cmdTimes {
-			if t.After(cutoff) {
-				recentCmds = append(recentCmds, t)
+		quit := false
+		for _, subInput := range splitCommandChain(input) {
+			now := time.Now()
+			isGive := strings.HasPrefix(strings.ToLower(subInput), "give ")
+			if now.Sub(session.lastCmdTime) > time.Second {
+				session.cmdCount = 0
+				session.lastCmdTime = now
 			}
-		}
-		session.cmdTimes = append(recentCmds, now)
-		if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
-			sc.writeLine("[Slow down! Too many commands.]")
-			continue
-		}
+			session.cmdCount++
+			if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
+				sc.writeLine("[Slow down! Too many commands.]")
+				break
+			}
 
-		result := s.engine.ProcessCommand(ctx, session.Player, input)
-		result.PlayerState = session.Player
-		result.PromptIndicators = session.Player.PromptIndicators()
-		s.sendResult(session, result)
-
-		if len(result.RoomBroadcast) > 0 {
-			chatNow := time.Now()
-			chatCutoff := chatNow.Add(-9 * time.Second)
-			var recent []time.Time
-			for _, t := range session.chatTimes {
-				if t.After(chatCutoff) {
-					recent = append(recent, t)
+			cutoff := now.Add(-10 * time.Second)
+			var recentCmds []time.Time
+			for _, t := range session.cmdTimes {
+				if t.After(cutoff) {
+					recentCmds = append(recentCmds, t)
 				}
 			}
-			session.chatTimes = recent
-			if len(session.chatTimes) >= 10 {
-				sc.writeLine("[You are sending messages too quickly. Please wait.]")
-				continue
+			session.cmdTimes = append(recentCmds, now)
+			if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
+				sc.writeLine("[Slow down! Too many commands.]")
+				break
 			}
-			session.chatTimes = append(session.chatTimes, chatNow)
+
+			result := s.engine.ProcessCommand(ctx, session.Player, subInput)
+			result.PlayerState = session.Player
+			result.PromptIndicators = session.Player.PromptIndicators()
+			s.sendResult(session, result)
+
+			if len(result.RoomBroadcast) > 0 {
+				chatNow := time.Now()
+				chatCutoff := chatNow.Add(-9 * time.Second)
+				var recent []time.Time
+				for _, t := range session.chatTimes {
+					if t.After(chatCutoff) {
+						recent = append(recent, t)
+					}
+				}
+				session.chatTimes = recent
+				if len(session.chatTimes) >= 10 {
+					sc.writeLine("[You are sending messages too quickly. Please wait.]")
+					break
+				}
+				session.chatTimes = append(session.chatTimes, chatNow)
+			}
+
+			s.dispatchCommandResult(session, result)
+
+			if result.Quit {
+				quit = true
+				break
+			}
 		}
-
-		s.dispatchCommandResult(session, result)
-
-		if result.Quit {
+		if quit {
 			return
 		}
 	}

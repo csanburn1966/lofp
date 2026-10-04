@@ -107,6 +107,9 @@ interface PlayerDetail extends PlayerSummary {
   gold: number
   silver: number
   copper: number
+  // Regional currencies keyed by MONEYDEF type number (engine currency.go)
+  currencies?: Record<string, number>
+  bankCurrencies?: Record<string, number>
   briefMode: boolean
   promptMode: boolean
   hidden: boolean
@@ -289,6 +292,16 @@ const CategoryColors: Record<string, string> = {
 }
 
 type AdminTab = 'rooms' | 'players' | 'users' | 'items' | 'monsters' | 'logs' | 'events'
+
+// Regional currency names by MONEYDEF type number (original/scripts/REGIONS.SCR,
+// ADJNOUN.SCR) — keys of Player.currencies / bankCurrencies.
+const CURRENCY_NAMES: Record<string, string> = {
+  '1': 'Dollars',
+  '2': 'Kragenmarks',
+  '3': 'Danirs',
+  '4': 'Shards',
+  '5': 'Darktars',
+}
 
 export default function AdminPanel() {
   const { user } = useAuth()
@@ -1183,6 +1196,12 @@ export default function AdminPanel() {
                       <div><span className="text-gray-500">Gold:</span> {selectedPlayer.gold}</div>
                       <div><span className="text-gray-500">Silver:</span> {selectedPlayer.silver}</div>
                       <div><span className="text-gray-500">Copper:</span> {selectedPlayer.copper}</div>
+                      {Object.entries(selectedPlayer.currencies ?? {}).filter(([, n]) => n > 0).map(([id, n]) => (
+                        <div key={`cur-${id}`}><span className="text-gray-500">{CURRENCY_NAMES[id] ?? `Currency ${id}`}:</span> {n}</div>
+                      ))}
+                      {Object.entries(selectedPlayer.bankCurrencies ?? {}).filter(([, n]) => n > 0).map(([id, n]) => (
+                        <div key={`bank-${id}`}><span className="text-gray-500">Bank {CURRENCY_NAMES[id] ?? `Currency ${id}`}:</span> {n}</div>
+                      ))}
                       <div><span className="text-gray-500">Position:</span> {['Standing','Sitting','Laying','Kneeling','Flying'][selectedPlayer.position] || selectedPlayer.position}</div>
                     </div>
                     <div className="flex gap-2 mt-2">

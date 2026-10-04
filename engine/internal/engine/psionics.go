@@ -40,11 +40,20 @@ func init() {
 		{8, "Manipulate Lock", "Mind over Matter", 8, 6, 5, "utility", 0, 0, "", 0, 0, 0},
 		{9, "Wall of Force", "Mind over Matter", 9, 12, 5, "defense", 0, 0, "", 25, 0, 0},
 		{10, "Flight", "Mind over Matter", 10, 10, 5, "buff", 0, 0, "", 0, 0, 0},
+		// ID 42 (not 16) matches LEGENDS.DOC's own discipline number for Speed —
+		// unlike the rest of this slice, which renumbers sequentially from 1.
+		{42, "Speed", "Mind over Matter", 12, 12, 5, "buff", 0, 0, "", 0, 0, 0},
 		{11, "Call on Inner Power", "Mind over Matter", 13, 0, 20, "utility", 0, 0, "", 0, 0, 0},
 		{12, "Teleportation", "Mind over Matter", 18, 15, 5, "utility", 0, 0, "", 0, 0, 0},
 		{13, "Force Field", "Mind over Matter", 20, 20, 5, "defense", 0, 0, "", 75, 0, 0},
 		{14, "Immobilize", "Mind over Matter", 22, 18, 5, "utility", 0, 0, "", 0, 0, 0},
 		{15, "Ethereal Projection", "Mind over Matter", 25, 25, 10, "buff", 0, 0, "", 0, 0, 0},
+		// Transform Steel is LEGENDS.DOC discipline #13, but internal ID 13 is
+		// already Force Field (this slice renumbers sequentially from 1, skipping
+		// the unimplemented #1 Matter Awakening and this originally-unimplemented
+		// #13) — 16 is simply the next free internal ID, not a doc number (unlike
+		// Speed's 42 above, there's no in-game "psi <n>" number on record to match).
+		{16, "Transform Steel", "Mind over Matter", 15, 15, 5, "utility", 0, 0, "", 0, 0, 0},
 	}
 	moo := []PsiDiscipline{
 		{50, "Telepathy", "Mind over Mind", 1, 2, 5, "utility", 0, 0, "", 0, 0, 0},
@@ -143,10 +152,13 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult 
 		if disc.DefBonus > 0 {
 			player.DefenseBonus -= disc.DefBonus
 		}
-		// Clear flight state
+		// Clear flight state. Over open sky that means falling (skyfall.go),
+		// not "standing" in mid-air.
+		var fallMsgs []string
 		if disc.ID == 2 || disc.ID == 10 { // Levitate or Flight
 			player.CanFly = false
-			if player.Position == 4 {
+			fallMsgs = e.fallIfFlightLost(context.Background(), player, true)
+			if fallMsgs == nil && player.Position == 4 && !player.IsFlying() {
 				player.Position = 0
 			}
 		}
@@ -154,6 +166,20 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult 
 		if disc.ID == 15 {
 			player.EtherealActive = false
 			player.Hidden = false
+		}
+		// Speed shares the same HasteExpiry field applyRoundTime reads for every
+		// timed spell-Haste — clearing it here also cancels the round-time discount.
+		if disc.ID == 42 {
+			player.HasteExpiry = time.Time{}
+			return &CommandResult{
+				Messages:      []string{"You stop maintaining Speed.", "You slow down considerably."},
+				RoomBroadcast: []string{fmt.Sprintf("%s returns to normal speed.", player.FirstName)},
+			}
+		}
+		if fallMsgs != nil {
+			// The fall already told both rooms; a RoomBroadcast here would go to
+			// the landing room, which never saw the concentration being released.
+			return &CommandResult{Messages: append([]string{fmt.Sprintf("You release your concentration on %s.", disc.Name)}, fallMsgs...)}
 		}
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You release your concentration on %s.", disc.Name)},
@@ -168,6 +194,53 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult 
 	// Instantaneous powers that don't need a target activate immediately
 	if isMaintained {
 		player.Psi -= disc.PsiCost
+
+		// Speed (42) is the one maintained MoM buff with a real chance of failure —
+		// per the skill-check shape used elsewhere in this file (see doProjectPsi and
+		// psiResistRoll): base 50 + psi/school skill*3 + Willpower/5, penalized by the
+		// discipline's level since it's a freshly-learned power at minimum skill.
+		if disc.ID == 42 {
+			psiSkill := player.Skills[26]
+			momSkill := player.Skills[28]
+			chance := 50 + (psiSkill+momSkill)*3 + player.Willpower/5 - disc.Level*2
+			if chance < 15 {
+				chance = 15
+			}
+			if chance > 95 {
+				chance = 95
+			}
+			if player.IsGM {
+				chance = 100
+			}
+			roll := rand.Intn(100) + 1
+			if roll > chance {
+				return &CommandResult{
+					Messages:      []string{"You concentrate...", fmt.Sprintf("[Success: %d%%, Roll %d] Failure.", chance, roll), "You fail to reach the necessary focus."},
+					RoomBroadcast: []string{fmt.Sprintf("%s concentrates intently, but nothing happens.", player.FirstName)},
+				}
+			}
+			player.ActivePsi[disc.ID] = true
+			// Speed is maintained (toggled), not timed like the Haste spell, so it
+			// sets HasteExpiry far in the future rather than for a fixed duration.
+			// Both share the same field applyRoundTime reads, so this gets the same
+			// halved round time as spell Haste for free; toggling off zeroes it again.
+			player.HasteExpiry = time.Now().Add(10 * 365 * 24 * time.Hour)
+			psiRT := applyRoundTime(player, disc.RoundSec)
+			player.RoundTimeExpiry = time.Now().Add(time.Duration(psiRT) * time.Second)
+			return &CommandResult{
+				Messages: []string{
+					"You concentrate...",
+					fmt.Sprintf("[Success: %d%%, Roll %d] Success!", chance, roll),
+					"You move considerably faster.",
+					fmt.Sprintf(" [Round: %d sec]", psiRT),
+				},
+				RoomBroadcast: []string{
+					fmt.Sprintf("%s concentrates intently.", player.FirstName),
+					fmt.Sprintf("%s begins moving with blurring speed.", player.FirstName),
+				},
+			}
+		}
+
 		player.ActivePsi[disc.ID] = true
 		if disc.DefBonus > 0 {
 			player.DefenseBonus += disc.DefBonus
@@ -343,7 +416,8 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 	if player.IsGM {
 		castChance = 100
 	}
-	if rand.Intn(100) >= castChance {
+	psiRoll := rand.Intn(100)
+	if psiRoll >= castChance {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You project %s but fail to focus the energy!", disc.Name)},
 			RoomBroadcast: []string{fmt.Sprintf("%s concentrates intensely but nothing happens.", player.FirstName)},
@@ -354,7 +428,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 
 	switch disc.Effect {
 	case "damage":
-		result = e.projectDamage(player, disc, args)
+		result = e.projectDamage(player, disc, args, psiRoll, castChance)
 	case "defense":
 		player.DefenseBonus += disc.DefBonus
 		result.Messages = []string{fmt.Sprintf("You project %s! (+%d defense)", disc.Name, disc.DefBonus)}
@@ -368,6 +442,8 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 			result = e.projectTeleport(ctx, player, args)
 		} else if disc.ID == 8 { // Manipulate Lock
 			result = e.projectManipulateLock(player, args)
+		} else if disc.ID == 16 { // Transform Steel
+			result = e.projectTransformSteel(player)
 		} else {
 			result.Messages = []string{fmt.Sprintf("You project %s.", disc.Name)}
 			result.RoomBroadcast = []string{fmt.Sprintf("%s concentrates intensely.", player.FirstName)}
@@ -417,12 +493,32 @@ func (e *GameEngine) projectImmobilize(player *Player, args []string) *CommandRe
 	return &CommandResult{Messages: []string{fmt.Sprintf("You don't see %s here.", targetName)}}
 }
 
-// psiResistRoll reports whether a monster resists a psionic attack. Like
-// MagicResist, PSIRESIST is a rating (tens to thousands), not a 0-100
-// percentage — weighed against the caster's psi rating using the same
-// skill+school+Willpower shape as the psi cast-success check above.
-func psiResistRoll(player *Player, disc *PsiDiscipline, resist int) bool {
-	if resist <= 0 {
+// psiResisted reports whether a monster's psionic resistance stops a
+// discipline from landing on it. Like MagicResist, PSIRESIST is a rating
+// (tens to thousands), not a 0-100 percentage — weighed against the caster's
+// psi rating (same skill+school+Willpower shape as the psi cast-success check
+// above) using calcToHit's rating-vs-rating shape to size a penalty. That
+// penalty is subtracted from castChance — the same PROJECT cast-chance
+// doProjectPsi already rolled psiRoll against once — and psiRoll is
+// re-checked against that lowered bar, rather than drawing an independent
+// second roll. Mirrors magicResisted's identical fix in spells.go: the
+// target's resistance is a modifier on the one roll already made, not a
+// second, separate chance to resist stacked on top of it.
+//
+// calcToHit's raw return value is centered on 50 for a neutral (equal-rating)
+// matchup, so using it directly as "penalty" baked in an unconditional -50 tax
+// even when the caster's rating matched the monster's resist exactly — see
+// magicResisted's doc comment for the full rationale. Subtracting the neutral
+// baseline back out (calcToHit(...)-50) makes a matched rating contribute zero
+// penalty, so this is actually a modifier on the one roll rather than a much
+// harsher roll hiding underneath it.
+//
+// GMs always bypass this entirely, mirroring magicResisted: their cast chance
+// is a hardcoded 100% specifically so GM testing/admin casts never fail for
+// any reason, and a resisted cast is exactly as much a failure as a missed
+// cast-success roll.
+func psiResisted(player *Player, disc *PsiDiscipline, resist, psiRoll, castChance int) bool {
+	if player.IsGM || resist <= 0 {
 		return false
 	}
 	psiSkill := player.Skills[26]
@@ -431,18 +527,26 @@ func psiResistRoll(player *Player, disc *PsiDiscipline, resist int) bool {
 		schoolSkill = player.Skills[28]
 	}
 	casterRating := 50 + (psiSkill+schoolSkill)*3 + player.Willpower/5
-	return rand.Intn(100) < calcToHit(casterRating, resist)
+	penalty := calcToHit(casterRating, resist) - 50
+	adjusted := castChance - penalty
+	if adjusted < 15 {
+		adjusted = 15
+	}
+	return psiRoll >= adjusted
 }
 
 // playerPsiResistRoll reports whether a player resists an offensive psionic
 // discipline a monster uses against them (see resolveMonsterPsi in combat.go) — the
-// reverse direction of psiResistRoll above. Per GMSCRIPT.DOC, PSISKILL is "the total
-// chance that the psionic creature has when invoking a psionic power... Powerful
-// psionic creatures should have well over 100 so as to defeat a player's natural
-// resistance to psionics" — so every player has some baseline resistance regardless
-// of training, which Cloak Mind (spell 235, "+25 psi resistance" per MAGIC.TXT)
-// adds to. Mirrors magicResistRoll's shape (spells.go): monsterPsiSkill is the
-// "attack" side, the player's resistance rating is the "defense" side.
+// reverse direction of psiResisted above, and still an independent roll since a
+// monster's own "cast chance" isn't modeled the way a player caster's is (there's
+// no equivalent single roll to fold this into). Per GMSCRIPT.DOC, PSISKILL is "the
+// total chance that the psionic creature has when invoking a psionic power...
+// Powerful psionic creatures should have well over 100 so as to defeat a player's
+// natural resistance to psionics" — so every player has some baseline resistance
+// regardless of training, which Cloak Mind (spell 235, "+25 psi resistance" per
+// MAGIC.TXT) adds to. Mirrors magicResisted's rating-vs-rating shape (spells.go):
+// monsterPsiSkill is the "attack" side, the player's resistance rating is the
+// "defense" side.
 func playerPsiResistRoll(target *Player, monsterPsiSkill int) bool {
 	if monsterPsiSkill <= 0 {
 		return false
@@ -451,7 +555,7 @@ func playerPsiResistRoll(target *Player, monsterPsiSkill int) bool {
 	return rand.Intn(100) < calcToHit(monsterPsiSkill, resistRating)
 }
 
-func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []string) *CommandResult {
+func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []string, psiRoll, castChance int) *CommandResult {
 	targetName := ""
 	if len(args) > 0 {
 		targetName = strings.Join(args, " ")
@@ -489,10 +593,11 @@ func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []s
 	if resist <= 0 {
 		resist = def.MagicResist
 	}
-	if psiResistRoll(player, disc, resist) {
+	if psiResisted(player, disc, resist, psiRoll, castChance) {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You project %s at a %s, but it resists!", disc.Name, name)},
 			RoomBroadcast: []string{fmt.Sprintf("%s concentrates at a %s, but it resists!", player.FirstName, name)},
+			Resisted:      true,
 		}
 	}
 
@@ -637,4 +742,60 @@ func (e *GameEngine) projectManipulateLock(player *Player, args []string) *Comma
 		}
 	}
 	return &CommandResult{Messages: []string{"You don't see anything locked here."}}
+}
+
+// transformSteelMetals are the exotic metals Transform Steel can turn a steel
+// weapon into — the same three "exotic" grades weaponsmithing already treats
+// as rarer/pricier than plain steel (see the ore-grade weights in crafting.go).
+var transformSteelMetals = []string{"elkyri", "randar", "truesteel"}
+
+// projectTransformSteel handles PROJECT for Transform Steel (LEGENDS.DOC #13):
+// "Alters steel at the molecular level to another metal. This will only work
+// on weapons, and the results are unpredictable. The transformed weapon will
+// usually have a bonus in the range of 3-17." Permanently swaps whichever
+// Adj1/Adj2/Adj3 slot holds "steel" for a random exotic metal and imprints a
+// random 3-17 magical to-hit bonus into VAL2 — always succeeds once the
+// preconditions are met (no documented resistance/failure roll), mirroring
+// castChargeWandSpell's "always works if the target qualifies" shape. Refuses
+// a weapon that already carries a VAL2 bonus (already magically enchanted, by
+// this discipline or anything else) rather than overwriting it, and refuses
+// anything that isn't a wielded steel weapon in the first place.
+func (e *GameEngine) projectTransformSteel(player *Player) *CommandResult {
+	if player.Wielded == nil {
+		return &CommandResult{Messages: []string{"You aren't wielding anything."}}
+	}
+	weaponDef := e.items[player.Wielded.Archetype]
+	if weaponDef == nil || !isWeapon(weaponDef.Type) {
+		return &CommandResult{Messages: []string{"You aren't wielding a weapon."}}
+	}
+	if !e.isSteelWeapon(player.Wielded) {
+		itemName := e.formatItemName(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s is not made of steel and is not suitable for transforming.", capitalize(itemName))}}
+	}
+	if player.Wielded.Val2 > 0 {
+		itemName := e.formatItemName(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s already hums with magical energy and is not suitable for transforming.", capitalize(itemName))}}
+	}
+
+	oldName := e.formatItemName(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
+
+	steelAdj := e.adjByName("steel")
+	newAdj := e.adjByName(transformSteelMetals[rand.Intn(len(transformSteelMetals))])
+	switch steelAdj {
+	case player.Wielded.Adj1:
+		player.Wielded.Adj1 = newAdj
+	case player.Wielded.Adj2:
+		player.Wielded.Adj2 = newAdj
+	case player.Wielded.Adj3:
+		player.Wielded.Adj3 = newAdj
+	}
+	bonus := rand.Intn(15) + 3 // 3-17 inclusive
+	player.Wielded.Val2 = bonus
+
+	newName := e.formatItemName(weaponDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
+
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You project Transform Steel at %s! It shudders and reshapes at the molecular level, emerging as %s. (+%d magical bonus)", oldName, newName, bonus)},
+		RoomBroadcast: []string{fmt.Sprintf("%s concentrates intensely, and %s weapon shudders and reshapes!", player.DisplayNameCap(), player.Possessive())},
+	}
 }

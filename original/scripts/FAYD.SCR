@@ -26,11 +26,11 @@ MLIST 3 24 2 9
 MLIST 3 25 1 9
 ;
 ; Graveyard
-MLIST 4 1 3 9
-MLIST 4 2 3 9
-MLIST 4 24 2 9
-MLIST 4 25 1 9
-MLIST 4 26 2 9
+MLIST 4 1 10 9
+MLIST 4 2 10 9
+MLIST 4 24 6 9
+MLIST 4 25 4 9
+MLIST 4 26 6 9
 ;
 NUMBER 198
 NAME Rats' den
@@ -3690,7 +3690,7 @@ ITEM 1 448 ADJ1=1345
 ITEM 2 249
 ;MAT
 ITEM 3 376 ADJ1=443
-ITEM 4 943 VAL1=100 VAL2=9000 VAL3=1234 ; Door to Moordread and Cypress Home
+ITEM 4 943 VAL1=100 VAL2=9000 VAL3=1234 LOCKED ; Door to Moordread and Cypress Home
 *DESCRIPTION_START ITEM EXAM 2
 It's impossible to see through the window because of all the dog and kitty
 "licks" all over it.

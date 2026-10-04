@@ -78,6 +78,7 @@ var SkillPrerequisites = map[int][]int{
 	27: {26},                        // Mind over Mind requires Psionics
 	28: {26},                        // Mind over Matter requires Psionics
 	34: {33},                        // Disguise requires Stealth
+	2:  {33},                        // Backstab requires Stealth (house rule; skills.txt lists none)
 }
 
 // checkPrerequisite returns true if the player meets prerequisites for a skill.

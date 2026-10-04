@@ -14,6 +14,11 @@ type Room struct {
 	StoreItems       []StoreItem       `bson:"storeItems,omitempty" json:"storeItems,omitempty"`
 	TrainingSkills   []TrainingDef     `bson:"trainingSkills,omitempty" json:"trainingSkills,omitempty"`
 	Region           int               `bson:"region,omitempty" json:"region,omitempty"`
+	// DropLoc is the room-level DROPLOC <room#>. GMSCRIPT.DOC documents it for
+	// arenas (where a "killed" player is carried), but SKYMAP.SCR sets it on
+	// nearly every AERIAL room to the ground below — the engine uses it as where
+	// a player lands when their flight ends mid-air (see skyfall.go).
+	DropLoc int `bson:"dropLoc,omitempty" json:"dropLoc,omitempty"`
 	Modifiers        []string          `bson:"modifiers" json:"modifiers"` // FORGE, LOOM, MINEA, etc.
 	Scripts          []ScriptBlock     `bson:"scripts" json:"scripts"`     // conditional blocks
 	MacroCalls       []int             `bson:"macroCalls,omitempty" json:"macroCalls,omitempty"` // CALL directives; resolved into Scripts at load time
@@ -36,9 +41,15 @@ type RoomItem struct {
 	// HardnessMod is a per-instance modifier to a weapon's Weapon Clash break-resistance
 	// (see weaponHardness in engine/combat.go), GM-editable via @editem.
 	HardnessMod int        `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+	// CraftedValue mirrors engine.InventoryItem.CraftedValue — see its doc comment.
+	// Carried here so a crafted item dropped on the floor keeps its fair sell value.
+	CraftedValue int       `bson:"craftedValue,omitempty" json:"craftedValue,omitempty"`
 	// ItemBits holds the 0-19 boolean flags documented as ITEMBIT(#) in MANUAL.DOC — a
 	// per-instance bitmask distinct from VAL1-5. Bit N corresponds to ITEMBIT<N>.
 	ItemBits  int            `bson:"itemBits,omitempty" json:"itemBits,omitempty"`
+	// WrittenText mirrors engine.InventoryItem.WrittenText — see its doc comment.
+	// Carried here so a written note dropped on the floor keeps its content.
+	WrittenText string       `bson:"writtenText,omitempty" json:"writtenText,omitempty"`
 	State     string         `bson:"state,omitempty" json:"state,omitempty"` // OPEN, CLOSED, LOCKED, etc.
 	Extend    string         `bson:"extend,omitempty" json:"extend,omitempty"` // extended description
 	PutIn     int            `bson:"putIn,omitempty" json:"putIn,omitempty"` // if PUT, which ref it's inside
@@ -116,6 +127,15 @@ type MonsterDef struct {
 	Adjective   int      `bson:"adjective" json:"adjective"`
 	Description string   `bson:"description" json:"description"`
 	BodyType    string   `bson:"bodyType" json:"bodyType"` // HUMAN, ANIMAL, AVINE
+	// Parts holds raw PART # values from GMSCRIPT.DOC's body-part table (0=head,
+	// 1=body, ... 7/8/9/10/11/12/18/19=leg-type parts). Per GMSCRIPT.DOC, PART "can
+	// be used in conjunction with or alone" — combined with BodyType it ADDS parts
+	// on top of the macro's implied base anatomy (e.g. astral stalker mnumber 87 is
+	// ANIMAL + PART 15/16/17/3 for wings/tail/second-head, still four-legged per its
+	// own description); given alone (no BodyType) it's the creature's complete,
+	// authoritative anatomy (e.g. rattlesnake mnumber 36: PART 0/17 only — no legs).
+	// See monsterHasLegs in combat.go for how this is consumed.
+	Parts []int `bson:"parts,omitempty" json:"parts,omitempty"`
 	Body        int      `bson:"body" json:"body"`         // hit points
 	Attack1     int      `bson:"attack1" json:"attack1"`
 	Attack2     int      `bson:"attack2" json:"attack2"`
@@ -175,6 +195,13 @@ type MonsterDef struct {
 	Disciplines    []int             `bson:"disciplines,omitempty" json:"disciplines,omitempty"`
 	Scripts        []ScriptBlock     `bson:"scripts,omitempty" json:"scripts,omitempty"`
 	MacroCalls     []int             `bson:"macroCalls,omitempty" json:"macroCalls,omitempty"` // SCRIPTMACRO directives; resolved into Scripts at load time
+	// DeathPValNum/DeathPValValue capture a "PVAL <num> <value>" monster field (e.g.
+	// MONSTERS.SCR MNUMBER 294 Ming-K'Tuk: "PVAL 90 1") — when this monster dies, the
+	// engine sets the corresponding global PVAL (see ScriptContext's PVAL getVar/setVar,
+	// engine.PVals) to Value, permanently flipping any room/IFVAR logic gated on it (e.g.
+	// DEEP2.SCR room 1811's "IFVAR PVAL90 = 0" checks). Zero DeathPValNum means unset.
+	DeathPValNum   int               `bson:"deathPValNum,omitempty" json:"deathPValNum,omitempty"`
+	DeathPValValue int               `bson:"deathPValValue,omitempty" json:"deathPValValue,omitempty"`
 	SourceFile     string            `bson:"sourceFile" json:"sourceFile"`
 }
 

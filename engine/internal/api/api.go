@@ -231,6 +231,23 @@ func NewServer(ge *engine.GameEngine, parsed *gameworld.ParsedData, authSvc *aut
 		s.mu.RUnlock()
 	})
 
+	// Monster presence changes (spawn / wander in / wander out) — same as above but
+	// NOT suppressed by BattleBrief, which only hides monster RP actions and combat
+	// scroll. See engine.SetLocalRoomNotice.
+	ge.SetLocalRoomNotice(func(roomNumber int, excludeName string, messages []string) {
+		s.mu.RLock()
+		for _, sess := range s.sessions {
+			if sess.Player == nil || sess.Player.RoomNumber != roomNumber || (excludeName != "" && sess.Player.FirstName == excludeName) {
+				continue
+			}
+			filtered := filterBroadcastForPlayer(sess.Player, messages)
+			if len(filtered) > 0 {
+				s.sendBroadcast(sess, filtered)
+			}
+		}
+		s.mu.RUnlock()
+	})
+
 	// Same as above, but skips one named player — used for monster combat's public
 	// room line when that player already received their own private detail message
 	// (e.g. the [ToHit/Roll] breakdown), so they don't see the same hit described twice.
@@ -719,7 +736,9 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 				player.IsGM, player.GMHat, player.GMHidden, player.GMInvis, player.Hidden)
 			s.gamelog.Log(gamelog.EventGameEnter, player.FullName(), player.AccountID,
 				"bot login via API key", player.RoomNumber, "")
-			if !player.IsConcealed() && !player.IsBot {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of concealment state.
+			if !player.IsConcealed() && !player.IsBot && !player.IsGM {
 				s.broadcastGlobal(player.FirstName,
 					[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 				s.broadcastToRoom(player.RoomNumber, player.FirstName, []string{fmt.Sprintf("%s arrives.", player.DisplayNameCap())})
@@ -815,7 +834,9 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			// Log character entering the game world
 			s.gamelog.Log(gamelog.EventGameEnter, player.FullName(), accountID,
 				fmt.Sprintf("%s (%s)", authName, authEmail), player.RoomNumber, "")
-			if !player.IsConcealed() {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of concealment state.
+			if !player.IsConcealed() && !player.IsGM {
 				s.broadcastGlobal(player.FirstName,
 					[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 				s.broadcastToRoom(player.RoomNumber, player.FirstName, []string{fmt.Sprintf("%s arrives.", player.DisplayNameCap())})
@@ -867,83 +888,88 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			}
 			// Track activity for idle timeout
 			session.lastActivity = time.Now()
-			now := time.Now()
 
 			var cmd CommandMsg
 			json.Unmarshal(msg.Data, &cmd)
-			isGive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(cmd.Input)), "give ")
 
-			// Rate limit 1: max 8 commands per second (burst)
-			if now.Sub(session.lastCmdTime) > time.Second {
-				session.cmdCount = 0
-				session.lastCmdTime = now
-			}
-			session.cmdCount++
-			if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
-				s.sendResult(session, &engine.CommandResult{
-					Messages: []string{"[Slow down! Too many commands.]"},
-				})
-				continue
-			}
-			// Rate limit 2: max 20 commands per 10 seconds (sustained)
-			cutoff := now.Add(-10 * time.Second)
-			var recentCmds []time.Time
-			for _, t := range session.cmdTimes {
-				if t.After(cutoff) {
-					recentCmds = append(recentCmds, t)
-				}
-			}
-			session.cmdTimes = append(recentCmds, now)
-			if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
-				s.sendResult(session, &engine.CommandResult{
-					Messages: []string{"[Slow down! Too many commands.]"},
-				})
-				continue
-			}
-			ctx := context.Background()
-			playerRoom := session.Player.RoomNumber
-			result := s.engine.ProcessCommand(ctx, session.Player, cmd.Input)
-			result.PlayerState = session.Player
-			result.PromptIndicators = session.Player.PromptIndicators()
-			s.sendResult(session, result)
-
-			// Capture input and output
-			if session.CaptureID != "" {
-				var lines []capture.Line
-				lines = append(lines, capture.Line{Time: time.Now(), Type: "input", Text: cmd.Input})
-				for _, m := range result.Messages {
-					lines = append(lines, capture.Line{Time: time.Now(), Type: "output", Text: m})
-				}
-				log.Printf("capture: appending %d lines to %s", len(lines), session.CaptureID)
-				go func() {
-					if err := s.captures.AppendLines(context.Background(), session.CaptureID, lines); err != nil {
-						log.Printf("capture: append failed: %v", err)
-					}
-				}()
-			}
-
-			// Chat flood protection: 10 broadcast messages per 9 seconds
-			if len(result.RoomBroadcast) > 0 {
+			for _, subInput := range splitCommandChain(cmd.Input) {
 				now := time.Now()
-				cutoff := now.Add(-9 * time.Second)
-				var recent []time.Time
-				for _, t := range session.chatTimes {
+				isGive := strings.HasPrefix(strings.ToLower(subInput), "give ")
+
+				// Rate limit 1: max 8 commands per second (burst)
+				if now.Sub(session.lastCmdTime) > time.Second {
+					session.cmdCount = 0
+					session.lastCmdTime = now
+				}
+				session.cmdCount++
+				if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
+					s.sendResult(session, &engine.CommandResult{
+						Messages: []string{"[Slow down! Too many commands.]"},
+					})
+					break
+				}
+				// Rate limit 2: max 20 commands per 10 seconds (sustained)
+				cutoff := now.Add(-10 * time.Second)
+				var recentCmds []time.Time
+				for _, t := range session.cmdTimes {
 					if t.After(cutoff) {
-						recent = append(recent, t)
+						recentCmds = append(recentCmds, t)
 					}
 				}
-				session.chatTimes = recent
-				if len(session.chatTimes) >= 10 {
+				session.cmdTimes = append(recentCmds, now)
+				if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
 					s.sendResult(session, &engine.CommandResult{
-						Messages: []string{"[You are sending messages too quickly. Please wait.]"},
+						Messages: []string{"[Slow down! Too many commands.]"},
 					})
-					continue
+					break
 				}
-				session.chatTimes = append(session.chatTimes, now)
-			}
+				ctx := context.Background()
+				result := s.engine.ProcessCommand(ctx, session.Player, subInput)
+				result.PlayerState = session.Player
+				result.PromptIndicators = session.Player.PromptIndicators()
+				s.sendResult(session, result)
 
-			s.dispatchCommandResult(session, result)
-			_ = playerRoom
+				// Capture input and output
+				if session.CaptureID != "" {
+					var lines []capture.Line
+					lines = append(lines, capture.Line{Time: time.Now(), Type: "input", Text: subInput})
+					for _, m := range result.Messages {
+						lines = append(lines, capture.Line{Time: time.Now(), Type: "output", Text: m})
+					}
+					log.Printf("capture: appending %d lines to %s", len(lines), session.CaptureID)
+					go func() {
+						if err := s.captures.AppendLines(context.Background(), session.CaptureID, lines); err != nil {
+							log.Printf("capture: append failed: %v", err)
+						}
+					}()
+				}
+
+				// Chat flood protection: 10 broadcast messages per 9 seconds
+				if len(result.RoomBroadcast) > 0 {
+					floodNow := time.Now()
+					floodCutoff := floodNow.Add(-9 * time.Second)
+					var recent []time.Time
+					for _, t := range session.chatTimes {
+						if t.After(floodCutoff) {
+							recent = append(recent, t)
+						}
+					}
+					session.chatTimes = recent
+					if len(session.chatTimes) >= 10 {
+						s.sendResult(session, &engine.CommandResult{
+							Messages: []string{"[You are sending messages too quickly. Please wait.]"},
+						})
+						break
+					}
+					session.chatTimes = append(session.chatTimes, floodNow)
+				}
+
+				s.dispatchCommandResult(session, result)
+
+				if result.Quit {
+					break
+				}
+			}
 		}
 	}
 
@@ -963,7 +989,9 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			s.engine.HandlePlayerDisconnect(session.Player)
 			s.gamelog.Log(gamelog.EventGameExit, session.Player.FullName(), session.Player.AccountID,
 				fmt.Sprintf("%s (%s)", authName, authEmail), session.Player.RoomNumber, "")
-			if !session.Player.GMInvis && !session.Player.GMHidden {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of GMInvis/GMHidden, not just while actively concealed.
+			if !session.Player.GMInvis && !session.Player.GMHidden && !session.Player.IsGM {
 				if !session.quitSent {
 					s.broadcastGlobal(session.Player.FirstName,
 						[]string{fmt.Sprintf("** %s has just left the Realms.", session.Player.DisplayNameCap())})
@@ -1323,6 +1351,46 @@ func sanitizeMessages(msgs []string) {
 		msgs[i] = strings.ReplaceAll(msg, "<", "&lt;")
 		msgs[i] = strings.ReplaceAll(msgs[i], ">", "&gt;")
 	}
+}
+
+// maxChainedCommands caps how many ';'-separated commands one input line can
+// expand into, so stacking can't be used to blow past the per-line rate
+// limits each command loop already enforces (see cmdCount/cmdTimes below).
+const maxChainedCommands = 8
+
+// splitCommandChain splits a raw input line on ';' into individual commands,
+// the way MUD clients (Mudlet, TinTin++, zMUD) let players stack several
+// commands on one line — "retreat; go east" or "ret;e". Quoted speech and the
+// SAY verb are exempt (matches isQuoteSpeech/isSayVerb in ProcessCommand): a
+// semicolon there is ordinary sentence punctuation, not a command separator,
+// so "'well; that's odd" and "say well; that's odd, isn't it" are each kept
+// whole rather than being chopped at the ';'.
+func splitCommandChain(input string) []string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil
+	}
+	isQuoteSpeech := strings.HasPrefix(trimmed, "'") || strings.HasPrefix(trimmed, "\"")
+	isSayVerb := len(trimmed) >= 3 && strings.EqualFold(trimmed[:3], "say") && (len(trimmed) == 3 || trimmed[3] == ' ')
+	if isQuoteSpeech || isSayVerb || !strings.Contains(trimmed, ";") {
+		return []string{trimmed}
+	}
+	parts := strings.Split(trimmed, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+		if len(out) >= maxChainedCommands {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return []string{trimmed}
+	}
+	return out
 }
 
 func isExcluded(name string, excludes []string) bool {

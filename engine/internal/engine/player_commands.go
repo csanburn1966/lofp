@@ -65,49 +65,49 @@ func (e *GameEngine) CreateNewPlayer(ctx context.Context, firstName, lastName st
 
 	now := time.Now()
 	player := &Player{
-		FirstName:        firstName,
-		LastName:         lastName,
-		Race:             race,
-		Gender:           gender,
-		Level:            1,
-		BuildPoints:      30,
-		Strength:         str,
-		Agility:          agi,
-		Quickness:        qui,
-		Constitution:     con,
-		Perception:       per,
-		Willpower:        wil,
-		Empathy:          emp,
-		BodyPoints:       bodyPts,
-		MaxBodyPoints:    bodyPts,
-		Fatigue:          fatigue,
-		MaxFatigue:       fatigue,
-		Mana:             mana,
-		MaxMana:          mana,
-		Psi:              psi,
-		MaxPsi:           psi,
-		Height:           a.Height,
-		HeightTrue:       a.Height,
-		Weight:           a.Weight,
-		WeightTrue:       a.Weight,
-		Age:              a.Age,
-		AgeTrue:          a.Age,
-		EyeColor:         a.EyeColor,
-		SkinColor:        a.SkinColor,
-		HairStyle:        a.HairStyle,
-		HairColor:        a.HairColor,
-		RoomNumber:       201,
-		Position:         0,
-		Skills:           make(map[int]int),
-		IntNums:          make(map[int]int),
-		Gold:             20,
-		Silver:           10,
-		Copper:           50,
-		PromptMode:       true,
-		SuppressLogon:    true,
-		SuppressLogoff:   true,
-		CreatedAt:        now,
-		UpdatedAt:        now,
+		FirstName:      firstName,
+		LastName:       lastName,
+		Race:           race,
+		Gender:         gender,
+		Level:          1,
+		BuildPoints:    30,
+		Strength:       str,
+		Agility:        agi,
+		Quickness:      qui,
+		Constitution:   con,
+		Perception:     per,
+		Willpower:      wil,
+		Empathy:        emp,
+		BodyPoints:     bodyPts,
+		MaxBodyPoints:  bodyPts,
+		Fatigue:        fatigue,
+		MaxFatigue:     fatigue,
+		Mana:           mana,
+		MaxMana:        mana,
+		Psi:            psi,
+		MaxPsi:         psi,
+		Height:         a.Height,
+		HeightTrue:     a.Height,
+		Weight:         a.Weight,
+		WeightTrue:     a.Weight,
+		Age:            a.Age,
+		AgeTrue:        a.Age,
+		EyeColor:       a.EyeColor,
+		SkinColor:      a.SkinColor,
+		HairStyle:      a.HairStyle,
+		HairColor:      a.HairColor,
+		RoomNumber:     201,
+		Position:       0,
+		Skills:         make(map[int]int),
+		IntNums:        make(map[int]int),
+		Gold:           20,
+		Silver:         10,
+		Copper:         50,
+		PromptMode:     true,
+		SuppressLogon:  true,
+		SuppressLogoff: true,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 	if race == RaceEphemeral {
 		player.TelepathyActive = true
@@ -178,6 +178,11 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 		}
 		needsSave = true
 	}
+	// Regional coins carried as inventory items (before currencies became purse
+	// counters — see currency.go) are folded into Currencies.
+	if e.migrateRegionalCoinItems(&player) {
+		needsSave = true
+	}
 	if needsSave {
 		e.SavePlayer(ctx, &player)
 	}
@@ -191,6 +196,35 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 		if player.Position == 4 {
 			player.Position = 0
 		}
+		e.SavePlayer(ctx, &player)
+	}
+	// Logging back in over open sky: someone who can still fly is put back in
+	// the air (earlier bugs could leave a player "standing" in an AERIAL room);
+	// anyone else falls to the ground (skyfall.go) — e.g. a Fly spell that ran
+	// out while they were logged out. Done here rather than in EnterRoom so the
+	// login presence/"arrives" echo already use the landing room.
+	if e.isAerialRoom(player.RoomNumber) {
+		if player.IsFlying() {
+			if player.Position != 4 {
+				player.Position = 4
+				e.SavePlayer(ctx, &player)
+			}
+		} else if msgs := e.fallIfFlightLost(ctx, &player, false); msgs != nil {
+			player.LoginNotices = append([]string{"While you were away, the magic holding you aloft faded."}, msgs...)
+		}
+	}
+
+	// Same reasoning as Flight above, for Mind Over Matter 42 (Speed): it also
+	// only tracks its active state via the non-persisted ActivePsi map, but
+	// marks the effect itself by setting the (persisted) HasteExpiry far in the
+	// future — 10 years, see psionics.go — since it's maintained indefinitely
+	// rather than timed. A real Haste spell (210, on a player or a summoned
+	// creature) never sets HasteExpiry more than hasteMaxDuration (4 hours) out,
+	// so anything further out than that can only be Speed's sentinel, and the
+	// concentration lapsed when the player disconnected — clear it, the same
+	// way ActivePsi[42] itself already resets to unset on reload.
+	if !player.HasteExpiry.IsZero() && time.Until(player.HasteExpiry) > 24*time.Hour {
+		player.HasteExpiry = time.Time{}
 		e.SavePlayer(ctx, &player)
 	}
 
@@ -1058,35 +1092,35 @@ func (e *GameEngine) doPositionWithScripts(ctx context.Context, player *Player, 
 // Cure poison costs 10 gold (1000 copper); cure disease costs 10 gold (1000 copper).
 func (e *GameEngine) applyHealerRoom(_ context.Context, player *Player, result *CommandResult) {
 	treated := false
+	// A healer in a currency region charges in that currency (currency.go),
+	// converted by its MONEYDEF exchange rate — one of the two uses GMSCRIPT.DOC
+	// names for the rate.
+	md := e.roomCurrency(player.RoomNumber)
+	cureCost := copperToCurrency(md, 1000) // 10 gold crowns
+	cureCostStr := formatCurrency(md, cureCost)
 
 	// Handle status conditions first, independently of wounds
 	if player.Poisoned {
-		const poisonCost = 1000 // 10 gold in copper
-		totalCopper := player.Gold*100 + player.Silver*10 + player.Copper
-		if totalCopper >= poisonCost {
-			e.deductCopper(player, poisonCost)
+		if e.spendFunds(player, md, cureCost) {
 			player.Poisoned = false
 			player.PoisonLevel = 0
-			result.Messages = append(result.Messages, "A physician casts cure poison on you, neutralizing the toxin. You are charged 10 gold crowns.")
+			result.Messages = append(result.Messages, "A physician casts cure poison on you, neutralizing the toxin. You are charged " + cureCostStr + ".")
 			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("A physician casts cure poison on %s.", player.FirstName))
 			treated = true
 		} else {
-			result.Messages = append(result.Messages, "A physician examines you and shakes their head. \"We can cure your poison for 10 gold crowns, but you cannot afford our services.\"")
+			result.Messages = append(result.Messages, "A physician examines you and shakes their head. \"We can cure your poison for " + cureCostStr + ", but you cannot afford our services.\"")
 		}
 	}
 
 	if player.Diseased {
-		const diseaseCost = 1000 // 10 gold in copper
-		totalCopper := player.Gold*100 + player.Silver*10 + player.Copper
-		if totalCopper >= diseaseCost {
-			e.deductCopper(player, diseaseCost)
+		if e.spendFunds(player, md, cureCost) {
 			player.Diseased = false
 			player.DiseaseLevel = 0
-			result.Messages = append(result.Messages, "A physician casts cure disease on you, purging the illness. You are charged 10 gold crowns.")
+			result.Messages = append(result.Messages, "A physician casts cure disease on you, purging the illness. You are charged " + cureCostStr + ".")
 			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("A physician casts cure disease on %s.", player.FirstName))
 			treated = true
 		} else {
-			result.Messages = append(result.Messages, "A physician examines you and shakes their head. \"We can cure your disease for 10 gold crowns, but you cannot afford our services.\"")
+			result.Messages = append(result.Messages, "A physician examines you and shakes their head. \"We can cure your disease for " + cureCostStr + ", but you cannot afford our services.\"")
 		}
 	}
 
@@ -1099,8 +1133,8 @@ func (e *GameEngine) applyHealerRoom(_ context.Context, player *Player, result *
 		return
 	}
 
-	totalCopper := player.Gold*100 + player.Silver*10 + player.Copper
-	if totalCopper <= 0 {
+	funds := playerFunds(player, md)
+	if funds <= 0 {
 		result.Messages = append(result.Messages, "A physician examines you and frowns. \"I'm sorry, but we require payment for our services. Come back when you have some coin.\"")
 		return
 	}
@@ -1112,20 +1146,17 @@ func (e *GameEngine) applyHealerRoom(_ context.Context, player *Player, result *
 	for _, w := range player.Wounds {
 		severityTotal += w.Level
 	}
-	cost := woundsNeeded + 5*severityTotal
-	charged := cost
-	if charged > totalCopper {
-		charged = totalCopper
-	}
-	e.deductCopper(player, charged)
+	cost := copperToCurrency(md, woundsNeeded+5*severityTotal)
+	charged := min(cost, funds)
+	e.spendFunds(player, md, charged)
 	player.BodyPoints = player.MaxBodyPoints
 	player.Wounds = nil
 	player.Bleeding = false
 
 	if charged < cost {
-		result.Messages = append(result.Messages, fmt.Sprintf("A physician tends to your wounds. You are charged %s (all you had).", formatPrice(charged)))
+		result.Messages = append(result.Messages, fmt.Sprintf("A physician tends to your wounds. You are charged %s (all you had).", formatCurrency(md, charged)))
 	} else {
-		result.Messages = append(result.Messages, fmt.Sprintf("A physician tends to your wounds. You are charged %s.", formatPrice(charged)))
+		result.Messages = append(result.Messages, fmt.Sprintf("A physician tends to your wounds. You are charged %s.", formatCurrency(md, charged)))
 	}
 	result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("A physician tends to %s's wounds.", player.FirstName))
 }
@@ -1160,6 +1191,11 @@ func (e *GameEngine) deductCopper(player *Player, amount int) {
 func (e *GameEngine) doHide(ctx context.Context, player *Player) *CommandResult {
 	if player.Hidden {
 		return &CommandResult{Messages: []string{"You are already hidden."}}
+	}
+	// A melee engagement (either direction — see isEngagedInMelee) pins you in
+	// place; you have to RETREAT out of it before you can slip into hiding.
+	if e.isEngagedInMelee(player) {
+		return &CommandResult{Messages: []string{"You cannot hide while advanced! You must RETREAT first."}}
 	}
 	if player.Joined {
 		return &CommandResult{Messages: []string{"You can't hide while in combat!"}}
@@ -1280,12 +1316,27 @@ func (e *GameEngine) doFly(ctx context.Context, player *Player) *CommandResult {
 	if player.Position == 4 {
 		return &CommandResult{Messages: []string{"You are already flying."}}
 	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	if player.Race != 6 && !player.CanFly && !player.MistForm {
 		return &CommandResult{Messages: []string{"You can't fly."}}
 	}
 	room := e.rooms[player.RoomNumber]
 	if !player.MistForm && room != nil && (room.Terrain == "CAVE" || room.Terrain == "DEEPCAVE" || room.Terrain == "INDOOR_FLOOR" || room.Terrain == "INDOOR_GROUND") {
-		return &CommandResult{Messages: []string{"There isn't enough room to fly here."}}
+		// ABOVE/BELOW are the flight-only vertical exits (ordinary vertical movement
+		// uses U/D) — see the ASCEND/DESCEND handler, which requires Position 4 to use
+		// them at all. A cave/indoor room that defines one (e.g. DEEP2.SCR room 1700, a
+		// waterfall chamber over an abyss with EXIT ABOVE/BELOW 1701) is therefore, by
+		// the game's own data, a room with enough overhead space to fly in —
+		// LEGENDS.DOC's only stated rule ("you can only fly in places with enough
+		// overhead space") — regardless of its generic terrain tag. Without this
+		// exception those exits could never be reached.
+		_, hasAbove := room.Exits["ABOVE"]
+		_, hasBelow := room.Exits["BELOW"]
+		if !hasAbove && !hasBelow {
+			return &CommandResult{Messages: []string{"There isn't enough room to fly here."}}
+		}
 	}
 	player.Position = 4
 	e.SavePlayer(ctx, player)
@@ -1293,6 +1344,40 @@ func (e *GameEngine) doFly(ctx context.Context, player *Player) *CommandResult {
 		Messages:      []string{"You take to the air!"},
 		RoomBroadcast: []string{fmt.Sprintf("%s takes flight!", player.FirstName)},
 	}
+}
+
+// Skinning tuning. Per LEGENDS.DOC, SKIN needs Sagecraft (32) or Wood Lore (18);
+// "increased levels of sagecraft allow a character to obtain more specimens," and
+// Wood Lore "works along with sagecraft to help with skinning." The 1996 capture
+// shows attempts could fail ("Delight fails to skin a stone ogre."). No original
+// numbers survive, so these are judgment calls.
+const (
+	skinBaseChance    = 45 // success % before skill
+	skinPerSageLevel  = 8  // success % per Sagecraft level
+	skinPerWoodLevel  = 5  // success % per Wood Lore level
+	skinMaxChance     = 99 // was 95; a 5% floor felt like "way too often" to an expert (20 sage/30 wood) skinner
+	skinExtra1PerSage = 10 // % per Sagecraft level for a 2nd specimen
+	skinExtra1Max     = 60
+	skinExtra2PerSage = 5 // % per Sagecraft level for a 3rd (only if the 2nd hit)
+	skinExtra2Max     = 30
+)
+
+// skinSuccessChance is the % chance a SKIN attempt succeeds.
+func skinSuccessChance(sage, wood int) int {
+	return min(skinBaseChance+sage*skinPerSageLevel+wood*skinPerWoodLevel, skinMaxChance)
+}
+
+// skinSpecimenCount rolls how many specimens a successful SKIN yields (1-3);
+// only Sagecraft adds extras, per LEGENDS.DOC.
+func skinSpecimenCount(sage int) int {
+	n := 1
+	if rand.Intn(100) < min(sage*skinExtra1PerSage, skinExtra1Max) {
+		n++
+		if rand.Intn(100) < min(sage*skinExtra2PerSage, skinExtra2Max) {
+			n++
+		}
+	}
+	return n
 }
 
 // doSkin handles the SKIN command — skin a dead monster for components.
@@ -1304,6 +1389,11 @@ func (e *GameEngine) doSkin(ctx context.Context, player *Player, args []string) 
 
 	if e.monsterMgr == nil {
 		return &CommandResult{Messages: []string{"You don't see that here."}}
+	}
+
+	// LEGENDS.DOC: "You need Woodlore or Sagecraft to do this."
+	if !player.IsGM && player.Skills[32] < 1 && player.Skills[18] < 1 {
+		return &CommandResult{Messages: []string{"You need training in Sagecraft or Wood Lore to skin anything."}}
 	}
 
 	monsters := e.monsterMgr.AllMonstersInRoom(player.RoomNumber)
@@ -1342,44 +1432,80 @@ func (e *GameEngine) doSkin(ctx context.Context, player *Player, args []string) 
 		}
 
 		displayName := FormatMonsterName(def, e.monAdjs)
+		article := articleFor(displayName, def.Unique)
 		var skinMsgs []string
 
-		if len(def.SkinItems) > 0 {
+		// Skill roll (see skinSuccessChance). A failed attempt ruins the corpse —
+		// it's already marked Skinned above — or players would just retry until it
+		// worked. Room text matches the 1996 capture: "Delight fails to skin a stone ogre."
+		sage, wood := player.Skills[32], player.Skills[18]
+		if !player.IsGM && rand.Intn(100) >= skinSuccessChance(sage, wood) {
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("You fail to skin %s%s, ruining it.", article, displayName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s fails to skin %s%s.", player.FirstName, article, displayName)},
+			}
+		}
+
+		// pickSkinItem makes one weighted SKINITEM draw (GMSCRIPT.DOC: "another
+		// weighted probability similar to that used for distributing weapon selection").
+		pickSkinItem := func() *gameworld.SkinDrop {
 			totalProb := 0
 			for _, si := range def.SkinItems {
 				totalProb += si.Probability
 			}
-			if totalProb > 0 {
-				roll := rand.Intn(totalProb)
-				cumProb := 0
-				for _, si := range def.SkinItems {
-					cumProb += si.Probability
-					if roll < cumProb {
-						skinDef := e.items[si.Archetype]
-						if skinDef != nil {
-							adj := def.SkinAdj
-							skinName := e.formatItemName(skinDef, 0, adj, 0)
-							item := InventoryItem{
-								Archetype: si.Archetype,
-								Adj2:      adj,
-							}
-							player.Inventory = append(player.Inventory, item)
-							skinMsgs = append(skinMsgs, fmt.Sprintf("You carefully skin %s%s and obtain %s.", articleFor(displayName, def.Unique), displayName, skinName))
-						}
-						break
-					}
+			if totalProb <= 0 {
+				return nil
+			}
+			roll := rand.Intn(totalProb)
+			cumProb := 0
+			for i := range def.SkinItems {
+				cumProb += def.SkinItems[i].Probability
+				if roll < cumProb {
+					return &def.SkinItems[i]
+				}
+			}
+			return nil
+		}
+
+		if len(def.SkinItems) > 0 {
+			for n := skinSpecimenCount(sage); n > 0; n-- {
+				si := pickSkinItem()
+				if si == nil {
+					break
+				}
+				skinDef := e.items[si.Archetype]
+				if skinDef == nil {
+					continue
+				}
+				adj := def.SkinAdj
+				skinName := e.formatItemName(skinDef, 0, adj, 0)
+				// si.Value (SKINITEM's coppervalue field, GMSCRIPT.DOC) must land in
+				// Val1 — computeSellValue reads Val1 as the item's sell value and
+				// otherwise falls back to itemDef.Weight+1, which is why a muldragun
+				// claw (SKINITEM 505 200 1100 12, weight 1) sold for a mere 1 copper
+				// instead of the ~5.5 silver its 1100-copper skin value implies.
+				item := InventoryItem{
+					Archetype: si.Archetype,
+					Adj2:      adj,
+					Val1:      si.Value,
+				}
+				player.Inventory = append(player.Inventory, item)
+				if len(skinMsgs) == 0 {
+					skinMsgs = append(skinMsgs, fmt.Sprintf("You carefully skin %s%s and obtain %s.", article, displayName, skinName))
+				} else {
+					skinMsgs = append(skinMsgs, fmt.Sprintf("Your knowledge of sagecraft lets you salvage %s as well.", skinName))
 				}
 			}
 		}
 
 		if len(skinMsgs) == 0 {
-			skinMsgs = append(skinMsgs, fmt.Sprintf("You skin %s %s but find nothing useful.", articleFor(displayName, def.Unique), displayName))
+			skinMsgs = append(skinMsgs, fmt.Sprintf("You skin %s%s but find nothing useful.", articleFor(displayName, def.Unique), displayName))
 		}
 
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      skinMsgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s skins %s %s.", player.FirstName, articleFor(displayName, def.Unique), displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s skins %s%s.", player.FirstName, articleFor(displayName, def.Unique), displayName)},
 		}
 	}
 

@@ -518,9 +518,13 @@ func (p *fileParser) parseMacro(fields []string) {
 		}
 		mf := strings.Fields(mline)
 		mc := strings.ToUpper(mf[0])
+		// Also stop at the other file-level definition directives (MADJDEF etc.) — the
+		// macro body used to silently swallow them (KAHLUA.SCR's "MADJDEF 150 armed"
+		// right after MACRO 19 never got registered).
 		if mc == "NUMBER" || mc == "INUMBER" || mc == "MNUMBER" || mc == "CEVENT" ||
 			mc == "MACRO" || mc == "MLIST" || mc == "FORAGEDEF" || mc == "MINDEF" ||
-			mc == "MONEYDEF" || mc == "REGIONDEF" {
+			mc == "MONEYDEF" || mc == "REGIONDEF" || mc == "MADJDEF" || mc == "ADJDEF" ||
+			mc == "NOUNDEF" || mc == "BREAKMOD" || mc == "ORGDEF" {
 			break
 		}
 		if mc == "VARIABLE" {
@@ -535,12 +539,15 @@ func (p *fileParser) parseMacro(fields []string) {
 			macro.Scripts = append(macro.Scripts, block)
 			continue
 		}
-		if mc == "ECHO" || mc == "AFFECT" || mc == "RANDOM" || mc == "EQUAL" || mc == "ADD" || mc == "SUB" ||
-			mc == "NEWITEM" || mc == "REMOVEITEM" || mc == "GENMON" || mc == "KILLMON" || mc == "GMMSG" || mc == "CALLPACK" {
-			macro.Scripts = append(macro.Scripts, gameworld.ScriptBlock{
-				Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: mc, Args: mf[1:]}},
-			})
-		}
+		// Any other bare line is an action, same as inside an IF block
+		// (parseScriptBlock). This used to be a 12-command whitelist that silently
+		// dropped UNLOCK/OPEN/etc. — RIDDLE.SCR's elkyri door riddle CALLs DEEP2.SCR's
+		// MACRO 27, whose top-level "UNLOCK 4 / OPEN 4" never ran, so a correct answer
+		// echoed "The doors swing open" but the door stayed shut. Unknown commands
+		// (e.g. stray comment text in KREE.SCR) are ignored by execAction.
+		macro.Scripts = append(macro.Scripts, gameworld.ScriptBlock{
+			Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: mc, Args: mf[1:]}},
+		})
 		p.pos++
 	}
 	p.result.Macros = append(p.result.Macros, macro)
@@ -650,6 +657,10 @@ func (p *fileParser) parseRoom(fields []string) {
 		case "REGION":
 			if len(fields) >= 2 {
 				room.Region, _ = strconv.Atoi(fields[1])
+			}
+		case "DROPLOC":
+			if len(fields) >= 2 {
+				room.DropLoc, _ = strconv.Atoi(fields[1])
 			}
 		case "FORGE", "LOOM", "FLETCHER", "MINEA", "MINEB", "MINEC",
 			"BUY_ARMOR", "BUY_SKINS", "BUY_JEWELRY", "SUBMERGED",
@@ -807,7 +818,7 @@ func (p *fileParser) parseItem(fields []string) {
 		// Flags
 		case "CRAFTABLE", "DYEABLE", "ENCRUSTABLE", "DYE", "FLIPABLE",
 			"HIDDEN", "LATCHABLE", "LIGHTABLE", "LOCKABLE", "OPENABLE",
-			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2", "SHIELDGRIP":
+			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2", "SHIELDGRIP", "WRITEABLE":
 			item.Flags = append(item.Flags, cmd)
 		case "IFVERB", "IFPREVERB", "IFVERB2", "IFPREVERB2",
 			"IFITEM", "IFTOUCH", "IFVAR", "IFNOITEM",
@@ -883,6 +894,12 @@ func (p *fileParser) parseMonster(fields []string) {
 			}
 		case "HUMAN", "ANIMAL", "AVINE":
 			mon.BodyType = cmd
+		case "PART":
+			if len(fields) >= 2 {
+				if v, err := strconv.Atoi(fields[1]); err == nil {
+					mon.Parts = append(mon.Parts, v)
+				}
+			}
 		case "BODY":
 			if len(fields) >= 2 {
 				mon.Body, _ = strconv.Atoi(fields[1])
@@ -945,6 +962,11 @@ func (p *fileParser) parseMonster(fields []string) {
 			mon.Eternal = true
 		case "DISCORPORATE":
 			mon.Discorporate = true
+		case "PVAL":
+			if len(fields) >= 3 {
+				mon.DeathPValNum, _ = strconv.Atoi(fields[1])
+				mon.DeathPValValue, _ = strconv.Atoi(fields[2])
+			}
 		case "POISON":
 			if len(fields) >= 3 {
 				mon.PoisonChance, _ = strconv.Atoi(fields[1])

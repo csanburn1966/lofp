@@ -97,7 +97,7 @@ Reference: https://wiki.mudlet.org/w/Manual:Supported_Protocols
 Telnet server (`engine/internal/api/telnet.go`) implements these protocols:
 
 ### GMCP (option 201)
-- **Core.Hello** — sent on connect: `{"client":"LoFP","version":"11.5.0"}`
+- **Core.Hello** — sent on connect: `{"client":"LoFP","version":<engine.GameVersion>}` (the same constant the in-game `VERSION` command reports)
 - **Core.Supports.Set** — handled from client to track subscribed packages
 - **Char.Vitals** — sent after every command: `bp`, `maxbp`, `mana`, `maxmana`, `psi`, `maxpsi`, `fatigue`, `maxfatigue`, `position`, `conditions`
 - **Char.Status** — sent on login: `name`, `fullname`, `race`, `gender`, `level`, `experience`, `gold`, `silver`, `copper`
