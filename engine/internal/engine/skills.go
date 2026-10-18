@@ -232,19 +232,23 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 			return &CommandResult{Messages: []string{fmt.Sprintf("Not enough build points. %s costs %d BP (you have %d).", name, bpCost, player.BuildPoints)}}
 		}
 
-		// Only ranks within the room's own posted training cap are charged gold;
-		// ranks made available by a fellow player's TEACH are free.
-		goldCost := 0
+		// Only ranks within the room's own posted training cap are charged a fee;
+		// ranks made available by a fellow player's TEACH are free. The fee is
+		// 5 gold crowns per rank, charged in the room's regional currency at the
+		// MONEYDEF exchange rate (currency.go) — e.g. the Kragenholm
+		// weaponmaster's yard takes kragenmarks, like the town's shops do.
+		md := e.roomCurrency(player.RoomNumber)
+		fee := 0
 		if player.Level > 4 && currentLvl+1 <= o.roomMaxLevel {
-			goldCost = 5 * (currentLvl + 1)
+			fee = copperToCurrency(md, 5*(currentLvl+1)*100)
 		}
-		if goldCost > 0 && player.Gold < goldCost {
-			return &CommandResult{Messages: []string{fmt.Sprintf("Training costs %d gold crowns. You only have %d.", goldCost, player.Gold)}}
+		if fee > 0 && playerFunds(player, md) < fee {
+			return &CommandResult{Messages: []string{fmt.Sprintf("Training costs %s. You only have %s.", formatCurrency(md, fee), formatCurrency(md, playerFunds(player, md)))}}
 		}
 
 		player.BuildPoints -= bpCost
-		if goldCost > 0 {
-			player.Gold -= goldCost
+		if fee > 0 {
+			e.spendFunds(player, md, fee)
 		}
 		player.Skills[o.skillID] = currentLvl + 1
 
@@ -268,8 +272,8 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 		e.SavePlayer(ctx, player)
 
 		goldMsg := ""
-		if goldCost > 0 {
-			goldMsg = fmt.Sprintf(", %d gold", goldCost)
+		if fee > 0 {
+			goldMsg = ", " + formatCurrency(md, fee)
 		}
 		msgs := []string{fmt.Sprintf("You train in %s to rank %d. (-%d BP%s, %d BP remaining)", name, currentLvl+1, bpCost, goldMsg, player.BuildPoints)}
 		if giftMsg != "" {
@@ -385,7 +389,7 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	// tryPick returns (success bool, roll int). The roll value lets the caller
 	// assess how badly a failure was (higher roll = worse fumble).
 	tryPick := func(lockDiff int) (bool, int) {
-		chance := 30 + lockSkill*5 + player.Agility/5 - lockDiff
+		chance := 30 + lockSkill*5 + player.Agility/5 - lockDiff + unemoteSkillBonus(player)
 		if chance < 5 {
 			chance = 5
 		}

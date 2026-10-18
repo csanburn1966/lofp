@@ -1,0 +1,1358 @@
+; HALLOWEEN2026.SCR — "The Last Lantern of Fayd" (Halloween 2026 story event)
+; =============================================================================
+; Story, clues and treasure of Marren Vey: see original/halloween.txt. GM
+; procedure: original/HALLOWEEN_RUNBOOK.md.
+;
+; REQUIRES FESTITEMS.SCR (permanent, in LEGENDS.CFG: vocabulary + every
+; keepsake players carry away) and FALLFEST.SCR loaded FIRST (festival fixtures,
+; refreshments). This file redefines room 287 (festival lot + story triggers)
+; and the Old Fayd Cemetery rooms, so it must load AFTER FALLFEST.SCR. Not part
+; of LEGENDS.CFG — upload as a GM-panel draft, Activate for the event, Disable after.
+;
+; The original cemetery already has every landmark the story needs:
+;   287  Poor Quarter outside the chained gate  -> the campfire / storytelling
+;   300  broken obelisk + vine-choked skull     -> clue 1 (copper strip)
+;   309  old Maytan tree                         -> clue 2 (brass key)
+;   307  outside the caretaker's ruined house    -> shovel + prybar
+;   308  caretaker's house, rusted bed           -> clue 3 (parchment)
+;   310  hillock with the mausoleum              -> slab, chest, tokens, graves
+; Rooms are copied from FAYDFALL.SCR (autumn) with all original items, exits and
+; scripts kept. Changes: story items/scripts added, and MONSTER_GROUP removed
+; from 299-310 so ordinary cemetery undead don't spawn on a mixed-level party
+; (FALLFEST.SCR's opt-in Halloween spawner is separate — keep HWHAUNT 0 during
+; the story).
+;
+; STORY STAGE — named variable HWLANTERN (GMs can @set it to skip/repair):
+;   0  dormant (file loaded, nothing happens)
+;   1  ARMED by a GM (@set HWLANTERN 1) just before the story begins
+;   2  someone said "...your vigil is done" at the fire: Marren manifested,
+;      the obelisk token lies in the ashes. Clue 1 (search skull) is live.
+;   3  copper strip found         -> clue 2 (search roots, room 309) live
+;   4  brass key found            -> clue 3 (search floor, room 308) live
+;   5  parchment found            -> search mausoleum (room 310) live
+;   6  slab lifted: chest + bag of 12 funeral tokens revealed
+;   7  Marren's name spoken by the chest -> tokens can be returned to graves
+;   8  all 12 tokens returned: chest open, rewards claimable (SEARCH CHEST)
+; Other variables:
+;   HWTOKENS  tokens returned so far (Elira Vey's lantern token must be last)
+;   HWSPIRITS 1 once the restless spirits have been raised
+;   HWHINT    @set HWHINT 1 -> Marren's lantern drifts toward the next
+;             location once (auto-resets to 0)
+;   HWFIRE    0 burning, 1 blue, 2 dead, 3 rekindled
+; Per player: INTNUM1031 = 2026 once that character has claimed a share.
+;
+; First finders of each leg (strip, key, parchment, slab) are announced to GMs
+; via GMMSG "[Last Lantern] ... FIRST", for handing out the engraved funeral
+; rings (INUMBER 9346) with @additem / @give.
+;
+; ID ranges: NOUNDEF 9300-9303, ADJDEF 9300-9311 and INUMBER 9302-9306,
+;            9320-9331, 9344-9346 are in FESTITEMS.SCR. Here: MADJDEF 9300,
+;            INUMBER 9300-9301, 9307-9314, 9332-9343, MNUMBER 9300,
+;            MACRO 9300-9306, CEVENT 9300.
+; =============================================================================
+
+; ── Vocabulary ────────────────────────────────────────────────────────────────
+; Nouns/adjectives and every keepsake players can carry away (clue items, the
+; twelve tokens, the necklace/charm/ring rewards) live in the permanent
+; FESTITEMS.SCR, so they survive after this file is removed.
+
+MADJDEF	9300	restless
+
+VARIABLE HWLANTERN
+VARIABLE HWTOKENS
+VARIABLE HWSPIRITS
+VARIABLE HWHINT
+VARIABLE HWFIRE
+
+; ── Macros ────────────────────────────────────────────────────────────────────
+; Bodies are wrapped in an always-true IFVAR so every action parses (see
+; FALLFEST.SCR). DUMMY vars are per-command scratch values.
+
+; MACRO 9300: put a funeral token on a gravestone. Caller sets DUMMY1 to the
+; archetype of the token that belongs on that stone. Inside a PUT script the
+; current item (ARCHNUM, REMOVEITEM -1) is the item being put.
+MACRO 9300
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY2 0
+  IFVAR ARCHNUM >= 9320
+    IFVAR ARCHNUM <= 9331
+      EQUAL DUMMY2 1
+    ENDIF
+  ENDIF
+  IFVAR DUMMY2 = 0
+    ECHO PLAYER That has no place on a grave.
+  ELSE
+    IFVAR ARCHNUM ! DUMMY1
+      ECHO PLAYER You hold the token against the weathered stone, but the symbol carved on it does not match.
+    ELSE
+      EQUAL DUMMY3 1
+      IFVAR HWLANTERN < 7
+        EQUAL DUMMY3 0
+        ECHO PLAYER The token fits the hollow in the stone, but nothing happens. The cemetery seems to be waiting for someone to speak the keeper's name.
+      ENDIF
+      IFVAR DUMMY3 = 1
+        IFVAR DUMMY1 = 9331
+          IFVAR HWTOKENS < 11
+            EQUAL DUMMY3 0
+            ECHO PLAYER You lay the lantern token against the stone, but the lantern carved there stays cold and dark. It will wait until all the others have been returned.
+          ENDIF
+        ENDIF
+      ENDIF
+      IFVAR DUMMY3 = 1
+        REMOVEITEM -1
+        ECHO PLAYER You press the token into a shallow hollow in the gravestone. It settles into place, and its carved symbol glimmers with a pale golden light before sinking into the weathered stone. From somewhere beneath the earth comes a soft and grateful sigh.
+        ECHO OTHERS %N presses a token into a gravestone. It glimmers with pale golden light and sinks into the stone, and from somewhere beneath the earth comes a soft and grateful sigh.
+        IFVAR DUMMY1 = 9331
+          GMMSG [Last Lantern] %N returned Elira Vey's lantern token. The finale begins.
+          CALL 9301
+        ELSE
+          ADD HWTOKENS 1
+          GMMSG [Last Lantern] %N returned a token to its grave.
+        ENDIF
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9301: the finale, after Elira Vey's token is returned. Runs in room 310
+; as a timed sequence (the player who placed the token must stay visible —
+; @invis suppresses script echoes).
+MACRO 9301
+IFVAR DUMMY9 = 0
+  EQUAL HWLANTERN 8
+  ECHO ALL A warm light blossoms inside the lantern carved upon the stone. Beside the chest, the translucent figure of Marren Vey stands with his head bowed.
+  PLREVENT 5
+  CONTPLREVENT
+  ECHO ALL You hear metal on metal as the brass key in the chest's lock begins to turn by itself. The lock opens with a loud click, and the chest creaks open.
+  OPEN 12
+  PLREVENT 5
+  CONTPLREVENT
+  ECHO ALL Marren's spectral lantern shines with a warm, golden light.
+  PLREVENT 5
+  CONTPLREVENT
+  ECHO ALL Marren Vey says, "The dead do not fear being forgotten. We fear being remembered falsely."
+  PLREVENT 6
+  CONTPLREVENT
+  ECHO ALL Marren Vey says, "Tell them that Marren Vey did not abandon his vigil."
+  PLREVENT 5
+  CONTPLREVENT
+  ECHO ALL Marren looks out across the countless broken graves. "And tell them I was not alone."
+  PLREVENT 6
+  CONTPLREVENT
+  ECHO ALL Marren Vey whispers, "Forgive me, Elira. I have kept you waiting long enough."
+  PLREVENT 5
+  CONTPLREVENT
+  ECHO ALL A second figure appears beside him and gently takes his hand. Together, they fade into the golden light.
+  PLREVENT 6
+  CONTPLREVENT
+  ZAPMON
+  ECHO ALL Dozens of faint figures become visible throughout the cemetery. They silently incline their heads toward you before fading, with Marren and Elira, into the darkness.
+  PLREVENT 3
+  CONTPLREVENT
+  ECHO ALL [The chest stands open. SEARCH CHEST to receive your share of Marren Vey's cache.]
+ENDIF
+
+; MACRO 9302: the caretaker's hidden compartment (room 308).
+MACRO 9302
+IFVAR DUMMY9 = 0
+  IFVAR HWLANTERN < 4
+    ECHO PLAYER You poke through the rusted bedframe and scattered kitchenware but find nothing of interest.
+  ELSE
+    EQUAL DUMMY1 0
+    IFCARRY 9304
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR DUMMY1 = 0
+      ECHO PLAYER Beneath the remains of the bed, half buried in grit, you find a small iron compartment set into the floor. It is locked fast. You would need a key.
+      ECHO OTHERS %N kneels beside the rusted bed and runs %h fingers over something in the floor.
+    ELSE
+      EQUAL DUMMY2 0
+      IFCARRY 9305
+        EQUAL DUMMY2 1
+      ENDIF
+      IFVAR DUMMY2 = 1
+        ECHO PLAYER The iron compartment beneath the bed stands open and empty. You already have the parchment.
+      ELSE
+        ECHO PLAYER Beneath the remains of the bed you find a small iron compartment set into the floor. The tarnished brass key turns stiffly in its lock, and the lid grinds open. Inside lies a piece of blackened parchment, which you take.
+        ECHO OTHERS %N fits a brass key into something beneath the rusted bed. There is a grinding of old iron, and %s draws out a piece of blackened parchment.
+        NEWITEM -1 9305
+        EQUAL ROUNDTIME 5
+        IFVAR HWLANTERN = 4
+          EQUAL HWLANTERN 5
+          GMMSG [Last Lantern] %N found the parchment FIRST (leg 3).
+        ENDIF
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9303: claim a share of Marren's cache (SEARCH CHEST once it is open).
+MACRO 9303
+IFVAR DUMMY9 = 0
+  IFVAR HWLANTERN < 8
+    ECHO PLAYER The iron-bound chest is locked tight. An old brass lock holds it shut.
+  ELSE
+    IFVAR INTNUM1031 = 2026
+      ECHO PLAYER You have already received your share of Marren Vey's cache. Leave the rest for the others.
+    ELSE
+      EQUAL INTNUM1031 2026
+      ECHO PLAYER You reach into Marren Vey's chest. Among the decayed velvet and funeral gifts you find a purse of ancient Faydian crowns, an antique silver necklace bearing the image of Old Fayd, and a tiny lantern charm, cold to the touch.
+      ECHO PLAYER [You receive 50 crowns, an antique silver necklace, and a tarnished silver lantern charm.]
+      ECHO OTHERS %N reaches into the open chest and takes a share of Marren Vey's cache.
+      ADD WEALTH 5000
+      NEWITEM -1 9344 ADJ1=851 ADJ2=292
+      NEWITEM -1 9345 ADJ1=318 ADJ2=292 VAL2=50 VAL3=113
+      GMMSG [Last Lantern] %N claimed a share of the cache.
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9304: lift the granite slab (room 310). Needs a prybar or any shovel.
+MACRO 9304
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY1 0
+  IFCARRY 9306
+    EQUAL DUMMY1 1
+  ENDIF
+  IFCARRY 484
+    EQUAL DUMMY1 1
+  ENDIF
+  IFVAR DUMMY1 = 0
+    ECHO PLAYER You strain at the granite slab, but it is far too heavy to lift with your bare hands. If only you had something to pry it up with...
+    ECHO OTHERS %N strains at the granite slab, without success.
+  ELSE
+    REMOVEITEM 11
+    NEWITEM 12 9311
+    NEWITEM 13 9312
+    NEWPUT 13 9320
+    NEWPUT 13 9321
+    NEWPUT 13 9322
+    NEWPUT 13 9323
+    NEWPUT 13 9324
+    NEWPUT 13 9325
+    NEWPUT 13 9326
+    NEWPUT 13 9327
+    NEWPUT 13 9328
+    NEWPUT 13 9329
+    NEWPUT 13 9330
+    NEWPUT 13 9331
+    EQUAL ROUNDTIME 10
+    ECHO PLAYER You wedge your tool beneath the edge of the slab and heave. With a grinding groan the granite shifts, tilts, and slides aside, revealing a shallow pit. In it rest an iron-bound chest and an old cloth bag, heavy with funeral tokens.
+    ECHO OTHERS %N wedges a tool beneath the granite slab and heaves. With a grinding groan the slab slides aside, revealing an iron-bound chest and an old cloth bag in a shallow pit.
+    IFVAR HWLANTERN = 5
+      EQUAL HWLANTERN 6
+      GMMSG [Last Lantern] %N lifted the slab FIRST. Chest + token bag revealed.
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9305: someone tries to force the chest before the tokens are returned.
+MACRO 9305
+IFVAR DUMMY9 = 0
+  IFVAR HWLANTERN >= 8
+    ECHO PLAYER The chest already stands open.
+  ELSE
+    IFVAR HWSPIRITS = 0
+      EQUAL HWSPIRITS 1
+      ECHO ALL The ground grows bitterly cold. One by one, pale shapes rise from the graves around the hillock -- the restless dead of Old Fayd. They do not attack, but they gather close around the chest, their hollow eyes fixed on you.
+      GENMON 9300
+      GENMON 9300
+      GENMON 9300
+      GMMSG [Last Lantern] %N tried to force the chest. Restless spirits raised (they leave when the chest opens).
+    ELSE
+      ECHO PLAYER The restless spirits press closer around the chest, and a whisper like wind through dry leaves fills your ears: "Return what was taken..."
+      ECHO OTHERS The restless spirits press closer around %N.
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9306: the brass key at the Maytan tree (room 309).
+MACRO 9306
+IFVAR DUMMY9 = 0
+  IFVAR HWLANTERN < 3
+    ECHO PLAYER You poke among the gnarled roots of the Maytan tree but find nothing but dirt and dead leaves.
+  ELSE
+    EQUAL DUMMY1 0
+    IFCARRY 9304
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR DUMMY1 = 1
+      ECHO PLAYER You search the roots again, but there is nothing more to find. You already have the brass key.
+    ELSE
+      ECHO PLAYER Digging your fingers into the dark soil between the roots, you uncover a tarnished brass key wrapped in the rotted remains of a leather cord.
+      ECHO OTHERS %N digs among the roots of the Maytan tree and uncovers a tarnished brass key.
+      NEWITEM -1 9304
+      EQUAL ROUNDTIME 5
+      IFVAR HWLANTERN = 3
+        EQUAL HWLANTERN 4
+        GMMSG [Last Lantern] %N found the brass key FIRST (leg 2).
+        ECHO ALL As the key is lifted from the earth, the air turns cold. For a heartbeat Marren Vey stands between the graves, his hooded lantern dark.
+        PLREVENT 3
+        CONTPLREVENT
+        ECHO ALL Marren Vey whispers, "A keeper without a home. A sleeper without a bed. Find where I waited for the morning."
+        PLREVENT 3
+        CONTPLREVENT
+        ECHO ALL Then he is gone, and the grey leaves of the Maytan tree go still.
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; ── Story items ───────────────────────────────────────────────────────────────
+
+; Campfire, pale blue (during the manifestation).
+INUMBER 9300
+NAME 9350
+ADJECTIVE 1132
+ADJECTIVE2 29
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; Campfire, cold and dead (after the manifestation).
+INUMBER 9301
+NAME 9350
+ADJECTIVE 61
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; Scenery: the Maytan tree's roots (room 309).
+INUMBER 9307
+NAME 1109
+ARTICLE SOME
+MISC
+WEIGHT 1000
+VOLUME 100
+HIDDEN
+;
+; Scenery: the floor of the caretaker's house (room 308).
+INUMBER 9308
+NAME 1220
+MISC
+WEIGHT 1000
+VOLUME 100
+HIDDEN
+;
+; Scenery: the mausoleum itself, for SEARCH MAUSOLEUM (room 310).
+INUMBER 9309
+NAME 134
+MISC
+WEIGHT 1000
+VOLUME 1000
+HIDDEN
+;
+; The loose granite slab behind the mausoleum.
+INUMBER 9310
+NAME 1395
+ADJECTIVE 148
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; Marren Vey's chest. Not a CONTAINER: everything about it is scripted (room 310).
+INUMBER 9311
+NAME 49
+ADJECTIVE 9311
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; The old cloth bag of funeral tokens (GET <symbol> TOKEN FROM BAG).
+INUMBER 9312
+NAME 11
+ADJECTIVE 57
+CONTAINER IN
+INTERIOR 20
+MISC
+WEIGHT 1000
+VOLUME 20
+;
+; Scenery: the hundreds of gravestones around the hillock (SEARCH GRAVESTONES).
+INUMBER 9313
+NAME 9301
+ARTICLE SOME
+PLURAL
+MISC
+WEIGHT 1000
+VOLUME 1000
+HIDDEN
+;
+; Scenery: the iron compartment under the bed (room 308).
+INUMBER 9314
+NAME 822
+MISC
+WEIGHT 1000
+VOLUME 10
+HIDDEN
+
+; ── The twelve gravestones (9332-9343), revealed by SEARCH GRAVESTONES ───────
+; Placed at room 310 refs 20-31 in the same order as the tokens. Their EXAMINE
+; text (name + epitaph) lives in room 310's ITEM EXAM blocks.
+INUMBER 9332
+NAME 9300
+ADJECTIVE 9300
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9333
+NAME 9300
+ADJECTIVE 9301
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9334
+NAME 9300
+ADJECTIVE 9302
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9335
+NAME 9300
+ADJECTIVE 9303
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9336
+NAME 9300
+ADJECTIVE 9304
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9337
+NAME 9300
+ADJECTIVE 379
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9338
+NAME 9300
+ADJECTIVE 309
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9339
+NAME 9300
+ADJECTIVE 9305
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9340
+NAME 9300
+ADJECTIVE 953
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9341
+NAME 9300
+ADJECTIVE 9307
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9342
+NAME 9300
+ADJECTIVE 9306
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9343
+NAME 9300
+ADJECTIVE 1163
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+
+; ── Restless spirit (raised if someone tries to force the chest) ─────────────
+; Non-hostile (defends itself only), cannot be harmed by ordinary weapons, and
+; vanishes when the chest opens (ZAPMON in MACRO 9301). GMs can @zap them too.
+MNUMBER 9300
+NAME spirit
+ADJECTIVE 9300
+HUMAN
+*DESCRIPTION_START
+The pale, sorrowful shade of one of Old Fayd's long dead. Its features are worn away like the runes on the gravestones, but its hollow eyes are fixed on the iron-bound chest -- and on you.
+*DESCRIPTION_END
+BODY 500
+ATTACK1 20
+DEFENSE 200
+DISCORPORATE
+ETERNAL
+MAGICWEAPON 3
+IMMUNITY 0 0
+IMMUNITY 5 0
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 8 1
+IMMUNITY 9 0
+RACE 22
+speed 3
+STRATEGY 150
+TREASURE 0
+WEAPON 544 -1 10
+TEXG A restless spirit rises silently from a nearby grave.
+TEXE A restless spirit drifts in.
+TEXM A restless spirit drifts
+TEXI Your weapon passes through the restless spirit without resistance.
+TEXD sighs and fades away.
+TEX1 A restless spirit whispers, "Return what was taken..."
+TEX2 A restless spirit turns its hollow eyes toward the graves.
+TEX3 A restless spirit drifts slowly around the chest.
+
+; ── Rooms ─────────────────────────────────────────────────────────────────────
+
+; 287 — the festival lot (copied from FALLFEST.SCR — keep the two in sync) plus
+; the manifestation trigger and the rekindling of the fire.
+NUMBER 287
+NAME Poor Quarter, festival lot
+OUTDOOR_OTHER
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+Rubble has been cleared from the west end of this alley to make room for the Fall Festival. Strings of paper lanterns sway between the leaning tenements, and logs have been dragged into a ring around the campfire to serve as benches. A trestle table sags beneath pumpkin bread and a steaming kettle of hot cider, free to all, and a gaudy striped balloon cart is parked against one wall beside a velvet-draped stool where a crystal ball glimmers. Beyond the merriment, an imposing iron gate still seals off the Old Fayd Cemetery, its chains rattling softly whenever the wind finds them.
+*DESCRIPTION_END
+ITEM 0 219 VAL2=299
+ITEM 1 692 val2=644 VAL5=1
+ITEM 2 9360
+ITEM 3 9361
+ITEM 4 9362
+ITEM 5 9363
+ITEM 6 9364
+ITEM 7 9365
+ITEM 9 693 ADJ1=10
+EXIT E 286
+EXIT ABOVE 2152
+*DESCRIPTION_START ITEM EXAM 3
+A long trestle table covered in an orange cloth. A hand-lettered card propped against the kettle reads, "Help yourself! -- the Festival Committee." (GET BREAD or GET CIDER)
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 6
+A wooden cart painted in loud stripes of orange and black, with dozens of balloons bobbing on strings tied to its rail. A price board is nailed to the side.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM READ 6
+         ~ BALLOONS ~
+  Orange, black, purple or white ..... 1 shilling
+  TREASURE balloon ................... 1 crown
+     (POP it and see what's inside!)
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 7
+A crystal ball the size of a melon rests on a velvet-draped stool. Faint mist stirs inside it. A small sign reads, "Touch, and know thy fortune."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 0
+The iron gate is old and heavy, its bars wrapped in rusted chains. Beyond it, rows of broken gravestones fade into the dark of the Old Fayd Cemetery. The gate can still be climbed, if you dare.
+*DESCRIPTION_END
+STOREITEM 739 225 10
+STOREITEM 739 25 10
+STOREITEM 739 248 10
+STOREITEM 739 347 10
+STOREITEM 739 9350 100
+; The campfire's look follows HWFIRE (its archetype changes with the story, so
+; it has no static ITEM EXAM text).
+IFPREVERB LOOK 2
+  CLEARVERB
+  IFVAR HWFIRE = 1
+    ECHO PLAYER The campfire burns with a cold, pale blue flame that gives off no warmth at all. Every shadow around it leans toward the cemetery gate.
+  ENDIF
+  IFVAR HWFIRE = 2
+    ECHO PLAYER Nothing is left of the campfire but cold grey ash inside the ring of stones. It is as cold as if it had been out for a hundred years.
+  ENDIF
+  IFVAR HWFIRE ! 1
+    IFVAR HWFIRE ! 2
+      ECHO PLAYER A cheerful fire of split logs crackles inside a ring of old grave-curbing stones. Sparks drift up into the dark and wink out among the paper lanterns.
+    ENDIF
+  ENDIF
+ENDIF
+; The manifestation. A GM arms it with @set HWLANTERN 1; then whoever says
+; "...your vigil is done" here (Soulcatcher: "Marren Vey, your vigil is done.")
+; sets it off. The speaker must not be @invis/@hide (that silences the echoes).
+IFSAY YOUR_VIGIL_IS_DONE
+  IFVAR HWLANTERN = 1
+    EQUAL HWLANTERN 2
+    EQUAL HWFIRE 1
+    NEWITEM 2 9300
+    ECHO ALL The campfire abruptly changes from a warm orange to a burning pale blue.
+    PLREVENT 4
+    CONTPLREVENT
+    ECHO ALL Every shadow in the lot -- yours included -- slides across the ground toward the fire and turns to face the cemetery, no matter where the fire stands.
+    PLREVENT 5
+    CONTPLREVENT
+    ECHO ALL Beyond the chained gate, a translucent man appears among the graves, holding a dark, hooded lantern.
+    PLREVENT 5
+    CONTPLREVENT
+    ECHO ALL The ghost raises one withered hand and points into the cemetery.
+    PLREVENT 5
+    CONTPLREVENT
+    ECHO ALL The ghost moans, "They raided the graves. They took my life. They did not take what I guarded. Follow the light -- and remember my name."
+    PLREVENT 6
+    CONTPLREVENT
+    EQUAL HWFIRE 2
+    NEWITEM 2 9301
+    NEWITEM 8 9302 ADJ1=7
+    ECHO ALL The apparition vanishes. With a long sigh, the pale flames gutter and die, leaving the campfire cold and dark. Something glints among the ashes: an ancient grave token.
+    GMMSG [Last Lantern] Manifestation complete. Stage 2: the obelisk token is in the ashes; clue 1 (SEARCH SKULL at the obelisk, room 300) is live.
+  ENDIF
+ENDIF
+; Closing: the fire rekindles by itself when someone returns after the chest
+; has been opened.
+IFENTRY
+  IFVAR HWLANTERN = 8
+    IFVAR HWFIRE = 2
+      EQUAL HWFIRE 3
+      NEWITEM 2 9360
+      ECHO ALL With a soft whoomp, the dead campfire rekindles by itself. Its flames are warm and orange and ordinary once more.
+    ENDIF
+  ENDIF
+ENDIF
+;
+; 299 — Cemetery, gate (FAYDFALL.SCR; MONSTER_GROUP removed).
+NUMBER 299
+NAME Cemetery, gate
+DAY_LIGHT
+FOREST
+CALL 33
+*DESCRIPTION_START
+To the east a gate leads back to the safety of the city proper. A rough trail weaves southwest among rows of grave markers worn and broken by the passage of years. The runes engraved upon the stones are unreadable: their language lost to time. Brambles and weeds have overgrown the spaces between the gravestones and thick creepers coil wilting and drab tendrils tightly about the nearby gate as if it might shelter them from winter. Through the bars you can see the glow of the festival lanterns.
+*DESCRIPTION_END
+ITEM 0 219 VAL2=287
+ITEM 1 337
+ITEM 9 693 ADJ1=10
+
+EXIT SW 300
+;
+; 300 — Cemetery, trail: the broken obelisk and the vine-choked skull (clue 1).
+NUMBER 300
+NAME Cemetery, trail
+DAY_LIGHT
+FOREST
+CALL 33
+*DESCRIPTION_START
+The trail bends around a broken obelisk, and leads northeast towards to the gate, and westward into the deepening gloom of the cemetery. Withered vines grow through the eye sockets of a dirty skull laying beside the trail.
+*DESCRIPTION_END
+EXIT NE 299
+EXIT W 301
+EXIT S 3186
+ITEM 0 352
+ITEM 1 228 ADJ1=374
+ITEM 9 693 ADJ1=10
+
+*DESCRIPTION_START ITEM EXAM 0
+The skull doesn't seem to be particularly old. Its presence here seems odd considering this cemetery has been deserted for over a thousand years. Dead vines have grown thickly through its eye sockets.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 1
+The obelisk has snapped off halfway up, and the jagged stump is furred with lichen. Whatever was carved on it has long since weathered away.
+*DESCRIPTION_END
+IFPREVERB SEARCH 1
+  CLEARVERB
+  IFVAR HWLANTERN < 2
+    ECHO PLAYER You search around the base of the broken obelisk but find nothing but weeds and lichen.
+  ELSE
+    ECHO PLAYER Circling the base of the broken obelisk, you notice the dirty skull lying beside it -- and that the dead vines growing through its eye sockets have been disturbed, as though something was pushed inside.
+    ECHO OTHERS %N searches around the base of the broken obelisk and peers at the skull beside it.
+  ENDIF
+ENDIF
+IFPREVERB SEARCH 0
+  CLEARVERB
+  IFVAR HWLANTERN < 2
+    ECHO PLAYER You poke at the dead vines around the skull but find nothing of interest.
+  ELSE
+    EQUAL DUMMY1 0
+    IFCARRY 9303
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR DUMMY1 = 1
+      ECHO PLAYER You have already taken the copper strip from inside the skull.
+    ELSE
+      ECHO PLAYER Working your fingers between the dead vines, you find something wedged inside the skull: a thin strip of copper, green with age, bearing the image of a leaf.
+      ECHO OTHERS %N reaches into the skull's vine-choked eye socket and draws out a thin strip of copper.
+      NEWITEM -1 9303
+      EQUAL ROUNDTIME 5
+      IFVAR HWLANTERN = 2
+        EQUAL HWLANTERN 3
+        GMMSG [Last Lantern] %N found the copper strip FIRST (leg 1).
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+;
+; 301 — Cemetery, trail: the hanging willow (FAYDFALL.SCR; MONSTER_GROUP removed).
+NUMBER 301
+NAME Cemetery, trail
+FOREST
+DAY_LIGHT
+CALL 33
+*DESCRIPTION_START
+The stench of decay is undeniable. A number of decaying bodies swing lazily in the breeze from the branches of a gnarled willow tree. Dozens of crows roost in the higher branches. Occasionally one flits down to peck on a piece of the rotting flesh. They pay your passing little heed.
+*DESCRIPTION_END
+ITEM 0 229 ADJ1=146 ADJ2=385
+ITEM 1 230 ADJ1=88
+*DESCRIPTION_START ITEM EXAM 1
+You don't see anyone you know, however it is clear that these corpses are rather fresh. One has the name Tayshan embroidered on what is left of a shirt pocket.
+*DESCRIPTION_END
+ITEM 9 693
+EXIT E 300
+EXIT N 309
+EXIT SW 302
+;
+; 302 — Cemetery, trail: the empty grave (FAYDFALL.SCR; MONSTER_GROUP removed).
+NUMBER 302
+NAME Cemetery, trail
+FOREST
+DAY_LIGHT
+CALL 33
+*DESCRIPTION_START
+Beside the trail is an empty grave. Who it was dug for is a mystery. Leaves cover a pile dry dirt next to the hole. Thorny undergrowth nearly prevents continued travel, but you can force your way through.
+*DESCRIPTION_END
+ITEM 0 231 VAL2=303
+ITEM 9 693
+EXIT NE 301
+EXIT W 307
+;
+; 307 — outside the caretaker's house: the shovel and prybar.
+NUMBER 307
+NAME Cemetery, trail
+DAY_LIGHT
+FOREST
+CALL 33
+*DESCRIPTION_START
+The trail ends before a crumbling granite structure. One wall has partially collapsed, allowing easy entry into its weed and bramble infested interior. A few dried leaves, scattered in the cold wind, cling to the stone. A narrow path climbs away from the trail, winding higher into the gravestones.
+*DESCRIPTION_END
+EXIT E 302
+ITEM 0 83 VAL2=308 ADJ1=386
+ITEM 1 492 ADJ1=533 ADJ2=148
+ITEM 9 693
+ITEM 2 8300 VAL2=5300
+*DESCRIPTION_START ITEM EXAM 1
+This crumbling granite structure looks as though it was once a small house, perhaps the cemetery caretaker's. Weeds grow thick against its walls.
+*DESCRIPTION_END
+; Any search here (bare SEARCH, SEARCH STRUCTURE, SEARCH WALL...) turns up the
+; tools leaning against the house, once the story is under way. If they've been
+; carried off, another search finds more junk of the same sort.
+IFPREVERB SEARCH -1
+  IFVAR HWLANTERN >= 1
+    EQUAL DUMMY1 0
+    IFNOITEM 3
+      EQUAL DUMMY1 1
+      NEWITEM 3 484 ADJ1=222
+    ENDIF
+    IFNOITEM 4
+      EQUAL DUMMY1 1
+      NEWITEM 4 9306
+    ENDIF
+    IFVAR DUMMY1 = 1
+      CLEARVERB
+      ECHO PLAYER Pushing aside the weeds along the outside of the house, you find an old shovel and a rusted prybar leaning against the wall, half hidden by brambles.
+      ECHO OTHERS %N pushes aside the weeds along the wall of the ruined house and uncovers some old tools.
+    ENDIF
+  ENDIF
+ENDIF
+;
+; 308 — the caretaker's house: the hidden iron compartment (clue 3).
+NUMBER 308
+NAME Cemetery, old house
+OBSCURED_DAY_LIGHT
+INDOOR_FLOOR
+CALL 33
+*DESCRIPTION_START
+This ruined structure appears to have been a domicile of some sort, perhaps
+that of the caretaker. Old kitchenware is strewn on the ground and rusted
+frame of a bed lies crumpled in one corner.
+*DESCRIPTION_END
+EXIT O 307
+ITEM 0 84 ADJ1=272
+ITEM 1 355 ADJ1=272
+ITEM 2 9308
+ITEM 3 9314
+ITEM 9 693
+IFPREVERB SEARCH 0
+  CLEARVERB
+  CALL 9302
+ENDIF
+IFPREVERB SEARCH 1
+  CLEARVERB
+  CALL 9302
+ENDIF
+IFPREVERB SEARCH 2
+  CLEARVERB
+  CALL 9302
+ENDIF
+IFPREVERB SEARCH 3
+  CLEARVERB
+  CALL 9302
+ENDIF
+IFPREVERB UNLOCK 3
+  CLEARVERB
+  CALL 9302
+ENDIF
+IFPREVERB OPEN 3
+  CLEARVERB
+  CALL 9302
+ENDIF
+;
+; 309 — the Maytan tree (clue 2). Tree and roots added as searchable scenery.
+NUMBER 309
+NAME Cemetery, trail
+FOREST
+DAY_LIGHT
+CALL 33
+*DESCRIPTION_START
+An old Maytan tree leans over the trail. Its long feathery leaves have shrivelled to a dry grey and slowly brush the tops of the old cracked grave stones that line both sides of the trail. To the north is some sort of mausoleum atop of small hillock.
+*DESCRIPTION_END
+ITEM 0 229 ADJ1=9310
+ITEM 1 9307
+ITEM 9 693
+EXIT S 301
+EXIT N 310
+*DESCRIPTION_START ITEM EXAM 0
+The Maytan tree is ancient and gnarled. Its long grey leaves scrape softly across the names on the surrounding gravestones, and its thick roots knot their way down into the graves themselves. The soil around them is unusually dark.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 1
+Thick, knotted roots spread out from the base of the Maytan tree and burrow down among the graves. The soil between them is unusually dark, as if it once drank something other than rain.
+*DESCRIPTION_END
+IFPREVERB SEARCH 0
+  CLEARVERB
+  CALL 9306
+ENDIF
+IFPREVERB SEARCH 1
+  CLEARVERB
+  CALL 9306
+ENDIF
+IFPREVERB DIG -1
+  CLEARVERB
+  CALL 9306
+ENDIF
+;
+; 310 — the hillock and mausoleum: slab, chest, tokens, gravestones, finale.
+; Original items/scripts kept: arch to the mausoleum (ref 0), the hidden trail
+; (ref 2, any SEARCH) and DIG for body parts (ref 1). Story refs: 10 mausoleum,
+; 11 slab, 12 chest, 13 bag, 14 gravestones, 20-31 the twelve graves.
+NUMBER 310
+NAME Cemetary, hillock
+CALL 33
+*DESCRIPTION_START
+This vantage point provides an excellent view of the graveyard cramped
+between the towering buildings of Fayd. There are hundreds of gravestones
+of every shape, size and configuration, most of which have broken or
+fallen. The wilderness has retaken much of the land, choking it with
+weeds and vines. A small mausoleum is accessible beneath a stone arch.
+*DESCRIPTION_END
+OUTDOOR_FLOOR
+DAY_LIGHT
+EXIT S 309
+ITEM 0 60  ADJ1=312  VAL2=311
+ITEM 9 693
+ITEM 10 9309
+ITEM 14 9313
+*DESCRIPTION_START ITEM EXAM 10
+The mausoleum is a squat block of grey granite beneath a carved stone arch. Weeds grow waist-high around its back wall.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 11
+A broad slab of granite lies flat in the weeds behind the mausoleum. Its edges are not quite flush with the ground around it.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 12
+A sturdy chest of black oak bound with iron straps, its brass lock green with age. A thousand years in the ground have barely marked it.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 13
+An old cloth bag, rotten at the seams, heavy with small bronze funeral tokens. Each token bears a different symbol. (GET TOKEN FROM BAG)
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 14
+Hundreds of gravestones crowd the slopes of the hillock, most of them broken or fallen. The runes cut into them are unreadable, but here and there a carved symbol has survived the years.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 20
+The gravestone of ADREN BELL, carved with a rising sun divided by a vertical line.
+"He opened the eastern gate each morning, until the morning that never came."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 21
+The gravestone of MYRA SOL, carved with a closed eye shedding a single tear.
+"She saw sorrow in every future but her own."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 22
+The gravestone of PELLAN ROE, carved with three stalks of wheat bound with cord.
+"From barren earth he raised bread enough for strangers."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 23
+The gravestone of TORVEN DANE, carved with a hammer resting across a small flame.
+"His hands shaped iron. His heart yielded to none."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 24
+The gravestone of SERA NOLL, carved with a bird escaping an open cage.
+"No wall held her long, and no grave shall hold her forever."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 25
+The gravestone of EDRIS AND MARA VANN, carved with two hands clasped beneath a crescent moon.
+"Joined in life, found together when the sky fell."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 26
+The gravestone of OREN VALE, carved with a five-pointed star above three wavy lines.
+"He followed the river beyond every map, yet the river carried him home."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 27
+The gravestone of HESSA KORR, carved with a hound seated beneath a full moon.
+"Faithful to those she loved; merciless to those who harmed them."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 28
+The gravestone of TALVEN MOR, carved with a quill laid across an ornate key.
+"Keeper of records, secrets, and one promise he carried into death."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 29
+The gravestone of ILYRA FEN, carved with a leafless tree with seven exposed roots.
+"She buried seven children and still found kindness for the living."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 30
+The gravestone of JORY PELL, carved with the small handprint of a child.
+"He lived nine winters and laughed enough for ninety."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 31
+The gravestone of ELIRA VEY, carved with an unlit hooded lantern.
+"She kept a light for one who came too late."
+*DESCRIPTION_END
+; --- original FAYDFALL.SCR room 310 scripts (hidden trail, digging) ---
+IFNOITEM 2
+  IFPREVERB SEARCH -1
+    CLEARVERB
+    ECHO PLAYER You discover a hidden trail, leading further up the hill!
+    ECHO PLAYER [Round: 10 seconds]
+    EQUAL ROUNDTIME 10
+    NEWITEM 2 76  VAL2=3638
+   ENDIF
+ENDIF
+IFPREVERB DIG -1
+  CLEARVERB
+  ECHO PLAYER You dig in the loose earth...
+  ECHO OTHERS %N digs in the loose earth.
+  ECHO PLAYER [Round: 20 seconds]
+  EQUAL ROUNDTIME 20
+  RANDOM CHASBONES 1 100 0
+  MOD CHASBONES 19
+  IFITEM 1
+    ECHO PLAYER You don't find anything.
+  ENDIF
+  IFNOITEM 1
+    IFVAR CHASBONES < 8
+      ECHO PLAYER You don't find anything.
+    ENDIF
+    IFVAR CHASBONES > 7
+      IFVAR CHASBONES < 10
+        ECHO PLAYER You dig up a rotting corpse, without head, legs, or arms.
+        NEWITEM 1 650  ADJ1=586
+      ENDIF
+      IFVAR CHASBONES > 9
+        IFVAR CHASBONES < 12
+          ECHO PLAYER You dig up a rotting head, its decaying face seeming to watch your every move.
+          NEWITEM 1 1273  ADJ1=586
+        ENDIF
+        IFVAR CHASBONES > 11
+          IFVAR CHASBONES < 16
+            ECHO PLAYER You dig up a rotting arm, about ready to fall apart.
+            NEWITEM 1 649  ADJ1=586
+          ENDIF
+          IFVAR CHASBONES > 15
+            ECHO PLAYER You dig up a rotitng leg, whose foot is missing a toe or two.
+            NEWITEM 1 527  ADJ1=586
+          ENDIF
+        ENDIF
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+; --- story: the mausoleum and the slab ---
+IFPREVERB SEARCH 10
+  CLEARVERB
+  IFVAR HWLANTERN < 5
+    ECHO PLAYER You circle the mausoleum, pushing through the weeds, but find nothing of interest.
+  ELSE
+    EQUAL DUMMY1 0
+    IFITEM 11
+      EQUAL DUMMY1 1
+    ENDIF
+    IFITEM 12
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR DUMMY1 = 1
+      ECHO PLAYER There is nothing more to find behind the mausoleum.
+    ELSE
+      NEWITEM 11 9310
+      EQUAL ROUNDTIME 5
+      ECHO PLAYER Pushing through the waist-high weeds behind the mausoleum, you find a broad granite slab lying flat in the earth. Its edges are not quite flush with the ground. It looks loose -- but far too heavy to lift by hand.
+      ECHO OTHERS %N pushes through the weeds behind the mausoleum and uncovers a broad granite slab.
+      GMMSG [Last Lantern] %N found the granite slab FIRST (leg 4).
+    ENDIF
+  ENDIF
+ENDIF
+IFPREVERB LIFT 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+IFPREVERB PRY 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+IFPREVERB PUSH 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+IFPREVERB PULL 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+IFPREVERB GET 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+IFPREVERB TAKE 11
+  CLEARVERB
+  CALL 9304
+ENDIF
+; --- story: the chest ---
+IFPREVERB UNLOCK 12
+  CLEARVERB
+  IFVAR HWLANTERN >= 8
+    ECHO PLAYER The chest already stands open.
+  ELSE
+    EQUAL DUMMY1 0
+    IFCARRY 9304
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR DUMMY1 = 0
+      ECHO PLAYER The chest is held shut by an old brass lock. You have no key that fits it.
+    ELSE
+      IFVAR HWLANTERN = 6
+        ECHO PLAYER The tarnished brass key slides smoothly into the lock... but it will not turn. It is as if the lock is waiting for something.
+        ECHO OTHERS %N fits a brass key into the chest's lock, but it will not turn.
+      ELSE
+        ECHO PLAYER The key will not turn. Somewhere close by, something waits for its funeral tokens to be returned to their graves.
+        ECHO OTHERS %N tries the brass key in the chest's lock, but it will not turn.
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+IFPREVERB OPEN 12
+  CLEARVERB
+  IFVAR HWLANTERN >= 8
+    ECHO PLAYER The chest already stands open. (SEARCH CHEST to take your share.)
+  ELSE
+    ECHO PLAYER The iron-bound chest is locked tight.
+  ENDIF
+ENDIF
+IFPREVERB SEARCH 12
+  CLEARVERB
+  CALL 9303
+ENDIF
+IFPREVERB GET 12
+  CLEARVERB
+  CALL 9303
+ENDIF
+IFPREVERB TAKE 12
+  CLEARVERB
+  CALL 9303
+ENDIF
+IFPREVERB BREAK 12
+  CLEARVERB
+  CALL 9305
+ENDIF
+IFPREVERB KICK 12
+  CLEARVERB
+  CALL 9305
+ENDIF
+IFPREVERB PUNCH 12
+  CLEARVERB
+  CALL 9305
+ENDIF
+IFPREVERB PRY 12
+  CLEARVERB
+  CALL 9305
+ENDIF
+IFPREVERB LIFT 12
+  CLEARVERB
+  CALL 9305
+ENDIF
+; Speaking Marren's name by the chest (stage 6). "Marren" anywhere in a SAY.
+IFSAY MARREN
+  IFVAR HWLANTERN = 6
+    EQUAL HWLANTERN 7
+    GMMSG [Last Lantern] %N spoke Marren's name. Stage 7: SEARCH GRAVESTONES + PUT <symbol> TOKEN ON <symbol> GRAVESTONE.
+    ECHO ALL The air beside the chest shivers and grows cold, and Marren Vey is there, his hooded lantern dark in his hand.
+    PLREVENT 4
+    CONTPLREVENT
+    ECHO ALL Marren Vey says, "For a thousand years, thieves have searched for what you found this night. Yet you followed my words instead of disturbing my dead."
+    PLREVENT 6
+    CONTPLREVENT
+    ECHO ALL Marren Vey says, "Return the funeral tokens to the graves from which they came. Take what was mine. Let Fayd remember that Marren Vey kept faith -- even after death."
+    PLREVENT 5
+    CONTPLREVENT
+    ECHO ALL [Each token belongs to one grave. SEARCH GRAVESTONES to find the grave that matches the token you carry, then PUT the token ON its gravestone -- for example, PUT SUNRISE TOKEN ON SUNRISE GRAVESTONE.]
+  ENDIF
+ENDIF
+; --- story: the gravestones ---
+IFPREVERB SEARCH 14
+  CLEARVERB
+  IFVAR HWLANTERN < 7
+    ECHO PLAYER You wander among the broken gravestones. The runes on them are unreadable, and one grave looks much like another.
+  ELSE
+    EQUAL DUMMY1 0
+    IFCARRY 9320
+      EQUAL DUMMY1 1
+      IFNOITEM 20
+        NEWITEM 20 9332
+      ENDIF
+      ECHO PLAYER Your sunrise token grows warm. Following it, you find the gravestone of Adren Bell, carved with a rising sun divided by a vertical line.
+    ENDIF
+    IFCARRY 9321
+      EQUAL DUMMY1 1
+      IFNOITEM 21
+        NEWITEM 21 9333
+      ENDIF
+      ECHO PLAYER Your teardrop token grows warm. Following it, you find the gravestone of Myra Sol, carved with a closed eye shedding a single tear.
+    ENDIF
+    IFCARRY 9322
+      EQUAL DUMMY1 1
+      IFNOITEM 22
+        NEWITEM 22 9334
+      ENDIF
+      ECHO PLAYER Your wheatsheaf token grows warm. Following it, you find the gravestone of Pellan Roe, carved with three stalks of wheat bound with cord.
+    ENDIF
+    IFCARRY 9323
+      EQUAL DUMMY1 1
+      IFNOITEM 23
+        NEWITEM 23 9335
+      ENDIF
+      ECHO PLAYER Your hammer token grows warm. Following it, you find the gravestone of Torven Dane, carved with a hammer resting across a small flame.
+    ENDIF
+    IFCARRY 9324
+      EQUAL DUMMY1 1
+      IFNOITEM 24
+        NEWITEM 24 9336
+      ENDIF
+      ECHO PLAYER Your birdcage token grows warm. Following it, you find the gravestone of Sera Noll, carved with a bird escaping an open cage.
+    ENDIF
+    IFCARRY 9325
+      EQUAL DUMMY1 1
+      IFNOITEM 25
+        NEWITEM 25 9337
+      ENDIF
+      ECHO PLAYER Your crescent token grows warm. Following it, you find the gravestone of Edris and Mara Vann, carved with two hands clasped beneath a crescent moon.
+    ENDIF
+    IFCARRY 9326
+      EQUAL DUMMY1 1
+      IFNOITEM 26
+        NEWITEM 26 9338
+      ENDIF
+      ECHO PLAYER Your star token grows warm. Following it, you find the gravestone of Oren Vale, carved with a five-pointed star above three wavy lines.
+    ENDIF
+    IFCARRY 9327
+      EQUAL DUMMY1 1
+      IFNOITEM 27
+        NEWITEM 27 9339
+      ENDIF
+      ECHO PLAYER Your hound token grows warm. Following it, you find the gravestone of Hessa Korr, carved with a hound seated beneath a full moon.
+    ENDIF
+    IFCARRY 9328
+      EQUAL DUMMY1 1
+      IFNOITEM 28
+        NEWITEM 28 9340
+      ENDIF
+      ECHO PLAYER Your quill token grows warm. Following it, you find the gravestone of Talven Mor, carved with a quill laid across an ornate key.
+    ENDIF
+    IFCARRY 9329
+      EQUAL DUMMY1 1
+      IFNOITEM 29
+        NEWITEM 29 9341
+      ENDIF
+      ECHO PLAYER Your leafless token grows warm. Following it, you find the gravestone of Ilyra Fen, carved with a leafless tree with seven exposed roots.
+    ENDIF
+    IFCARRY 9330
+      EQUAL DUMMY1 1
+      IFNOITEM 30
+        NEWITEM 30 9342
+      ENDIF
+      ECHO PLAYER Your handprint token grows warm. Following it, you find the gravestone of Jory Pell, carved with the small handprint of a child.
+    ENDIF
+    IFCARRY 9331
+      EQUAL DUMMY1 1
+      IFNOITEM 31
+        NEWITEM 31 9343
+      ENDIF
+      ECHO PLAYER Your lantern token grows warm. Following it, you find the gravestone of Elira Vey, carved with an unlit hooded lantern.
+    ENDIF
+    IFVAR DUMMY1 = 0
+      ECHO PLAYER Hundreds of graves crowd the hillock. Without a funeral token to guide you, one broken stone looks much like another.
+    ELSE
+      ECHO OTHERS %N moves slowly among the gravestones, following a token held in an outstretched hand.
+    ENDIF
+  ENDIF
+ENDIF
+IFPREVERB2 PUT 14
+  ECHO PLAYER Which gravestone? SEARCH GRAVESTONES to find the one that matches your token, then PUT it ON that gravestone -- for example, PUT SUNRISE TOKEN ON SUNRISE GRAVESTONE.
+ENDIF
+IFPREVERB2 PUT 20
+  EQUAL DUMMY1 9320
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 21
+  EQUAL DUMMY1 9321
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 22
+  EQUAL DUMMY1 9322
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 23
+  EQUAL DUMMY1 9323
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 24
+  EQUAL DUMMY1 9324
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 25
+  EQUAL DUMMY1 9325
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 26
+  EQUAL DUMMY1 9326
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 27
+  EQUAL DUMMY1 9327
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 28
+  EQUAL DUMMY1 9328
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 29
+  EQUAL DUMMY1 9329
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 30
+  EQUAL DUMMY1 9330
+  CALL 9300
+ENDIF
+IFPREVERB2 PUT 31
+  EQUAL DUMMY1 9331
+  CALL 9300
+ENDIF
+
+; ── Cyclic events (keep last — see FALLFEST.SCR) ─────────────────────────────
+
+; CEVENT 9300: Marren's lantern hint. A GM types @set HWHINT 1; within ~30s a
+; ghostly lantern-light drifts toward the current stage's location, as seen
+; from every cemetery room, then HWHINT resets to 0.
+CEVENT 9300 10 310
+IFVAR HWHINT = 1
+  EQUAL HWHINT 0
+  IFVAR HWLANTERN = 2
+    AFFECT 287
+    ECHO ALL Beyond the chained gate, a hooded lantern glimmers among the graves and drifts deeper into the cemetery.
+    AFFECT 299
+    ECHO ALL A faint lantern-light bobs away from you along the trail to the southwest.
+    AFFECT 300
+    ECHO ALL A ghostly lantern-light hovers for a moment over the skull beside the broken obelisk, then winks out.
+    AFFECT 301
+    ECHO ALL A faint lantern-light glimmers to the east, back toward the broken obelisk.
+    AFFECT 302
+    ECHO ALL A faint lantern-light glimmers off to the northeast.
+    AFFECT 307
+    ECHO ALL A faint lantern-light glimmers off to the east.
+    AFFECT 308
+    ECHO ALL Through the broken wall you glimpse a lantern-light drifting away to the east.
+    AFFECT 309
+    ECHO ALL A faint lantern-light glimmers to the south.
+    AFFECT 310
+    ECHO ALL Below the hillock, a faint lantern-light drifts south along the trail.
+  ENDIF
+  IFVAR HWLANTERN = 3
+    AFFECT 287
+    ECHO ALL Beyond the chained gate, a hooded lantern glimmers among the graves and drifts deeper into the cemetery.
+    AFFECT 299
+    ECHO ALL A faint lantern-light bobs away from you along the trail to the southwest.
+    AFFECT 300
+    ECHO ALL A faint lantern-light drifts away to the west, under the hanging willow.
+    AFFECT 301
+    ECHO ALL A faint lantern-light drifts north, toward a great grey-leaved tree.
+    AFFECT 302
+    ECHO ALL A faint lantern-light glimmers off to the northeast.
+    AFFECT 307
+    ECHO ALL A faint lantern-light glimmers off to the east.
+    AFFECT 308
+    ECHO ALL Through the broken wall you glimpse a lantern-light drifting away to the east.
+    AFFECT 309
+    ECHO ALL A ghostly lantern-light sinks slowly down among the roots of the Maytan tree, then winks out.
+    AFFECT 310
+    ECHO ALL Below the hillock, a faint lantern-light hovers by the grey-leaved tree to the south.
+  ENDIF
+  IFVAR HWLANTERN = 4
+    AFFECT 287
+    ECHO ALL Beyond the chained gate, a hooded lantern glimmers among the graves and drifts deeper into the cemetery.
+    AFFECT 299
+    ECHO ALL A faint lantern-light bobs away from you along the trail to the southwest.
+    AFFECT 300
+    ECHO ALL A faint lantern-light drifts away to the west, under the hanging willow.
+    AFFECT 301
+    ECHO ALL A faint lantern-light drifts away to the southwest, past the empty grave.
+    AFFECT 302
+    ECHO ALL A faint lantern-light drifts west, toward a crumbling granite house.
+    AFFECT 307
+    ECHO ALL A ghostly lantern-light drifts through the collapsed wall into the ruined house.
+    AFFECT 308
+    ECHO ALL A ghostly lantern-light hovers over the remains of the rusted bed, then sinks into the floor beneath it.
+    AFFECT 309
+    ECHO ALL A faint lantern-light glimmers to the south.
+    AFFECT 310
+    ECHO ALL Below the hillock, a faint lantern-light drifts south along the trail.
+  ENDIF
+  IFVAR HWLANTERN > 4
+    IFVAR HWLANTERN < 8
+      AFFECT 287
+      ECHO ALL Beyond the chained gate, a hooded lantern glimmers among the graves and drifts deeper into the cemetery.
+      AFFECT 299
+      ECHO ALL A faint lantern-light bobs away from you along the trail to the southwest.
+      AFFECT 300
+      ECHO ALL A faint lantern-light drifts away to the west, under the hanging willow.
+      AFFECT 301
+      ECHO ALL A faint lantern-light drifts north, past the grey-leaved tree.
+      AFFECT 302
+      ECHO ALL A faint lantern-light glimmers off to the northeast.
+      AFFECT 307
+      ECHO ALL A faint lantern-light glimmers off to the east.
+      AFFECT 308
+      ECHO ALL Through the broken wall you glimpse a lantern-light drifting away to the east.
+      AFFECT 309
+      ECHO ALL A faint lantern-light drifts north, up toward the mausoleum on the hillock.
+      AFFECT 310
+      IFVAR HWLANTERN = 5
+        ECHO ALL A ghostly lantern-light drifts around behind the mausoleum, into the tall weeds, and is gone.
+      ENDIF
+      IFVAR HWLANTERN = 6
+        ECHO ALL A ghostly lantern-light hovers above the iron-bound chest. Somewhere, very faintly, someone whispers a name: "Marren..."
+      ENDIF
+      IFVAR HWLANTERN = 7
+        ECHO ALL A ghostly lantern-light drifts slowly from grave to grave among the broken stones, as if searching.
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF

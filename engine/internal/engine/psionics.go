@@ -110,7 +110,16 @@ func FindPsiByID(id int) *PsiDiscipline {
 // doPreparePsi handles PSI [discipline#|name].
 // With no args: lists known disciplines and active maintained powers.
 // With a number or name: activates the discipline. For maintained powers, toggles on/off.
-func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandResult) {
+	// Selecting or activating a discipline (not releasing one, and not a refusal)
+	// draws an Ephemeral onto the physical plane — see ephemeral.go.
+	committed := false
+	defer func() {
+		if committed {
+			res = ephemeralGoOnOffense(player, res)
+		}
+	}()
+
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't use psionics while dead."}}
 	}
@@ -128,6 +137,12 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult 
 	// No args: list disciplines
 	if len(args) == 0 {
 		return e.listPsiDisciplines(player)
+	}
+
+	// Preparing (or toggling) a discipline is an action — not allowed during round time.
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(time.Until(player.RoundTimeExpiry).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
 
 	// Try to find discipline by number first, then by name
@@ -190,6 +205,8 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) *CommandResult 
 	if player.Psi < disc.PsiCost {
 		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough psi points. (%s costs %d, you have %d)", disc.Name, disc.PsiCost, player.Psi)}}
 	}
+
+	committed = true
 
 	// Instantaneous powers that don't need a target activate immediately
 	if isMaintained {
@@ -351,7 +368,16 @@ func (e *GameEngine) listPsiDisciplines(player *Player) *CommandResult {
 }
 
 // doProjectPsi handles PROJECT [target].
-func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []string) *CommandResult {
+func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []string) (res *CommandResult) {
+	// A projection that actually goes off (psi spent) keeps an Ephemeral on the
+	// physical plane — see ephemeral.go.
+	committed := false
+	defer func() {
+		if committed && res != nil && !res.TargetNotFound {
+			res = ephemeralGoOnOffense(player, res)
+		}
+	}()
+
 	// Give a carried item's own universal IFPREVERB PROJECT -1 script (e.g. item
 	// 925, "the object") a chance to hijack the attempt before the psionics
 	// preconditions below — the item's reaction isn't tied to having a discipline
@@ -400,6 +426,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 
 	// Deduct psi — keep discipline prepared for re-use (psi retains last power)
 	player.Psi -= disc.PsiCost
+	committed = true
 
 	// Skill check
 	psiSkill := player.Skills[26]
@@ -468,7 +495,10 @@ func (e *GameEngine) projectImmobilize(player *Player, args []string) *CommandRe
 	targetName := strings.Join(args, " ")
 
 	// Try monster first
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst != nil {
 		inst.Sedated = true // use Sedated to prevent movement/wandering
 		name := FormatMonsterName(def, e.monAdjs)
@@ -575,7 +605,10 @@ func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []s
 		return &CommandResult{Messages: []string{"Project at what? Specify a target."}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		// Try player target
 		found := e.findPlayerInRoom(player, targetName)

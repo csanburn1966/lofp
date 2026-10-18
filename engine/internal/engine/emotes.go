@@ -160,6 +160,10 @@ var raceEmotes = map[string]emoteEntry{
 	"2:RUBEARS": {Self: "You rub the points of your ears.", Room: "%N rubs the points of %P ears."},
 	// Highlander
 	"3:PULLBEARD": {Self: "You pull on your beard.", Room: "%N pulls on %P beard."},
+	// Mechanoid — room lines from the captures ("Alpe beeps and whirrs.")
+	"7:BEEP":  {Self: "You beep and whirr.", Room: "%N beeps and whirrs."},
+	"7:CLICK": {Self: "You click and beep.", Room: "%N clicks and beeps."},
+	"7:BUZZ":  {Self: "You buzz and click.", Room: "%N buzzes and clicks."},
 	// Wolf form emotes (wolfling)
 	"4:SCRATCH": {Self: "You scratch behind your ear.", Room: "%N scratches behind %P ear."},
 	"4:BARE":    {Self: "You bare your fangs.", Room: "%N bares %P fangs."},
@@ -292,6 +296,9 @@ func (e *GameEngine) processEmote(player *Player, verb string, args []string) *C
 	// Mist Form / Slime Form block every emote, even a smile — a cloud of mist
 	// or a shapeless slime has no face to smile with.
 	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	if msg := unemotedEmoteBlock(player, verb); msg != "" {
 		return &CommandResult{Messages: []string{msg}}
 	}
 

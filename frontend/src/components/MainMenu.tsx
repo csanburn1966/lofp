@@ -518,7 +518,7 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
         )}
         <div className="mt-6 text-center">
           <button onClick={onVersionNotes} className="text-gray-600 hover:text-amber-400 text-xs font-mono">
-            Version 13.4.0 &mdash; Version Notes
+            Version 15.0.0 &mdash; Version Notes
           </button>
           <span className="text-gray-700 mx-2">|</span>
           <a href="/manual" className="text-gray-600 hover:text-amber-400 text-xs font-mono">
@@ -553,12 +553,12 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
               </p>
               <div className="bg-black border border-[#444] rounded p-4 font-mono text-sm mb-4">
                 <div className="text-gray-400 mb-1">Telnet:</div>
-                <div className="text-green-400 select-all mb-1">telnet lofp.metavert.io 4000</div>
+                <div className="text-green-400 select-all mb-1">telnet {window.location.hostname} 4000</div>
                 <div className="text-gray-500 text-xs mb-3">Unencrypted. Use port 4001 with SSL/TLS for a secure connection.</div>
                 <div className="text-gray-400 mb-1">SSH:</div>
-                <div className="text-green-400 select-all mb-3">ssh -p 4022 play@lofp.metavert.io</div>
+                <div className="text-green-400 select-all mb-3">ssh -p 4022 play@{window.location.hostname}</div>
                 <div className="text-gray-400 mb-1">Mudlet / other MUD clients:</div>
-                <div className="text-gray-300 text-xs">Server: <span className="text-green-400 select-all">lofp.metavert.io</span></div>
+                <div className="text-gray-300 text-xs">Server: <span className="text-green-400 select-all">{window.location.hostname}</span></div>
                 <div className="text-gray-300 text-xs">Port: <span className="text-green-400 select-all">4000</span> (plain) or <span className="text-green-400 select-all">4001</span> (SSL/TLS &mdash; check &ldquo;Secure&rdquo; in Mudlet)</div>
               </div>
               <p className="text-gray-500 font-mono text-xs mb-4">

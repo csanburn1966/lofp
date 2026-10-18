@@ -23,7 +23,17 @@ func (e *GameEngine) doEmoteWithScripts(ctx context.Context, player *Player, ver
 			return result
 		}
 	}
-	// Check room-level bare-verb scripts (IFVERB/IFPREVERB VERB -1)
+	return e.doRoomVerbScriptsThenEmote(player, verb, args)
+}
+
+// doRoomVerbScriptsThenEmote runs the room's bare-verb scripts (IFVERB/IFPREVERB VERB -1)
+// and then the plain emote, unless a script blocked it (CLEARVERB). This is the second half
+// of doEmoteWithScripts, split out for verbs that do their own item-target handling first
+// (WAVE, TAP, RUB, PULL, ...) and must not run the target's scripts a second time — e.g.
+// FAYD.SCR room 3630's "IFPREVERB WAVE -1" violinist never fired because bare WAVE went
+// straight to processEmote.
+func (e *GameEngine) doRoomVerbScriptsThenEmote(player *Player, verb string, args []string) *CommandResult {
+	room := e.rooms[player.RoomNumber]
 	if room != nil {
 		sc := e.RunRoomVerbScripts(player, room, verb)
 		if len(sc.DeferredSegments) > 0 {
@@ -46,6 +56,33 @@ func (e *GameEngine) doEmoteWithScripts(ctx context.Context, player *Player, ver
 		}
 	}
 	return e.processEmote(player, verb, args)
+}
+
+// doPullPlayerUp handles PULL <player> on someone who is lying down: it helps them
+// to their feet. Returns nil (caller falls back to the normal PULL emote) when the
+// target isn't a player here, isn't lying down, or can't be raised — dead,
+// unconscious, asleep, or held down by Plant Snare/webs/tentacles (Entangles) or
+// Immobilize/Imprisonment Rune (Immobilized).
+func (e *GameEngine) doPullPlayerUp(ctx context.Context, player *Player, args []string) *CommandResult {
+	if len(args) == 0 {
+		return nil
+	}
+	target := e.findPlayerInRoom(player, strings.ToLower(strings.Join(args, " ")))
+	if target == nil || target == player || target.Position != 2 {
+		return nil
+	}
+	if target.Dead || target.Unconscious || target.Sleeping || target.Immobilized || len(target.Entangles) > 0 {
+		return nil
+	}
+	target.Position = 0
+	target.KnockedDown = false // same as STAND — the knockdown penalty lasts until you're up
+	e.SavePlayer(ctx, target)
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You help %s to %s feet.", target.DisplayName(), target.Possessive())},
+		RoomBroadcast: []string{fmt.Sprintf("%s helps %s to %s feet.", player.DisplayNameCap(), target.DisplayName(), target.Possessive())},
+		TargetName:    target.FirstName,
+		TargetMsg:     []string{fmt.Sprintf("%s helps you to your feet.", player.DisplayNameCap())},
+	}
 }
 
 // runVerbScriptsForTarget finds a named target in the room or player inventory and runs all
@@ -155,7 +192,7 @@ func (e *GameEngine) runVerbScriptsForTarget(ctx context.Context, player *Player
 			}
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits,
 				State: itemState}
 			result := &CommandResult{}
@@ -269,12 +306,16 @@ func (e *GameEngine) doSayTo(player *Player, args []string, rawInput string) *Co
 	if text == "" {
 		return &CommandResult{Messages: []string{"Say what to whom?"}}
 	}
-	roomLine := fmt.Sprintf("%s says to %s, \"%s\"", player.DisplayNameCap(), found.DisplayName(), text)
+	verb, thirdVerb := "say", "says"
+	if player.IsUnemoted() {
+		verb, thirdVerb = "intone", "intones"
+	}
+	roomLine := fmt.Sprintf("%s %s to %s, \"%s\"", player.DisplayNameCap(), thirdVerb, found.DisplayName(), text)
 	if player.IsConcealed() {
-		roomLine = fmt.Sprintf("Something says to %s, \"%s\"", found.DisplayName(), text)
+		roomLine = fmt.Sprintf("Something %s to %s, \"%s\"", thirdVerb, found.DisplayName(), text)
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You say to %s, \"%s\"", found.DisplayName(), text)},
+		Messages:      []string{fmt.Sprintf("You %s to %s, \"%s\"", verb, found.DisplayName(), text)},
 		RoomBroadcast: []string{roomLine},
 		// roomLine is already anonymized above for a concealed speaker, so this
 		// opts out of api.go's default choke-point suppression.
@@ -1098,6 +1139,9 @@ var helpTopics = map[string][]string{
 		"EAT, DRINK, WEAR, REMOVE, WIELD, UNWIELD",
 		"TOUCH, PUSH, PULL, TURN, RUB, TAP, FLIP",
 		"LATCH, UNLATCH, MARK, SKIN, APPRAISE, USE",
+		"TIME, WEATHER",
+		"DATECVT <month-day-year> [time]: convert a real date to the in-game calendar",
+		"DATECVT GAME <month-day-year> [time]: convert an in-game date to a real date",
 	},
 }
 
@@ -1130,7 +1174,7 @@ func (e *GameEngine) doThink(player *Player, rawInput string) *CommandResult {
 	}
 }
 
-func (e *GameEngine) doCant(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doCant(player *Player, args []string, rawInput string) *CommandResult {
 	if msg := formActionBlockMessage(player); msg != "" {
 		return &CommandResult{Messages: []string{msg}}
 	}
@@ -1141,12 +1185,17 @@ func (e *GameEngine) doCant(player *Player, args []string) *CommandResult {
 	if player.Skills[21] < 6 && player.Skills[5] < 1 && !player.IsGM {
 		return &CommandResult{Messages: []string{"You don't know how to speak in cant."}}
 	}
-	text := strings.Join(args, " ")
+	// Keep the speaker's original case (args arrive upper-cased).
+	text := extractRawArgs(rawInput, 1)
+	if text == "" {
+		text = strings.Join(args, " ")
+	}
+	// No RoomBroadcast: those who can't understand cant see nothing at all, so the
+	// speaker isn't given away. Those who can get CantMsg (delivered in api.go).
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You cant, \"%s\"", text)},
-		RoomBroadcast: []string{fmt.Sprintf("%s mutters something under their breath.", player.DisplayName())},
-		CantMsg:       text,
-		CantSender:    player.FirstName,
+		Messages:   []string{fmt.Sprintf("You cant, \"%s\"", text)},
+		CantMsg:    text,
+		CantSender: player.FirstName,
 	}
 }
 
@@ -1169,7 +1218,7 @@ func (e *GameEngine) doSpeech(ctx context.Context, player *Player, args []string
 }
 
 func (e *GameEngine) doInfo(player *Player) *CommandResult {
-	return &CommandResult{Messages: []string{
+	return &CommandResult{Messages: append([]string{
 		fmt.Sprintf("Name: %s", player.FullName()),
 		fmt.Sprintf("Race: %s   Gender: %s   Level: %d", player.RaceName(), genderName(player.Gender), player.Level),
 		"",
@@ -1180,7 +1229,7 @@ func (e *GameEngine) doInfo(player *Player) *CommandResult {
 		fmt.Sprintf("Mana: %d/%d   Psi: %d/%d", player.Mana, player.MaxMana, player.Psi, player.MaxPsi),
 		"",
 		fmt.Sprintf("Experience: %d   Build Points: %d", player.Experience, player.Experience/100),
-	}}
+	}, player.cyberwareLines()...)}
 }
 
 func isSelfOr(isSelf bool, selfText, otherText string) string {

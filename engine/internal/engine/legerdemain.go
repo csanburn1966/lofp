@@ -51,7 +51,8 @@ const legerdemainMaxChance = 95
 
 // roomIsUnlitDark reports whether a room's script lighting is DARKNESS
 // (GMSCRIPT.DOC) and nothing in it is giving off light — no LIT item carried
-// by anyone present, or lying in the room.
+// by anyone present or lying in the room, and nobody present glowing with a
+// Light spell (113). See darkness.go.
 func (e *GameEngine) roomIsUnlitDark(roomNum int) bool {
 	room := e.rooms[roomNum]
 	if room == nil || room.Lighting != "DARKNESS" {
@@ -66,6 +67,9 @@ func (e *GameEngine) roomIsUnlitDark(roomNum int) bool {
 		for _, p := range e.sessions.OnlinePlayers() {
 			if p.RoomNumber != roomNum {
 				continue
+			}
+			if p.LightSpellActive() {
+				return false
 			}
 			if p.Wielded != nil && p.Wielded.State == "LIT" || p.OffHand != nil && p.OffHand.State == "LIT" {
 				return false
@@ -171,7 +175,7 @@ func legerdemainBusy(player *Player) *CommandResult {
 // chance) and returns the outcome plus the "[Success: N%, Roll: R] Success!"
 // line shown to the player.
 func (e *GameEngine) legerdemainRoll(player, victim *Player) (bool, string) {
-	chance := max(e.legerdemainChance(player, victim), 0)
+	chance := max(e.legerdemainChance(player, victim)+unemoteSkillBonus(player), 0)
 	roll := rand.Intn(100) + 1
 	ok := roll <= chance
 	verdict := "Failure!"

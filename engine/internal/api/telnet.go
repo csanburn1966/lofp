@@ -1085,6 +1085,7 @@ func (s *Server) handleTelnetConn(rawConn net.Conn, isTLS bool) {
 		tc.sendGMCPRoomInfo(enterResult, player.RoomNumber)
 		tc.mu.Unlock()
 	}
+	s.deliverReportReplies(ctx, session)
 
 	// Command loop
 	s.telnetCommandLoop(ctx, session, tc)

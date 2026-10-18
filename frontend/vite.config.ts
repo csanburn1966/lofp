@@ -10,7 +10,9 @@ export default defineConfig({
     host: true, // Listen to local network
     allowedHosts: ['lofp.sanburnlab.com'], // Trusted subdomain
     proxy: {
-      '/api': 'http://localhost:4993',
+      // Trailing slash matters: a bare '/api' prefix also swallows the
+      // frontend's own /api-docs page and sends it to the backend (404).
+      '/api/': 'http://localhost:4993',
       '/healthz': 'http://localhost:4993',
       '/ws': {
         target: 'http://localhost:4993',

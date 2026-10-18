@@ -1,5 +1,7 @@
 package gameworld
 
+import "time"
+
 // Room represents a game room parsed from script files.
 type Room struct {
 	Number           int               `bson:"number" json:"number"`
@@ -64,6 +66,14 @@ type RoomItem struct {
 	// (castSigilSpell in engine/spells.go) — distinct from SigilOwner, which is whoever
 	// later claims it by touch. Used by Truename to reveal who created the glyph.
 	SigilCaster string `bson:"sigilCaster,omitempty" json:"sigilCaster,omitempty"`
+	// BladeSpell* mirror the same fields on engine.InventoryItem (a timed Storm/
+	// Inferno/Winter Blade imbue). Carried here so a weapon set on the floor keeps
+	// its expiry — without them the spell's Val3/Val5 stuck permanently once the
+	// weapon was dropped and picked back up.
+	BladeSpellExpiry     time.Time `bson:"bladeSpellExpiry,omitempty" json:"bladeSpellExpiry,omitempty"`
+	BladeSpellPrevVal3   int       `bson:"bladeSpellPrevVal3,omitempty" json:"bladeSpellPrevVal3,omitempty"`
+	BladeSpellPrevVal5   int       `bson:"bladeSpellPrevVal5,omitempty" json:"bladeSpellPrevVal5,omitempty"`
+	BladeSpellAdjApplied bool      `bson:"bladeSpellAdjApplied,omitempty" json:"bladeSpellAdjApplied,omitempty"`
 }
 
 // StoreItem represents a purchasable item in a shop room.

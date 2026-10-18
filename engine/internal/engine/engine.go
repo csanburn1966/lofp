@@ -20,7 +20,7 @@ import (
 
 // GameVersion is the release version reported by the VERSION command and the
 // telnet GMCP Core.Hello. Keep in sync with MainMenu.tsx / VersionNotes.tsx.
-const GameVersion = "13.4.0"
+const GameVersion = "15.0.0"
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z'-]{2,19}$`) // min 3 chars total
 
@@ -156,6 +156,13 @@ type GameEngine struct {
 	seasonalRooms             map[string][]gameworld.Room        // per-season room overrides
 	currentSeason             string                             // current active season key
 	cevents                   []gameworld.CEvent
+	// Disk-script definitions captured at startup, before any GM script is applied —
+	// what disabling a GM script restores (see gm_scripts.go: revertScriptEntities).
+	baseRooms                 map[int]*gameworld.Room
+	baseItems                 map[int]*gameworld.ItemDef
+	baseMonsters              map[int]*gameworld.MonsterDef
+	baseMacros                map[int][]gameworld.ScriptBlock
+	baseCEvents               []gameworld.CEvent
 	macros                    map[int][]gameworld.ScriptBlock // macro# -> scripts, for inline CALL N actions
 	forageDefs                []gameworld.ForageDef
 	regions                   map[int]*gameworld.Region
@@ -490,6 +497,7 @@ func NewGameEngine(db *mongo.Database, parsed *gameworld.ParsedData) *GameEngine
 	for _, m := range parsed.Macros {
 		e.macros[m.ID] = m.Scripts
 	}
+	e.snapshotBaseDefinitions()
 
 	// Load organization definitions
 	e.orgDefs = make(map[int]*gameworld.OrgDef)
@@ -559,6 +567,9 @@ type CommandResult struct {
 	GlobalBroadcast []string `json:"-"`
 	// GMBroadcast: sent to all online GMs.
 	GMBroadcast []string `json:"-"`
+	// GMChannelMsg: sent to every other GM listening on the @GM channel.
+	GMChannelMsg    []string `json:"-"`
+	GMChannelSender string   `json:"-"`
 	// TelepathyMsg: telepathy message to send to telepathy-enabled players.
 	TelepathyMsg    string `json:"-"`
 	TelepathySender string `json:"-"`
@@ -651,9 +662,18 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	isQuoteSpeech := strings.HasPrefix(input, "'") || strings.HasPrefix(input, "\"")
 	isSayVerb := len(input) >= 3 && strings.EqualFold(input[:3], "say") && (len(input) == 3 || input[3] == ' ')
 
+	// DEPART and REPORT must always work — they're the way out of (and the way
+	// to tell us about) a stuck state, so no dead/unconscious/stun gate below
+	// may block them. Neither handler checks roundtime either.
+	firstVerb := ""
+	if f := strings.Fields(input); len(f) > 0 {
+		firstVerb = resolveVerb(strings.ToUpper(f[0]))
+	}
+	alwaysAllowed := firstVerb == "DEPART" || firstVerb == "REPORT"
+
 	// Dead players can only DEPART, LOOK, WHO, QUIT, EXP, STATUS, HEALTH — unless
 	// Speak with Dead (spell 311) has granted them the power of speech.
-	if player.Dead {
+	if player.Dead && !alwaysAllowed {
 		isSpeech := isQuoteSpeech || isSayVerb
 		if !(isSpeech && player.SpeakWhileDead) {
 			verb := strings.ToUpper(strings.Fields(input)[0])
@@ -670,7 +690,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	// driven them below 0 kills instead, see resolveDirectHitOutcome) can only LOOK, WHO,
 	// QUIT, EXP, STATUS, HEALTH, HELP — no speech, no actions — until they're healed
 	// back above 0 or natural regen gets them there (wakeFromUnconscious).
-	if player.Unconscious {
+	if player.Unconscious && !alwaysAllowed {
 		verb := strings.ToUpper(strings.Fields(input)[0])
 		switch verb {
 		case "LOOK", "WHO", "QUIT", "EXP", "EXPERIENCE", "STATUS", "HEALTH", "HELP":
@@ -686,7 +706,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	// blocklist so movement directions, room-script verbs and anything added
 	// later default to blocked. Speech/telepathy and pure info commands stay
 	// allowed; GM @commands are exempt.
-	if player.Stunned && !isQuoteSpeech && !isSayVerb && !strings.HasPrefix(input, "@") {
+	if player.Stunned && !alwaysAllowed && !isQuoteSpeech && !isSayVerb && !strings.HasPrefix(input, "@") {
 		verb := resolveVerb(strings.ToUpper(strings.Fields(input)[0]))
 		if !stunAllowedVerbs[verb] {
 			return &CommandResult{Messages: []string{"You are stunned and cannot do that until the stun wears off!"}}
@@ -729,8 +749,15 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				verb, thirdVerb = "snarl", "snarls"
 			}
 		}
+		// An unemoted mechanoid intones everything — statements, questions and
+		// exclamations alike (GM updates #22; captures: Warsprite intones, "do we
+		// have any other kind ?") — overriding any custom speech pattern.
+		unemoted := player.IsUnemoted() && !player.WolfForm
+		if unemoted {
+			verb, thirdVerb = "intone", "intones"
+		}
 		// Custom speech pattern overrides the verb (e.g., "says grimly", "squawks")
-		if player.SpeechAdverb != "" && !player.WolfForm {
+		if player.SpeechAdverb != "" && !player.WolfForm && !unemoted {
 			// A concealed speaker (Hidden/Invisible/@hide/@invis) never leaks their name or
 			// custom speech verb to onlookers — just the generic "Something says/asks/exclaims".
 			roomLine := fmt.Sprintf("%s %ss, \"%s\"", player.DisplayNameCap(), player.SpeechAdverb, msg)
@@ -1131,10 +1158,12 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		greatMoon := moonPhases[GameDay()%8]
 		phulcrus := moonPhases[(GameDay()+4)%8]
 		return &CommandResult{Messages: []string{
-			fmt.Sprintf("It is %s %d, %d (Year of the Wyrm).", GameMonthName(), GameDay()%28+1, GameYear()),
+			fmt.Sprintf("It is %s (Year of the Wyrm).", GameDateText()),
 			fmt.Sprintf("It is %s. The season is %s.", TimePeriod(), SeasonName()),
 			fmt.Sprintf("The Great Moon is %s and Phulcrus is %s.", greatMoon, phulcrus),
 		}}
+	case "DATECVT":
+		return e.doDateCvt(args)
 	case "WEATHER":
 		return e.doWeather(player)
 	case "PAY":
@@ -1189,7 +1218,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				return e.doHold(player, found)
 			}
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	case "SING":
 		// If args provided, treat as SAY variant with sing/sings
 		if len(args) > 0 {
@@ -1226,7 +1255,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			}
 			return &CommandResult{Messages: selfMsgs, RoomBroadcast: roomMsgs}
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	case "PLAY":
 		// Let a named item's own script (e.g. item 631's IFPREVERB PLAY -1, which
 		// distinguishes wielded vs not-wielded) run before falling back to the generic
@@ -1267,7 +1296,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				}
 			}
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	case "TAP":
 		// If wielding a staff in a dark room, produce light flavor text
 		if player.Wielded != nil {
@@ -1295,7 +1324,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		if len(args) > 0 {
 			return e.doItemInteraction(ctx, player, "TAP", args)
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	// Roleplay verbs — dispatched via emote table
 	case "PICK":
 		if len(args) > 0 {
@@ -1309,7 +1338,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				return result
 			}
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	case "WRITE":
 		// "WRITE <item> WITH <text>" inscribes a WRITEABLE item (item 940's plain
 		// note, etc.) for later READ — see doWriteNote. It returns nil for anything
@@ -1322,7 +1351,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				return result
 			}
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
 	case "SMILE", "BOW", "CURTSEY", "CURTSY", "NOD", "LAUGH", "CHUCKLE",
 		"GRIN", "FROWN", "SIGH", "SHRUG", "WINK", "CRY", "DANCE",
 		"HUG", "KISS", "POKE", "TICKLE", "SLAP", "HOWL",
@@ -1351,7 +1380,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		"DIZZY", "BAT", "FLAIL", "WAKE", "SOB",
 		// Race-specific emotes (handled by race check in processEmote)
 		"FLICK", "BARE", "SPREAD", "FOLD", "SWISH",
-		"RUBEARS", "PULLBEARD", "SCENT", "WHINE", "DROOP", "CHASE":
+		"RUBEARS", "PULLBEARD", "SCENT", "WHINE", "DROOP", "CHASE",
+		"BEEP", "CLICK", "BUZZ":
 		return e.doEmoteWithScripts(ctx, player, verb, args)
 	case "ACT":
 		if len(args) == 0 {
@@ -1372,26 +1402,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		// ActBrief preference strips the parens in filterBroadcastForPlayer.
 		broadcastMsg := fmt.Sprintf("(%s %s)", actName, action)
 		return &CommandResult{Messages: []string{selfMsg}, RoomBroadcast: []string{broadcastMsg}}
-	case "EMOTE":
-		if player.Race != RaceMechanoid {
-			return &CommandResult{Messages: []string{"Only mechanoids can toggle their emotional state."}}
-		}
-		if player.Emotional {
-			return &CommandResult{Messages: []string{"You are already in emotional mode."}}
-		}
-		player.Emotional = true
+	case "EMOTE", "UNEMOTE":
+		result := e.doEmoteMode(player, verb == "EMOTE")
 		e.SavePlayer(ctx, player)
-		return &CommandResult{Messages: []string{"You engage your emotional subroutines."}}
-	case "UNEMOTE":
-		if player.Race != RaceMechanoid {
-			return &CommandResult{Messages: []string{"Only mechanoids can toggle their emotional state."}}
-		}
-		if !player.Emotional {
-			return &CommandResult{Messages: []string{"Your emotional subroutines are already disengaged."}}
-		}
-		player.Emotional = false
-		e.SavePlayer(ctx, player)
-		return &CommandResult{Messages: []string{"You disengage your emotional subroutines."}}
+		return result
 	case "RECITE":
 		if len(args) == 0 {
 			return &CommandResult{Messages: []string{"Recite what?"}}
@@ -1426,8 +1440,14 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 		return &CommandResult{Messages: selfMsgs, RoomBroadcast: roomMsgs}
 	case "READ":
+		if e.tooDarkToSee(player) { // darkness.go
+			return tooDarkResult()
+		}
 		return e.doRead(player, args)
 	case "SEARCH":
+		if e.tooDarkToSee(player) {
+			return tooDarkResult()
+		}
 		if player.RoundTimeExpiry.After(time.Now()) {
 			remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 			return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
@@ -1443,14 +1463,12 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		searchRT := applyRoundTime(player, 5)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(searchRT) * time.Second)
 		msgs := []string{"You search the area.", fmt.Sprintf("[Round: %d sec]", searchRT)}
-		perceptionCheck := player.Perception + effectiveStealthSkill(player)*5 // Stealth skill helps detection
+		concealBonus := e.hideConcealmentBonus(player.RoomNumber, player)
 		var revealed []string
 		if e.sessions != nil {
 			for _, p := range e.sessions.OnlinePlayers() {
 				if p.RoomNumber == player.RoomNumber && p.Hidden && !p.EtherealActive && p.FirstName != player.FirstName {
-					// Perception vs their stealth
-					stealthRating := p.Agility + effectiveStealthSkill(p)*5
-					if rand.Intn(100)+perceptionCheck > stealthRating {
+					if rand.Intn(100) < searchFindChance(player, p, concealBonus) {
 						p.Hidden = false
 						revealed = append(revealed, p.FirstName)
 					}
@@ -1480,7 +1498,19 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		if result != nil && len(result.Messages) > 0 && result.Messages[0] != "You don't see that here." {
 			return result
 		}
-		return e.processEmote(player, verb, args)
+		return e.doRoomVerbScriptsThenEmote(player, verb, args)
+	case "POP", "RIP", "LIFT", "PRY":
+		// Script-only verbs: they do nothing on their own, but items define IFPREVERB
+		// blocks for them (the balloon's RIP in ITEM1.SCR, FALLFEST.SCR's POP, and
+		// HALLOWEEN2026.SCR's LIFT/PRY SLAB). A trailing "with <tool>" ("pry slab with
+		// prybar") is dropped — the scripts check IFCARRY for the tool themselves.
+		for i, a := range args {
+			if strings.EqualFold(a, "with") && i > 0 {
+				args = args[:i]
+				break
+			}
+		}
+		return e.doItemInteraction(ctx, player, verb, args)
 	case "PULL", "PUSH", "TWIST", "TOUCH", "DIG", "USE", "THUMP":
 		result := e.doItemInteraction(ctx, player, verb, args)
 		// If item interaction found nothing, fall back to emote for verbs that have emote entries
@@ -1488,7 +1518,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			return result
 		}
 		if verb == "THUMP" || verb == "TOUCH" || verb == "PULL" {
-			return e.processEmote(player, verb, args)
+			return e.doRoomVerbScriptsThenEmote(player, verb, args)
 		}
 		return result
 	case "TURN":
@@ -1666,6 +1696,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "UNDRESS":
 		return e.doUndress(ctx, player)
 	case "SKIN":
+		if e.tooDarkToSee(player) { // original: "skin mu" / "It is too dark to do that."
+			return tooDarkResult()
+		}
 		return e.doSkin(ctx, player, args)
 	// === INFO ===
 	case "BALANCE":
@@ -1715,7 +1748,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "THINK":
 		return e.doThink(player, input)
 	case "TELEPATHY":
-		if player.Race == RaceEphemeral { // Ephemeral - innate
+		if player.hasInnateTelepathy() { // Ephemeral or Telepathor (cyberware.go): switch it on/off
 			player.TelepathyActive = !player.TelepathyActive
 			e.SavePlayer(ctx, player)
 			if player.TelepathyActive {
@@ -1732,7 +1765,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "DEPART":
 		return e.doDepart(player)
 	case "CANT":
-		return e.doCant(player, args)
+		return e.doCant(player, args, input)
 	// === COMBAT ===
 	case "ATTACK", "KILL", "SLAY", "SMITE", "HIT":
 		if len(args) == 0 {
@@ -2030,6 +2063,7 @@ var allVerbs = []string{
 	"BRIEF", "FULL", "PROMPT", "WHO", "SKILLS", "WEALTH",
 	"QUIT", "HELP", "ADVICE", "ASSIST", "ANSWER", "ACT", "EMOTE", "RECITE", "READ", "CLIMB",
 	"PULL", "PUSH", "TURN", "TWIST", "RUB", "TAP", "TOUCH", "SEARCH", "DIG", "RECALL", "USE", "PRAY",
+	"POP", "RIP", "LIFT", "PRY",
 	"CAST", "CONCENTRATE", "BUY", "SELL", "PAY",
 	"DRINK", "SIP", "LIGHT", "EXTINGUISH", "DOUSE",
 	"FLIP", "LATCH", "UNLATCH",
@@ -2066,7 +2100,7 @@ var allVerbs = []string{
 	// Interaction
 	"GIVE", "EAT", "COUNT", "DEPART",
 	// Info
-	"TIME", "EXPERIENCE", "INFO", "WEATHER",
+	"TIME", "DATECVT", "EXPERIENCE", "INFO", "WEATHER",
 	// Roleplay verbs
 	"SMILE", "BOW", "CURTSEY", "WAVE", "NOD", "LAUGH", "CHUCKLE",
 	"GRIN", "FROWN", "SIGH", "SHRUG", "WINK", "CRY", "DANCE",
@@ -2103,6 +2137,7 @@ var allVerbs = []string{
 	// Race-specific
 	"FLICK", "BARE", "SPREAD", "FOLD", "SWISH",
 	"RUBEARS", "PULLBEARD", "SCENT", "WHINE", "DROOP",
+	"BEEP", "CLICK", "BUZZ",
 }
 
 // stunAllowedVerbs are the non-physical commands a stunned player may still
@@ -2112,7 +2147,7 @@ var stunAllowedVerbs = map[string]bool{
 	"LOOK": true, "EXAMINE": true, "INSPECT": true, "INVENTORY": true,
 	"STATUS": true, "HEALTH": true, "DIAGNOSE": true, "FATIGUE": true,
 	"WHO": true, "SKILLS": true, "WEALTH": true, "EXP": true, "EXPERIENCE": true,
-	"INFO": true, "TIME": true, "WEATHER": true, "SPELL": true, "LISTEN": true,
+	"INFO": true, "TIME": true, "DATECVT": true, "WEATHER": true, "SPELL": true, "LISTEN": true,
 	"HELP": true, "ADVICE": true, "QUIT": true, "REPORT": true, "SET": true,
 	"BRIEF": true, "FULL": true, "PROMPT": true, "UNPROMPT": true,
 	"ACTBRIEF": true, "RPBRIEF": true, "VERSION": true, "CREDITS": true,
@@ -2128,6 +2163,8 @@ var verbAliases = map[string]string{
 	"INV": "INVENTORY", "STAT": "STATUS", "UNUSE": "UNWIELD",
 	"DON": "WEAR", "EXIT": "QUIT", "SKILL": "SKILLS",
 	"WHI": "WHISPER", "THIN": "THINK", "CONTA": "CONTACT",
+	// Keep these abbreviations working now that BUZZ/CLICK (mechanoid emotes) share their prefixes.
+	"BU": "BUY", "CLI": "CLIMB",
 	"DI":    "DIAGNOSE",
 	"FAT":   "FATIGUE",
 	"ORDER": "BUY", "UNLIGHT": "EXTINGUISH", "IGNITE": "LIGHT",

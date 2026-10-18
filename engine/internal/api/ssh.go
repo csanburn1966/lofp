@@ -384,6 +384,7 @@ func (s *Server) handleSSHSession(channel ssh.Channel, remoteAddr string) {
 		enterResult.PlayerState = player
 		s.sendResult(session, enterResult)
 	}
+	s.deliverReportReplies(ctx, session)
 
 	// Command loop
 	s.sshCommandLoop(ctx, session, sc)

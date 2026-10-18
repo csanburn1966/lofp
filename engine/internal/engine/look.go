@@ -58,8 +58,9 @@ func (e *GameEngine) doLookFull(player *Player) *CommandResult {
 		return &CommandResult{Messages: []string{"You are in a void."}}
 	}
 	result := e.doLook(player)
-	// Always include the full description regardless of BriefMode
-	if !player.Dead && result.RoomDesc == "" {
+	// Always include the full description regardless of BriefMode — unless it's
+	// too dark to see it (doLook already said so).
+	if !player.Dead && result.RoomDesc == "" && !e.tooDarkToSee(player) {
 		result.RoomDesc = room.Description
 	}
 	return result
@@ -83,12 +84,21 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		return result
 	}
 
-	if !player.BriefMode {
+	// In an unlit DARKNESS room (darkness.go) only the name and exits show —
+	// matching the original's "[Name] / It is too dark to see anything. /
+	// Obvious exits: ..." — so the description, items, people and weather are all
+	// skipped, in the structured RoomDesc/Items fields as well as the text.
+	dark := e.tooDarkToSee(player)
+
+	if !player.BriefMode && !dark {
 		result.RoomDesc = room.Description
 	}
 
 	// List visible items
 	for _, ri := range room.Items {
+		if dark {
+			break
+		}
 		// Items PUT/NEWPUT inside a container aren't loose on the floor — they're
 		// only visible via LOOK IN/EXAMINE on the container that holds them.
 		if ri.IsPut {
@@ -117,7 +127,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 
 	// Collect other players in the room
 	var playersHere []string
-	if e.sessions != nil {
+	if e.sessions != nil && !dark {
 		for _, p := range e.sessions.OnlinePlayers() {
 			if p.RoomNumber != player.RoomNumber {
 				continue
@@ -193,10 +203,16 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 	if result.RoomDesc != "" {
 		msgs = append(msgs, descriptionToMessages(result.RoomDesc)...)
 	}
+	if dark {
+		msgs = append(msgs, tooDarkToSeeMsg)
+	}
 	// Players and monsters/NPCs are shown together in one sentence, matching the
 	// original format (see original/legends/shirla.cap, e.g. "You see Wolfbane and
 	// Delight."), followed by a separate items sentence.
-	peopleHere := append(playersHere, e.monsterNamesInRoom(player.RoomNumber)...)
+	var peopleHere []string
+	if !dark {
+		peopleHere = append(playersHere, e.monsterNamesInRoom(player.RoomNumber)...)
+	}
 	if len(peopleHere) > 0 {
 		msgs = append(msgs, "You see "+joinList(peopleHere)+".")
 	}
@@ -208,7 +224,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		msgs = append(msgs, capitalize(joinList(result.Items))+verb)
 	}
 	// Show weather for outdoor rooms
-	if weatherLine := e.GetRoomWeather(player.RoomNumber); weatherLine != "" {
+	if weatherLine := e.GetRoomWeather(player.RoomNumber); weatherLine != "" && !dark {
 		msgs = append(msgs, weatherLine)
 	}
 	if len(exits) > 0 {
@@ -239,6 +255,9 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 
 	// Check for directional look (LOOK N, LOOK NORTH, etc.)
 	if dir, ok := lookDirMap[target]; ok {
+		if e.tooDarkToSee(player) {
+			return tooDarkResult()
+		}
 		room := e.rooms[player.RoomNumber]
 		if room != nil {
 			destNum, hasExit := room.Exits[dir]
@@ -261,7 +280,14 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 				originalRoom := player.RoomNumber
 				player.RoomNumber = destNum
 				lookResult := e.doLookFull(player)
+				destDark := e.tooDarkToSee(player)
 				player.RoomNumber = originalRoom
+				if destDark {
+					// Peering into a dark room shows just its name — no exits
+					// (original/csanburn/badge.txt: "look sw" / "[Deep Forest]" /
+					// "It is too dark to see anything.").
+					return &CommandResult{Messages: []string{lookResult.RoomName, tooDarkToSeeMsg}}
+				}
 				return &CommandResult{Messages: lookResult.Messages}
 			}
 			return &CommandResult{Messages: []string{"You see nothing of interest in that direction."}}
@@ -271,6 +297,12 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 	// "look at me/myself" → examine self
 	if target == "me" || target == "myself" || target == "self" {
 		return e.examinePlayer(player, player)
+	}
+
+	// Every other LOOK/EXAMINE — at a player, monster, item, or IN/ON/UNDER a
+	// container — needs to see (original: "look in ches" / "It is too dark to do that.").
+	if e.tooDarkToSee(player) {
+		return tooDarkResult()
 	}
 
 	// Check if target is a player (online, in same room)
@@ -354,6 +386,9 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 				}
 				if prefix == "IN" && isContainer(itemDef) {
 					return e.lookInRoomContainer(player, itemDef, &ri)
+				}
+				if prefix == "ON" && itemDef.Container == "ON" {
+					return e.lookOnRoomSurface(player, room, itemDef, &ri)
 				}
 				if prefix != "" {
 					return e.lookPrefixRoomItem(room, itemDef, &ri, prefix)
@@ -455,7 +490,9 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		if !containerIsOpen(itemDef, ii.State) {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s is closed.", capitalize(e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)))}}
 		}
-		return &CommandResult{Messages: e.potionLookInMessages(itemDef, ii.Adj1, ii.Val2, ii.Val4, ii.Tail)}
+		// lookInContainer handles both liquid models: a named LIQUID item carried
+		// inside (NEWPUT ale picked up with its mug) and the vessel's own Val2/Val4.
+		return e.lookInContainer(player, itemDef, &ii)
 	}
 	if prefix == "IN" && isContainerDef(itemDef) {
 		return e.lookInContainer(player, itemDef, &ii)
@@ -477,7 +514,7 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		msgs = []string{fmt.Sprintf("You look at your %s.", name)}
 	}
 	// Run IFPREVERB/IFVERB LOOK scripts on the item (Ref=-1 = inventory item, skip room scripts)
-	ri := &gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype, Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3, Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, ItemBits: ii.ItemBits}
+	ri := &gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype, Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3, Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue, ItemBits: ii.ItemBits}
 	// Root-level IFVAR blocks may contain nested IFVERB EXAMINE -1 blocks (e.g. the
 	// lens of worlds' SHOWROOM preview); RunPreverbScripts/RunVerbScripts only match
 	// top-level IFVERB blocks, so this walk is needed to reach those.
@@ -565,6 +602,37 @@ func (e *GameEngine) findMonsterInRoomIncludeDead(player *Player, target string)
 }
 
 func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeDead bool) (*MonsterInstance, *gameworld.MonsterDef) {
+	return e.findMonsterInRoomPreferring(player, target, includeDead, 0)
+}
+
+// findHostileMonsterInRoom resolves the target of a hostile action (ATTACK, ADVANCE,
+// offensive spells and psionics). It differs from findMonsterInRoom in two ways:
+//
+//   - Without an explicit ordinal, a name shared by the player's own summoned or
+//     controlled creature resolves to the OTHER creature — reported: "attack
+//     zovembie" with a controlled zovembie guarding you hit your own zovembie
+//     unless you typed "zovembie 2".
+//   - If the only match (or an explicit ordinal) is the player's own creature, the
+//     action is refused with refusal (TargetNotFound set, so a spell isn't burned),
+//     rather than turning the player's weapon or spell on their own servant.
+//
+// When refusal is non-nil, inst and def are nil and the caller should return refusal.
+func (e *GameEngine) findHostileMonsterInRoom(player *Player, target string) (inst *MonsterInstance, def *gameworld.MonsterDef, refusal *CommandResult) {
+	inst, def = e.findMonsterInRoomPreferring(player, target, false, player.SummonedCreatureID)
+	if inst != nil && player.SummonedCreatureID != 0 && inst.ID == player.SummonedCreatureID {
+		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+		return nil, nil, &CommandResult{
+			Messages:       []string{fmt.Sprintf("The %s is under your control! (Use COMMAND BEGONE to dismiss it.)", name)},
+			TargetNotFound: true,
+		}
+	}
+	return inst, def, nil
+}
+
+// findMonsterInRoomPreferring is findMonsterInRoomEx's implementation. When
+// avoidID is non-zero and the target carries no explicit ordinal, the instance
+// with that ID is only returned if no other monster matches the name.
+func (e *GameEngine) findMonsterInRoomPreferring(player *Player, target string, includeDead bool, avoidID int) (*MonsterInstance, *gameworld.MonsterDef) {
 	if e.monsterMgr == nil {
 		return nil, nil
 	}
@@ -577,7 +645,13 @@ func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeD
 	target = strings.ToLower(strings.TrimSpace(target))
 	// Ordinal prefix/suffix so "attack 2 skeleton" / "attack second skeleton" /
 	// "attack skeleton 2" target the 2nd matching monster instead of the 1st.
+	rawTarget := target
 	target, skip := parseOrdinal(target)
+	if target != rawTarget {
+		avoidID = 0 // an explicit ordinal means exactly the creature named
+	}
+	var avoided *MonsterInstance
+	var avoidedDef *gameworld.MonsterDef
 	// Strip leading articles so "a skeleton" matches "skeleton"
 	for _, article := range []string{"a ", "an ", "the ", "some "} {
 		if strings.HasPrefix(target, article) {
@@ -593,12 +667,19 @@ func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeD
 		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 		noun := strings.ToLower(def.Name)
 		if strings.HasPrefix(name, target) || strings.HasPrefix(noun, target) {
+			if avoidID != 0 && monsters[i].ID == avoidID {
+				avoided, avoidedDef = &monsters[i], def
+				continue
+			}
 			if skip > 0 {
 				skip--
 				continue
 			}
 			return &monsters[i], def
 		}
+	}
+	if avoided != nil {
+		return avoided, avoidedDef
 	}
 	return nil, nil
 }
@@ -1217,7 +1298,13 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 	// carried items, but the room-item path never called it, so room-scoped
 	// "IFPREVERB LOOK <ref>" blocks silently never fired).
 	scPre := e.RunPreverbScripts(player, room, "LOOK", ri, def)
-	if len(scPre.Messages) > 0 {
+	if scPre.Blocked && len(scPre.Messages) > 0 {
+		// CLEARVERB means the script's text replaces the default description rather
+		// than trailing after it — e.g. a campfire whose look changes with story
+		// state (HALLOWEEN2026.SCR), or a menu that answers "You'll have to read
+		// that." instead of "It is nondescript." followed by that line.
+		result.Messages = append(append([]string{}, sc0.Messages...), scPre.Messages...)
+	} else if len(scPre.Messages) > 0 {
 		result.Messages = append(result.Messages, scPre.Messages...)
 	}
 	if len(scPre.RoomMsgs) > 0 {

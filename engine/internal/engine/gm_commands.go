@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jonradoff/lofp/internal/gameworld"
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -40,6 +41,9 @@ func (e *GameEngine) processGMCommand(ctx context.Context, player *Player, verb 
 	case "@EXP":
 		return e.gmExp(ctx, player, args)
 	case "@GM":
+		if len(args) > 0 {
+			return e.gmChannel(ctx, player, args, rawInput)
+		}
 		player.GMHat = true
 		e.SavePlayer(ctx, player)
 		return &CommandResult{Messages: []string{"You don your Host Hat. You are now visible as a GM."}}
@@ -231,6 +235,12 @@ func (e *GameEngine) processGMCommand(ctx context.Context, player *Player, verb 
 		return e.gmSpecialize(ctx, args)
 	case "@WEATHER":
 		return e.gmWeather(player, args)
+	case "@SEASON":
+		return e.gmSeason(player, args)
+	case "@CYBERWARE", "@CYBER":
+		return e.gmCyberware(ctx, args)
+	case "@REBOOT":
+		return e.gmReboot(player, args, rawInput)
 	default:
 		return &CommandResult{Messages: []string{fmt.Sprintf("Unknown GM command: %s", strings.ToLower(verb))}}
 	}
@@ -252,6 +262,7 @@ func (e *GameEngine) gmHelp() *CommandResult {
 		"@additem <archnum> [valN=x] [adjN=x] - Add item to current room",
 		"@announce <mode> <msg> - Announce (1=global 2=mindlink)",
 		"@close <item>          - Close item silently",
+		"@cyberware <plr> [add <kind> <tier> | remove <kind>] - List, install or remove a player's cyberware (arm, leg, ear, armor, telepathor, reflexor, eye; alpha-omega)",
 		"@delete <item>         - Delete an item from the room",
 		"@dupe [#] <item>       - Duplicate an item you're carrying onto the ground",
 		"@echoplr <name> <text> - Echo text to a player",
@@ -267,6 +278,9 @@ func (e *GameEngine) gmHelp() *CommandResult {
 		"@give [#] <item> to <plr|monster> - Silently give item from your inventory to a player, or into a monster's carried items so it drops when the monster dies",
 		"@glossary <word>       - Look up a noun/adj by name",
 		"@gm                    - Put on Host Hat (visible as GM)",
+		"@gm on|off             - Join/leave the private GM channel",
+		"@gm who                - List GMs on the GM channel",
+		"@gm <message>          - Speak on the GM channel",
 		"@go <room#>            - Teleport to a room",
 		"@goplr <name>          - Teleport to a player",
 		"@grantsp <name> <sp#>  - Give spell to player",
@@ -297,10 +311,12 @@ func (e *GameEngine) gmHelp() *CommandResult {
 		"@queue [top] <item>    - List the treasure drop queue, or stage an item (from your inventory or the ground) onto the bottom (or top) of it",
 		"@rank <plr> <org#> <n> - Set player's org rank (must be a member)",
 		"@rdata <room#>         - Show room data",
+		"@reboot <secs>|now|cancel - Save everything and restart the game server after a countdown (type in full)",
 		"@rflag                 - Remove Host Hat",
 		"@rnd <#>               - Generate random number 1-#",
+		"@season [hold|set <s>|release] - Show the season; hold it, force spring/summer/autumn/winter, or follow the calendar",
 		"@sedate <monster>      - Sedate a monster",
-		"@set <variable> <val>  - Set a variable value (incl. gold/silver/copper, or a regional currency like kragenmarks / bankkragenmarks)",
+		"@set <variable> <val>  - Set a variable value (incl. race by number or name, gold/silver/copper, or a regional currency like kragenmarks / bankkragenmarks)",
 		"@skill <name>          - View a player's SKILLS list",
 		"@snd <text>            - Echo text to everyone in your current room",
 		"@sndroom <room#> <text> - Echo text to everyone in a room by number, even if you aren't there",
@@ -618,17 +634,7 @@ func (e *GameEngine) gmQueue(ctx context.Context, player *Player, args []string)
 				continue
 			}
 			fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
-			ii := InventoryItem{
-				Archetype: ri.Archetype,
-				Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
-				Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-				Sharpness:   ri.Sharpness,
-				HardnessMod: ri.HardnessMod,
-			CraftedValue: ri.CraftedValue,
-				ItemBits:    ri.ItemBits,
-				State:       ri.State,
-				Tail:        ri.Extend,
-			}
+			ii := inventoryFromRoomItem(&ri)
 			if isContainerDef(itemDef) {
 				ii.Contents = e.roomContainerGet(player.RoomNumber, ri.Ref)
 			}
@@ -725,9 +731,10 @@ func (e *GameEngine) gmUnqueue(ctx context.Context, player *Player, args []strin
 
 // gmDupe creates an exact duplicate of an item the GM is carrying (wielded, off-hand,
 // worn, or in inventory) and places the copy on the ground in the GM's current room.
-// The original is untouched. All per-instance fields — adjectives, VAL1-5, sharpness,
-// hardness mod, item bits, state, tail, and (for an open container) contents — are
-// copied onto the new room item.
+// The original is untouched. Every per-instance field (via roomItemFromInventory —
+// adjectives, VAL1-5, sharpness, hardness mod, crafted value, item bits, state, tail,
+// written text, sigil trap, active blade-spell imbue) plus a deep copy of any
+// container contents is carried onto the new room item.
 //
 // Usage: @dupe [#] [adjectives] <item name>
 //
@@ -775,21 +782,12 @@ func (e *GameEngine) gmDupe(player *Player, args []string) *CommandResult {
 			continue
 		}
 
-		dupe := gameworld.RoomItem{
-			Ref:       nextRoomItemRef(room),
-			Archetype: ii.Archetype,
-			Adj1:      ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
-			Sharpness:   ii.Sharpness,
-			HardnessMod: ii.HardnessMod,
-			CraftedValue: ii.CraftedValue,
-			ItemBits:    ii.ItemBits,
-			State:       ii.State,
-			Extend:      ii.Tail,
-		}
+		dupe := roomItemFromInventory(ii)
+		dupe.Ref = nextRoomItemRef(room)
 		if isContainerDef(itemDef) && len(ii.Contents) > 0 {
-			// Copy the slice so mutating the duplicate's contents can't alias the original.
-			e.roomContainerSet(room.Number, dupe.Ref, append([]InventoryItem(nil), ii.Contents...))
+			// Deep-copy so mutating the duplicate's contents (or a nested
+			// container's) can't alias the original.
+			e.roomContainerSet(room.Number, dupe.Ref, deepCopyInventoryItems(ii.Contents))
 		}
 		room.Items = append(room.Items, dupe)
 		e.notifyRoomChange(RoomChange{RoomNumber: room.Number, Type: "item_add", Item: &dupe})
@@ -894,8 +892,20 @@ func (e *GameEngine) gmRData(player *Player, args []string) *CommandResult {
 		}
 		msgs = append(msgs, fmt.Sprintf("  %s -> %d (%s)", dir, dest, destName))
 	}
-	msgs = append(msgs, fmt.Sprintf("Items: %d", len(room.Items)))
+	// Script-placed container contents (ITEM/PUT lines, NEWPUT) are RoomItems with
+	// IsPut set that reuse their container's Ref (PutIn). They aren't on the floor —
+	// LOOK skips them too — so list them under their container's Contents instead.
+	topLevel := 0
 	for _, ri := range room.Items {
+		if !ri.IsPut {
+			topLevel++
+		}
+	}
+	msgs = append(msgs, fmt.Sprintf("Items: %d", topLevel))
+	for _, ri := range room.Items {
+		if ri.IsPut {
+			continue
+		}
 		itemDef := e.items[ri.Archetype]
 		name := "???"
 		var flags []string
@@ -922,7 +932,7 @@ func (e *GameEngine) gmRData(player *Player, args []string) *CommandResult {
 			msgs = append(msgs, fmt.Sprintf("    ItemBits=%d (set: %s)", ri.ItemBits, strings.Join(set, ", ")))
 		}
 		if itemDef != nil && isContainerDef(itemDef) {
-			contents := e.roomContainerGet(num, ri.Ref)
+			contents := e.roomContainerFullContents(num, ri.Ref)
 			if len(contents) == 0 {
 				msgs = append(msgs, "    Contents: (empty)")
 			} else {
@@ -1015,6 +1025,69 @@ func (e *GameEngine) gmExp(ctx context.Context, player *Player, args []string) *
 	}
 	e.SavePlayer(ctx, target)
 	return &CommandResult{Messages: []string{fmt.Sprintf("Granted %d experience to %s. Total: %d", pts, target.FullName(), target.Experience)}}
+}
+
+// gmChannel handles @GM ON/OFF/WHO/<message>: a private chat channel that only
+// GMs can join, delivered like THINK (see GMChannelMsg in api.go). Bare @GM is
+// still the Host Hat.
+func (e *GameEngine) gmChannel(ctx context.Context, player *Player, args []string, rawInput string) *CommandResult {
+	if len(args) == 1 {
+		switch strings.ToUpper(args[0]) {
+		case "ON":
+			if player.GMChannel {
+				return &CommandResult{Messages: []string{"@GM You are already on the @GM channel. To leave the channel, type @GM off"}}
+			}
+			player.GMChannel = true
+			e.SavePlayer(ctx, player)
+			return &CommandResult{
+				Messages:        []string{"@GM You are now on the @GM channel. To leave the channel, type @GM off"},
+				GMChannelMsg:    []string{fmt.Sprintf("@GM %s has joined the channel.", player.FirstName)},
+				GMChannelSender: player.FirstName,
+			}
+		case "OFF":
+			if !player.GMChannel {
+				return &CommandResult{Messages: []string{"@GM You are not on GM. To turn the channel on, type @GM on"}}
+			}
+			player.GMChannel = false
+			e.SavePlayer(ctx, player)
+			return &CommandResult{
+				Messages:        []string{"@GM You have left the @GM channel. To rejoin the channel, type @GM on."},
+				GMChannelMsg:    []string{fmt.Sprintf("@GM %s has left the channel.", player.FirstName)},
+				GMChannelSender: player.FirstName,
+			}
+		case "WHO":
+			var names []string
+			if e.sessions != nil {
+				for _, p := range e.sessions.OnlinePlayers() {
+					if p.IsGM && p.GMChannel {
+						names = append(names, p.FirstName)
+					}
+				}
+			}
+			switch len(names) {
+			case 0:
+				return &CommandResult{Messages: []string{"@GM No one is on GM."}}
+			case 1:
+				return &CommandResult{Messages: []string{fmt.Sprintf("@GM %s is on GM.", names[0])}}
+			case 2:
+				return &CommandResult{Messages: []string{fmt.Sprintf("@GM %s and %s are on GM.", names[0], names[1])}}
+			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("@GM %s, and %s are on GM.",
+				strings.Join(names[:len(names)-1], ", "), names[len(names)-1])}}
+		}
+	}
+	if !player.GMChannel {
+		return &CommandResult{Messages: []string{"@GM You are not on GM. To turn the channel on, type @GM on"}}
+	}
+	text := extractRawArgs(rawInput, 1)
+	if text == "" {
+		text = strings.Join(args, " ")
+	}
+	return &CommandResult{
+		Messages:        []string{fmt.Sprintf("@GM You say, %s", text)},
+		GMChannelMsg:    []string{fmt.Sprintf("@GM %s says, %s", player.FirstName, text)},
+		GMChannelSender: player.FirstName,
+	}
 }
 
 func (e *GameEngine) gmWho(ctx context.Context) *CommandResult {
@@ -2277,6 +2350,10 @@ func (e *GameEngine) gmSetOnPlayer(ctx context.Context, player *Player, args []s
 		return &CommandResult{Messages: []string{fmt.Sprintf("Set %s = %s", varName, raw)}}
 	}
 
+	if varName == "RACE" {
+		return e.gmSetRace(ctx, player, strings.Join(args[1:], " "))
+	}
+
 	val, err := strconv.Atoi(args[1])
 	if err != nil {
 		return &CommandResult{Messages: []string{"Invalid value."}}
@@ -2405,6 +2482,83 @@ func (e *GameEngine) gmSetOnPlayer(ctx context.Context, player *Player, args []s
 	}
 	e.SavePlayer(ctx, player)
 	return &CommandResult{Messages: []string{fmt.Sprintf("Set %s = %d", varName, val)}}
+}
+
+// gmSetRace handles "@set race <number|name>" — e.g. "@set race 5", "@set race
+// murg" or "@set race undead". Accepts the playable races and the GM-only ones
+// (Vampire and the GMSCRIPT.DOC racial groups 21-31) in RaceNames — the original
+// let GMs override a player's race this way during role play. Clears state that
+// belongs to the old race so the character isn't left in an impossible state:
+// a Wolfling in wolf form is returned to humanoid form, innate telepathy follows
+// the Ephemeral race (on when becoming one, as at character creation; off when
+// leaving it), and becoming undead (Player.IsUndead) ends any poison, disease or
+// bleeding at once. Stats are left alone — adjust them with @set if needed.
+func (e *GameEngine) gmSetRace(ctx context.Context, player *Player, value string) *CommandResult {
+	value = strings.TrimSpace(value)
+	race := 0
+	if n, err := strconv.Atoi(value); err == nil {
+		if _, ok := RaceNames[n]; ok {
+			race = n
+		}
+	} else {
+		for id, name := range RaceNames {
+			if strings.EqualFold(name, value) {
+				race = id
+				break
+			}
+		}
+	}
+	if race == 0 {
+		ids := make([]int, 0, len(RaceNames))
+		for id := range RaceNames {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		valid := make([]string, len(ids))
+		for i, id := range ids {
+			valid[i] = fmt.Sprintf("%d %s", id, RaceNames[id])
+		}
+		return &CommandResult{Messages: []string{fmt.Sprintf("Unknown race '%s'. Valid races: %s.", value, strings.Join(valid, ", "))}}
+	}
+
+	old := player.Race
+	if old == race {
+		return &CommandResult{Messages: []string{fmt.Sprintf("RACE is already %d (%s).", race, RaceNames[race])}}
+	}
+	player.Race = race
+	var notes []string
+	if old == RaceWolfling && player.WolfForm {
+		player.WolfForm = false
+		notes = append(notes, "wolf form ended")
+	}
+	if race == RaceEphemeral && !player.TelepathyActive {
+		player.TelepathyActive = true
+		notes = append(notes, "innate telepathy on")
+	}
+	if old == RaceEphemeral {
+		player.TelepathyActive = false
+		player.EphemeralSubstantial = false
+		player.EphemeralPhysicalUntil = time.Time{}
+		notes = append(notes, "innate telepathy off")
+	}
+	if player.IsUndead() {
+		if player.Poisoned || player.Diseased || player.Bleeding {
+			notes = append(notes, "poison, disease and bleeding cleared")
+		}
+		player.Poisoned, player.PoisonLevel = false, 0
+		player.Diseased, player.DiseaseLevel = false, 0
+		for i := range player.Wounds {
+			player.Wounds[i].Bleeding = false
+		}
+		player.Bleeding = false
+		notes = append(notes, "now undead")
+	}
+	e.SavePlayer(ctx, player)
+	msg := fmt.Sprintf("Set RACE = %d (%s), was %s.", race, RaceNames[race], RaceNameByID(old))
+	if len(notes) > 0 {
+		msg += " (" + strings.Join(notes, "; ") + ")"
+	}
+	return &CommandResult{Messages: []string{msg}}
 }
 
 // gmSetPlayer handles @setp <player> <variable> <value> — set a variable on another player.
@@ -3324,7 +3478,7 @@ var allGMVerbs = []string{
 	"@ENTRY", "@EXIT", "@SUGGEST", "@MSG", "@SAVE", "@RESTORE", "@REGISTER",
 	"@ASSIST?", "@OLDCOMP", "@EDITEM", "@EDN", "@GET", "@LOOK",
 	"@QUEUE", "@UNQUEUE",
-	"@MASTERY", "@SPECIALIZE", "@WEATHER",
+	"@MASTERY", "@SPECIALIZE", "@WEATHER", "@SEASON", "@REBOOT", "@CYBERWARE", "@CYBER",
 }
 
 // resolveGMVerb resolves a GM command abbreviation to its canonical form.

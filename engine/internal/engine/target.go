@@ -44,6 +44,9 @@ func (e *GameEngine) doTarget(player *Player, args []string) *CommandResult {
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetArg)}}
 	}
+	if player.SummonedCreatureID != 0 && inst.ID == player.SummonedCreatureID {
+		return &CommandResult{Messages: []string{"You can't target a creature under your own control."}}
+	}
 
 	for _, id := range player.Targets {
 		if id == inst.ID {
@@ -98,7 +101,16 @@ func (e *GameEngine) findMonsterInRoomForTarget(player *Player, target string) (
 	}
 	monsters := e.monsterMgr.MonstersInRoom(player.RoomNumber)
 	target = strings.ToLower(strings.TrimSpace(target))
+	rawTarget := target
 	target, skip := parseOrdinal(target)
+	// Without an explicit ordinal, a name shared with the player's own summoned or
+	// controlled creature resolves to the other creature (see findHostileMonsterInRoom).
+	avoidID := player.SummonedCreatureID
+	if target != rawTarget {
+		avoidID = 0
+	}
+	var avoided *MonsterInstance
+	var avoidedDef *gameworld.MonsterDef
 	for _, article := range []string{"a ", "an ", "the ", "some "} {
 		if strings.HasPrefix(target, article) {
 			target = strings.TrimPrefix(target, article)
@@ -115,12 +127,19 @@ func (e *GameEngine) findMonsterInRoomForTarget(player *Player, target string) (
 		noun := strings.ToLower(d.Name)
 		if strings.HasPrefix(name, target) || strings.HasPrefix(noun, target) {
 			anyMatch = true
+			if avoidID != 0 && monsters[i].ID == avoidID {
+				avoided, avoidedDef = &monsters[i], d
+				continue
+			}
 			if skip > 0 {
 				skip--
 				continue
 			}
 			return &monsters[i], d, false
 		}
+	}
+	if avoided != nil {
+		return avoided, avoidedDef, false
 	}
 	return nil, nil, anyMatch
 }

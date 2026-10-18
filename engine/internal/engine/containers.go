@@ -169,7 +169,9 @@ func (e *GameEngine) formatContainerName(def *gameworld.ItemDef, adj1, adj2, adj
 		t = tail[0]
 	}
 	base := e.formatItemName(def, adj1, adj2, adj3, t)
-	if !isContainerDef(def) {
+	// A surface (CONTAINER ON — a workbench, a table) has no lid, so "(open)" on it
+	// just reads oddly ("from an old wooden workbench (open)").
+	if !isContainerDef(def) || def.Container == "ON" {
 		return base
 	}
 	if strings.ToUpper(state) == "LOCKED" {
@@ -249,6 +251,19 @@ func (e *GameEngine) namedLiquidLookInMessages(containerDef *gameworld.ItemDef, 
 	}
 }
 
+// namedLiquidIndex returns the index of the first LIQUID item (ale, wine...) in a
+// LIQCONTAINER's contents, or -1. Such a liquid is a separate item placed by
+// PUT/NEWPUT — e.g. a barkeep script's "NEWITEM 8 546 / NEWPUT 8 239" pint of ale —
+// rather than the vessel's own Val2 sip count that FILL and potions use.
+func (e *GameEngine) namedLiquidIndex(contents []InventoryItem) int {
+	for i := range contents {
+		if d := e.items[contents[i].Archetype]; d != nil && d.Type == "LIQUID" {
+			return i
+		}
+	}
+	return -1
+}
+
 // matchesItemOrPotion reports whether an item matches target — either by its own
 // name/adjectives, or, if it's a LIQCONTAINER currently holding a potion, by the
 // potion's liquid-appearance phrase (e.g. "crimson potion"). This lets players
@@ -316,6 +331,12 @@ func (e *GameEngine) lookInContainer(player *Player, def *gameworld.ItemDef, ii 
 	}
 
 	if def.Type == "LIQCONTAINER" {
+		// A named liquid carried inside (picked up along with the mug) wins over the
+		// vessel's own Val2/Val4 — same precedence as lookInRoomContainer.
+		if i := e.namedLiquidIndex(ii.Contents); i >= 0 {
+			liq := ii.Contents[i]
+			return &CommandResult{Messages: e.namedLiquidLookInMessages(def, ii.Adj1, ii.Tail, e.items[liq.Archetype], liq.Adj1, liq.Adj2, liq.Adj3, liq.Val2)}
+		}
 		return &CommandResult{Messages: e.potionLookInMessages(def, ii.Adj1, ii.Val2, ii.Val4, ii.Tail)}
 	}
 
@@ -374,12 +395,7 @@ func (e *GameEngine) claimScriptPutContents(room *gameworld.Room, ref int) {
 			kept = append(kept, ri)
 			continue
 		}
-		claimed = append(claimed, InventoryItem{
-			Archetype: ri.Archetype,
-			Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
-			Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-			ItemBits: ri.ItemBits, State: ri.State, Tail: ri.Extend,
-		})
+		claimed = append(claimed, inventoryFromRoomItem(&ri))
 	}
 	if len(claimed) == 0 {
 		return
@@ -403,19 +419,37 @@ func (e *GameEngine) roomContainerFullContents(roomNum int, ref int) []Inventory
 			if iDef == nil {
 				continue
 			}
-			contents = append(contents, InventoryItem{
-				Archetype: ri2.Archetype,
-				Adj1:      ri2.Adj1, Adj2: ri2.Adj2, Adj3: ri2.Adj3,
-				Val1: ri2.Val1, Val2: ri2.Val2, Val3: ri2.Val3, Val4: ri2.Val4, Val5: ri2.Val5,
-				Sharpness:   ri2.Sharpness,
-				HardnessMod: ri2.HardnessMod,
-			CraftedValue: ri2.CraftedValue,
-				ItemBits:    ri2.ItemBits,
-				State:       ri2.State,
-			})
+			contents = append(contents, inventoryFromRoomItem(&ri2))
 		}
 	}
 	return contents
+}
+
+// lookOnRoomSurface handles LOOK ON <surface> for a CONTAINER ON room item (e.g. room
+// 594's workbench, where the locksmith NEWPUTs a purchased lockpick). It used to fall
+// through to lookPrefixRoomItem's "You see nothing noteworthy on the workbench." even
+// with items sitting on it, which only LOOK IN would list. Room-scoped "ON <ref>" text
+// still wins, as it does in lookPrefixRoomItem.
+func (e *GameEngine) lookOnRoomSurface(player *Player, room *gameworld.Room, def *gameworld.ItemDef, ri *gameworld.RoomItem) *CommandResult {
+	if desc, ok := room.ItemDescriptions[fmt.Sprintf("ON:%d", ri.Ref)]; ok {
+		return &CommandResult{Messages: descriptionToMessages(desc)}
+	}
+	displayName := e.formatItemName(def, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+	contents := e.roomContainerFullContents(player.RoomNumber, ri.Ref)
+	if len(contents) == 0 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("There is nothing on %s.", displayName)}}
+	}
+	msgs := []string{fmt.Sprintf("On %s you see:", displayName)}
+	for _, ci := range contents {
+		if ci.State == "MONEY" {
+			msgs = append(msgs, "  "+e.formatCoinPile(ci.Archetype, ci.Val1))
+			continue
+		}
+		if ciDef := e.items[ci.Archetype]; ciDef != nil {
+			msgs = append(msgs, "  "+e.formatItemName(ciDef, ci.Adj1, ci.Adj2, ci.Adj3, ci.Tail))
+		}
+	}
+	return &CommandResult{Messages: msgs}
 }
 
 // lookInRoomContainer is called when a player types LOOK IN <container> for a room item.
@@ -447,20 +481,23 @@ func (e *GameEngine) lookInRoomContainer(player *Player, def *gameworld.ItemDef,
 		// original scripts instead PUT/NEWPUT a concrete named LIQUID item (e.g.
 		// wine) into the container's ref, leaving the container's own Val2/Val4
 		// unset. Prefer that named liquid child when present, since the container
-		// fields alone would otherwise read as empty.
-		if room := e.rooms[player.RoomNumber]; room != nil {
-			for _, ri2 := range room.Items {
-				if !ri2.IsPut || ri2.PutIn != ri.Ref {
-					continue
-				}
-				liqDef := e.items[ri2.Archetype]
-				if liqDef == nil || liqDef.Type != "LIQUID" {
-					continue
-				}
-				return &CommandResult{Messages: e.namedLiquidLookInMessages(def, ri.Adj1, ri.Extend, liqDef, ri2.Adj1, ri2.Adj2, ri2.Adj3, ri2.Val2)}
-			}
+		// fields alone would otherwise read as empty. Checks both stores: NEWPUT into
+		// a real container (CONTAINER IN, e.g. mug 546) lands in the runtime contents
+		// map, not as an IsPut room item.
+		contents := e.roomContainerFullContents(player.RoomNumber, ri.Ref)
+		if i := e.namedLiquidIndex(contents); i >= 0 {
+			liq := contents[i]
+			return &CommandResult{Messages: e.namedLiquidLookInMessages(def, ri.Adj1, ri.Extend, e.items[liq.Archetype], liq.Adj1, liq.Adj2, liq.Adj3, liq.Val2)}
 		}
 		return &CommandResult{Messages: e.potionLookInMessages(def, ri.Adj1, ri.Val2, ri.Val4, ri.Extend)}
+	}
+
+	// LOOK IN a surface (CONTAINER ON) reads the same as LOOK ON it — items sit on a
+	// workbench, not inside it.
+	if def.Container == "ON" {
+		if room := e.rooms[player.RoomNumber]; room != nil {
+			return e.lookOnRoomSurface(player, room, def, ri)
+		}
 	}
 
 	contents := e.roomContainerFullContents(player.RoomNumber, ri.Ref)
@@ -502,7 +539,7 @@ func (e *GameEngine) runPutIntoTargetScripts(ctx context.Context, player *Player
 		ItemRef: &gameworld.RoomItem{
 			Archetype: srcDef.Number, Ref: -1,
 			Adj1: srcItem.Adj1, Adj2: srcItem.Adj2, Adj3: srcItem.Adj3,
-			Val1: srcItem.Val1, Val2: srcItem.Val2, Val3: srcItem.Val3, Val4: srcItem.Val4, Val5: srcItem.Val5,
+			Val1: srcItem.Val1, Val2: srcItem.Val2, Val3: srcItem.Val3, Val4: srcItem.Val4, Val5: srcItem.Val5, CraftedValue: srcItem.CraftedValue,
 			Sharpness: srcItem.Sharpness, HardnessMod: srcItem.HardnessMod, ItemBits: srcItem.ItemBits, State: srcItem.State,
 		},
 		ItemDef:    srcDef,
@@ -580,9 +617,15 @@ func (e *GameEngine) doPut(ctx context.Context, player *Player, args []string) *
 		return &CommandResult{Messages: []string{"Put what?"}}
 	}
 
-	// Expect "PUT <item> IN <container>"
+	// Expect "PUT <item> IN <container>". "ON" is accepted as a synonym (when there's
+	// no " in ") so scripted targets read naturally — e.g. HALLOWEEN2026.SCR's
+	// "PUT SUNRISE TOKEN ON SUNRISE GRAVESTONE". Both are 4 bytes, so the slice below
+	// works for either.
 	raw := strings.ToLower(strings.Join(args, " "))
 	inIdx := strings.Index(raw, " in ")
+	if inIdx < 0 {
+		inIdx = strings.Index(raw, " on ")
+	}
 	if inIdx < 0 {
 		return &CommandResult{Messages: []string{"Put what in what? (usage: PUT <item> IN <container>)"}}
 	}
@@ -1196,6 +1239,11 @@ func (e *GameEngine) doGetAll(ctx context.Context, player *Player, noun string) 
 
 		// Normal item — check for item guard
 		fullName := e.formatItemName(def, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+		if ephemeralTooHeavy(player, e.roomItemWeight(room, &ri)) != "" {
+			msgs = append(msgs, fmt.Sprintf("%s is too heavy for your insubstantial form to grasp.", capitalize(fullName)))
+			kept = append(kept, ri)
+			continue
+		}
 		if guardBlocked, guardPlayerMsgs, guardRoomBroadcasts := e.checkItemGuard(player, ri.Archetype, fullName); guardBlocked {
 			msgs = append(msgs, guardPlayerMsgs...)
 			roomMsgs = append(roomMsgs, guardRoomBroadcasts...)
@@ -1207,16 +1255,7 @@ func (e *GameEngine) doGetAll(ctx context.Context, player *Player, noun string) 
 			roomMsgs = append(roomMsgs, guardRoomBroadcasts...)
 		}
 
-		newInvItem := InventoryItem{
-			Archetype: ri.Archetype,
-			Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
-			Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-			Sharpness: ri.Sharpness,
-			HardnessMod: ri.HardnessMod,
-			CraftedValue: ri.CraftedValue,
-			ItemBits:  ri.ItemBits,
-			State:     ri.State,
-		}
+		newInvItem := inventoryFromRoomItem(&ri)
 		if isContainerDef(def) {
 			newInvItem.Contents = e.roomContainerGet(player.RoomNumber, ri.Ref)
 			e.roomContainerDelete(player.RoomNumber, ri.Ref)
@@ -1415,56 +1454,93 @@ func (e *GameEngine) doGetFromContainer(ctx context.Context, player *Player, ite
 			if !containerIsOpen(cDef, ri.State) {
 				return &CommandResult{Messages: []string{"That container is closed."}}
 			}
-			e.claimScriptPutContents(room, ri.Ref)
-			contents := e.roomContainerGet(player.RoomNumber, ri.Ref)
 			skip := itemSkip
-			for ii, item := range contents {
-				if item.State == "MONEY" && isCoinTarget(itemTarget) {
-					if skip > 0 {
-						skip--
-						continue
-					}
-					coins := item.Val1
-					if coins <= 0 {
-						coins = 1
-					}
-					contents = append(contents[:ii], contents[ii+1:]...)
-					e.roomContainerSet(player.RoomNumber, ri.Ref, contents)
-					pickupMsg := e.addCoinsToPlayer(player, item.Archetype, coins)
-					e.SavePlayer(ctx, player)
-					cName := e.formatContainerName(cDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.State, ri.Extend)
-					return &CommandResult{
-						Messages:      []string{fmt.Sprintf("%s You take it from %s.", pickupMsg, cName)},
-						RoomBroadcast: []string{fmt.Sprintf("%s takes some coins from %s.", player.FirstName, cName)},
-					}
-				}
-				iDef := e.items[item.Archetype]
-				if iDef == nil {
-					continue
-				}
-				if !matchesTarget(e.getItemNounName(iDef), itemTarget, e.getAdjName(item.Adj1), e.getAdjName(item.Adj2), e.getAdjName(item.Adj3)) {
-					continue
-				}
-				if skip > 0 {
-					skip--
-					continue
-				}
-				contents = append(contents[:ii], contents[ii+1:]...)
-				e.roomContainerSet(player.RoomNumber, ri.Ref, contents)
-				player.Inventory = append(player.Inventory, item)
-				e.SavePlayer(ctx, player)
-				iName := e.formatItemName(iDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)
-				cName := e.formatContainerName(cDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.State, ri.Extend)
-				return &CommandResult{
-					Messages:      []string{fmt.Sprintf("You take %s from %s.", iName, cName)},
-					RoomBroadcast: []string{fmt.Sprintf("%s takes something from %s.", player.FirstName, cName)},
-				}
+			if res := e.takeFromRoomContainer(ctx, player, room, ri, cDef, itemTarget, &skip); res != nil {
+				return res
 			}
 			return &CommandResult{Messages: []string{"You don't see that in there."}}
 		}
 	}
 
 	return &CommandResult{Messages: []string{"You don't see that container here."}}
+}
+
+// takeFromRoomContainer moves the *skip'th item matching itemTarget (coins included)
+// out of room container ri into the player's inventory, claiming any script-placed
+// (NEWPUT) contents into the container store first. Returns nil, with *skip reduced
+// by the matches passed over, when nothing matched — so a caller searching several
+// containers can carry an ordinal across them. ri is a copy: claimScriptPutContents
+// replaces room.Items, so callers must not hold a pointer into it across this call.
+func (e *GameEngine) takeFromRoomContainer(ctx context.Context, player *Player, room *gameworld.Room, ri gameworld.RoomItem, cDef *gameworld.ItemDef, itemTarget string, skip *int) *CommandResult {
+	e.claimScriptPutContents(room, ri.Ref)
+	contents := e.roomContainerGet(player.RoomNumber, ri.Ref)
+	cName := e.formatContainerName(cDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.State, ri.Extend)
+	for ii, item := range contents {
+		if item.State == "MONEY" && isCoinTarget(itemTarget) {
+			if *skip > 0 {
+				*skip--
+				continue
+			}
+			coins := item.Val1
+			if coins <= 0 {
+				coins = 1
+			}
+			contents = append(contents[:ii], contents[ii+1:]...)
+			e.roomContainerSet(player.RoomNumber, ri.Ref, contents)
+			pickupMsg := e.addCoinsToPlayer(player, item.Archetype, coins)
+			e.SavePlayer(ctx, player)
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("%s You take it from %s.", pickupMsg, cName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s takes some coins from %s.", player.FirstName, cName)},
+			}
+		}
+		iDef := e.items[item.Archetype]
+		if iDef == nil {
+			continue
+		}
+		if !matchesTarget(e.getItemNounName(iDef), itemTarget, e.getAdjName(item.Adj1), e.getAdjName(item.Adj2), e.getAdjName(item.Adj3)) {
+			continue
+		}
+		if *skip > 0 {
+			*skip--
+			continue
+		}
+		if msg := ephemeralTooHeavy(player, e.inventoryItemWeight(&item)); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
+		}
+		contents = append(contents[:ii], contents[ii+1:]...)
+		e.roomContainerSet(player.RoomNumber, ri.Ref, contents)
+		player.Inventory = append(player.Inventory, item)
+		e.SavePlayer(ctx, player)
+		iName := e.formatItemName(iDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You take %s from %s.", iName, cName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s takes something from %s.", player.FirstName, cName)},
+		}
+	}
+	return nil
+}
+
+// takeFromRoomSurfaces is GET <item>'s fallback when nothing on the floor matches:
+// it takes the item from whatever is sitting on the room's surfaces (CONTAINER ON —
+// workbenches, tables, counters), as the original game did — e.g. GET LOCKPICK for
+// the lockpick room 594's locksmith (THIEF.SCR) NEWPUTs onto the workbench, without
+// needing FROM WORKBENCH. Only surfaces, never closed-in containers like chests.
+// *skip carries the ordinal over from the floor search ("get 2 lockpick").
+func (e *GameEngine) takeFromRoomSurfaces(ctx context.Context, player *Player, room *gameworld.Room, itemTarget string, skip *int) *CommandResult {
+	// Snapshot first: takeFromRoomContainer can replace room.Items.
+	var surfaces []gameworld.RoomItem
+	for _, ri := range room.Items {
+		if def := e.items[ri.Archetype]; def != nil && def.Container == "ON" && !ri.IsPut {
+			surfaces = append(surfaces, ri)
+		}
+	}
+	for _, ri := range surfaces {
+		if res := e.takeFromRoomContainer(ctx, player, room, ri, e.items[ri.Archetype], itemTarget, skip); res != nil {
+			return res
+		}
+	}
+	return nil
 }
 
 // doGetAllFromContainer empties a container into the player's inventory.
@@ -1584,6 +1660,7 @@ func (e *GameEngine) doGetAllFromContainer(ctx context.Context, player *Player, 
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is empty.", cName)}}
 			}
 			var msgs []string
+			var left []InventoryItem // too heavy for an Ephemeral — stays in the container
 			for _, item := range contents {
 				if item.State == "MONEY" {
 					coins := item.Val1
@@ -1597,10 +1674,15 @@ func (e *GameEngine) doGetAllFromContainer(ctx context.Context, player *Player, 
 				if iDef == nil {
 					continue
 				}
+				if ephemeralTooHeavy(player, e.inventoryItemWeight(&item)) != "" {
+					left = append(left, item)
+					msgs = append(msgs, fmt.Sprintf("%s is too heavy for your insubstantial form to grasp.", capitalize(e.formatItemName(iDef, item.Adj1, item.Adj2, item.Adj3, item.Tail))))
+					continue
+				}
 				player.Inventory = append(player.Inventory, item)
 				msgs = append(msgs, fmt.Sprintf("You take %s.", e.formatItemName(iDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)))
 			}
-			e.roomContainerSet(player.RoomNumber, ri.Ref, nil)
+			e.roomContainerSet(player.RoomNumber, ri.Ref, left)
 			e.SavePlayer(ctx, player)
 			cName := e.formatContainerName(cDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.State, ri.Extend)
 			return &CommandResult{
@@ -1653,17 +1735,8 @@ func (e *GameEngine) doDump(ctx context.Context, player *Player, args []string) 
 		var msgs []string
 		for _, item := range container.Contents {
 			iDef := e.items[item.Archetype]
-			droppedItem := gameworld.RoomItem{
-				Ref:       len(room.Items),
-				Archetype: item.Archetype,
-				Adj1:      item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
-				Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5,
-				Sharpness: item.Sharpness,
-				HardnessMod: item.HardnessMod,
-			CraftedValue: item.CraftedValue,
-				ItemBits:  item.ItemBits,
-				State:     item.State,
-			}
+			droppedItem := roomItemFromInventory(&item)
+			droppedItem.Ref = len(room.Items)
 			room.Items = append(room.Items, droppedItem)
 			e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_add", Item: &droppedItem})
 			if iDef != nil {
@@ -1897,18 +1970,70 @@ func (e *GameEngine) populateContainerLoot(roomNum, itemRef, treasureLevel int, 
 	}
 }
 
-// inventoryFromRoomItem converts a *gameworld.RoomItem to an InventoryItem.
+// inventoryFromRoomItem converts a *gameworld.RoomItem to an InventoryItem,
+// carrying every per-instance field the two types share. It is the inverse of
+// roomItemFromInventory — any new per-instance field must be added to BOTH, or
+// it will be silently lost the next time the item touches the floor. Contents
+// are not copied (room containers keep theirs in roomContainerContents).
 func inventoryFromRoomItem(ri *gameworld.RoomItem) InventoryItem {
 	return InventoryItem{
 		Archetype: ri.Archetype,
 		Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
 		Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-		Sharpness: ri.Sharpness,
-		HardnessMod: ri.HardnessMod,
-			CraftedValue: ri.CraftedValue,
-		ItemBits:  ri.ItemBits,
-		State:     ri.State,
-		Tail:      ri.Extend,
+		Sharpness:            ri.Sharpness,
+		HardnessMod:          ri.HardnessMod,
+		CraftedValue:         ri.CraftedValue,
+		ItemBits:             ri.ItemBits,
+		State:                ri.State,
+		Tail:                 ri.Extend,
+		WrittenText:          ri.WrittenText,
+		SigilSpellID:         ri.SigilSpellID,
+		SigilOwner:           ri.SigilOwner,
+		SigilCaster:          ri.SigilCaster,
+		BladeSpellExpiry:     ri.BladeSpellExpiry,
+		BladeSpellPrevVal3:   ri.BladeSpellPrevVal3,
+		BladeSpellPrevVal5:   ri.BladeSpellPrevVal5,
+		BladeSpellAdjApplied: ri.BladeSpellAdjApplied,
+	}
+}
+
+// deepCopyInventoryItems copies items and, recursively, any nested container
+// Contents, so the copy shares no slice backing arrays with the original.
+func deepCopyInventoryItems(items []InventoryItem) []InventoryItem {
+	if items == nil {
+		return nil
+	}
+	out := make([]InventoryItem, len(items))
+	for i, it := range items {
+		out[i] = it
+		out[i].Contents = deepCopyInventoryItems(it.Contents)
+	}
+	return out
+}
+
+// roomItemFromInventory converts an InventoryItem to a floor RoomItem (Ref left
+// 0 for the caller to assign). See inventoryFromRoomItem. WornSlot is dropped
+// deliberately (nothing on the floor is worn); Contents are the caller's job via
+// roomContainerSet.
+func roomItemFromInventory(ii *InventoryItem) gameworld.RoomItem {
+	return gameworld.RoomItem{
+		Archetype: ii.Archetype,
+		Adj1:      ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+		Sharpness:            ii.Sharpness,
+		HardnessMod:          ii.HardnessMod,
+		CraftedValue:         ii.CraftedValue,
+		ItemBits:             ii.ItemBits,
+		State:                ii.State,
+		Extend:               ii.Tail,
+		WrittenText:          ii.WrittenText,
+		SigilSpellID:         ii.SigilSpellID,
+		SigilOwner:           ii.SigilOwner,
+		SigilCaster:          ii.SigilCaster,
+		BladeSpellExpiry:     ii.BladeSpellExpiry,
+		BladeSpellPrevVal3:   ii.BladeSpellPrevVal3,
+		BladeSpellPrevVal5:   ii.BladeSpellPrevVal5,
+		BladeSpellAdjApplied: ii.BladeSpellAdjApplied,
 	}
 }
 

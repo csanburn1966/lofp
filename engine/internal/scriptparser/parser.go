@@ -818,7 +818,7 @@ func (p *fileParser) parseItem(fields []string) {
 		// Flags
 		case "CRAFTABLE", "DYEABLE", "ENCRUSTABLE", "DYE", "FLIPABLE",
 			"HIDDEN", "LATCHABLE", "LIGHTABLE", "LOCKABLE", "OPENABLE",
-			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2", "SHIELDGRIP", "WRITEABLE":
+			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2", "SHIELDGRIP", "WRITEABLE", "INTANGIBLE":
 			item.Flags = append(item.Flags, cmd)
 		case "IFVERB", "IFPREVERB", "IFVERB2", "IFPREVERB2",
 			"IFITEM", "IFTOUCH", "IFVAR", "IFNOITEM",

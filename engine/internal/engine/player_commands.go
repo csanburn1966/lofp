@@ -183,6 +183,10 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 	if e.migrateRegionalCoinItems(&player) {
 		needsSave = true
 	}
+	// CyberTech purchases made before implants were installed (cyberware.go).
+	if e.migrateCyberwareItems(&player) {
+		needsSave = true
+	}
 	if needsSave {
 		e.SavePlayer(ctx, &player)
 	}
@@ -1187,6 +1191,56 @@ func (e *GameEngine) deductCopper(player *Player, amount int) {
 	}
 }
 
+// Bare SEARCH vs a hidden player (see the SEARCH case in ProcessCommand).
+// LEGENDS.DOC: hiding depends on "lighting, terrain and the perception of
+// creatures and characters in the room" — no original numbers survive, so
+// these are tunable.
+const (
+	searchMinChance       = 5  // same 5/95 bounds as the combat system
+	searchMaxChance       = 95
+	hideDarknessBonus     = 20 // unlit DARKNESS room (roomIsUnlitDark)
+	hideOutdoorNightBonus = 10 // outdoor terrain between 7pm and 5am game time
+)
+
+// hideConcealmentBonus is the bonus a hider gets against searcher from the
+// room's conditions (see roomConcealmentBonus). Both come from poor light, so
+// neither applies against a searcher who sees well in the dark (Ephemerals —
+// LEGENDS.DOC).
+func (e *GameEngine) hideConcealmentBonus(roomNum int, searcher *Player) int {
+	if searcher.IsEphemeral() || searcher.cyberNightVision() {
+		return 0
+	}
+	return e.roomConcealmentBonus(roomNum)
+}
+
+// roomConcealmentBonus is the room's concealment from poor light: darkness
+// with no light source present, and/or being outdoors at night. The two
+// stack. HIDE uses it directly (there's no searcher yet); SEARCH goes through
+// hideConcealmentBonus.
+func (e *GameEngine) roomConcealmentBonus(roomNum int) int {
+	bonus := 0
+	if e.roomIsUnlitDark(roomNum) {
+		bonus += hideDarknessBonus
+	}
+	if room := e.rooms[roomNum]; room != nil && isOutdoorTerrain(room.Terrain) {
+		// 19:00–04:59. Not IsNight(), which starts at 20:00.
+		if h := GameHour(); h >= 19 || h < 5 {
+			bonus += hideOutdoorNightBonus
+		}
+	}
+	return bonus
+}
+
+// searchFindChance is the percent chance a SEARCH by searcher reveals hider:
+// 99 − (hider's rating − searcher's Perception), clamped to 5–95. Only the
+// searcher's Perception counts (plus a Bionic Ear's hearing); Stealth is a
+// hiding skill, not a spotting one.
+func searchFindChance(searcher, hider *Player, concealBonus int) int {
+	hideRating := hider.Agility + effectiveStealthSkill(hider)*5 + concealBonus
+	chance := 99 - (hideRating - searcher.Perception - searcher.cyberHearingBonus())
+	return max(searchMinChance, min(chance, searchMaxChance))
+}
+
 // doHide handles the HIDE command.
 func (e *GameEngine) doHide(ctx context.Context, player *Player) *CommandResult {
 	if player.Hidden {
@@ -1200,27 +1254,77 @@ func (e *GameEngine) doHide(ctx context.Context, player *Player) *CommandResult 
 	if player.Joined {
 		return &CommandResult{Messages: []string{"You can't hide while in combat!"}}
 	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(time.Until(player.RoundTimeExpiry).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
+	}
 	stealthSkill := effectiveStealthSkill(player)
-	hideChance := 25 + stealthSkill*5 + player.Agility/10
+	hideChance := 25 + stealthSkill*5 + player.Agility/10 + unemoteSkillBonus(player) +
+		e.roomConcealmentBonus(player.RoomNumber)
 	if hideChance > 95 {
 		hideChance = 95
 	}
+	// Every hide attempt, successful or not, costs 5 seconds of round time
+	// (halved by haste, doubled by slow — see applyRoundTime).
+	hideRT := applyRoundTime(player, 5)
+	player.RoundTimeExpiry = time.Now().Add(time.Duration(hideRT) * time.Second)
+	rtLine := fmt.Sprintf(" [Round: %d sec]", hideRT)
 	if rand.Intn(100) >= hideChance {
 		return &CommandResult{
-			Messages:      []string{"You fail to find a suitable hiding place."},
-			RoomBroadcast: []string{fmt.Sprintf("%s looks around nervously.", player.FirstName)},
+			Messages:      []string{"You fail to find a suitable hiding place.", rtLine},
+			RoomBroadcast: []string{fmt.Sprintf("%s gropes around, trying to hide.", player.FirstName)},
 		}
 	}
 	player.Hidden = true
 	e.SavePlayer(ctx, player)
 	return &CommandResult{
-		Messages:      []string{"You slip into hiding."},
+		Messages:      []string{"You slip into hiding.", rtLine},
 		RoomBroadcast: []string{fmt.Sprintf("%s fades into the shadows.", player.FirstName)},
 		// Player.Hidden is already true by the time this reaches api.go's
 		// concealed-broadcast choke point, which would otherwise suppress this
 		// exact line — the one announcing that they just went into hiding.
 		ConcealedBroadcastOK: true,
 	}
+}
+
+// doSneakIntoItem handles SNEAK <item> (e.g. SNEAK ALLEY). The original alley
+// items script their stealthy entry on STEAL (with its own Stealth SKILLCHECK)
+// and their open entry on GO, so SNEAK runs the item's STEAL scripts. Items
+// without one can't be snuck into.
+func (e *GameEngine) doSneakIntoItem(ctx context.Context, player *Player, args []string) *CommandResult {
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(time.Until(player.RoundTimeExpiry).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
+	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	room := e.rooms[player.RoomNumber]
+	if room == nil {
+		return &CommandResult{Error: "You are nowhere!"}
+	}
+	target, skip := parseOrdinal(strings.ToLower(strings.Join(args, " ")))
+	for i, ri := range room.Items {
+		itemDef := e.items[ri.Archetype]
+		if itemDef == nil {
+			continue
+		}
+		if !matchesTarget(e.getItemNounName(itemDef), target, e.getAdjName(ri.Adj1), e.getAdjName(ri.Adj2), e.getAdjName(ri.Adj3)) {
+			continue
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		if result, reacted := e.runStealItemScripts(ctx, player, room, &room.Items[i], itemDef); reacted {
+			if len(result.Messages) == 0 {
+				result.Messages = []string{"You can't sneak there."}
+			}
+			return result
+		}
+		return &CommandResult{Messages: []string{"You can't sneak there."}}
+	}
+	return &CommandResult{Messages: []string{"You can't go that way."}}
 }
 
 // doSneak handles the SNEAK command — move while hidden.
@@ -1241,18 +1345,21 @@ func (e *GameEngine) doSneak(ctx context.Context, player *Player, args []string)
 	}
 	if mapped, ok := dirMap[dir]; ok {
 		dir = mapped
+	} else {
+		return e.doSneakIntoItem(ctx, player, args)
 	}
 	stealthSkill := effectiveStealthSkill(player)
-	sneakChance := 30 + stealthSkill*5 + player.Agility/10 + player.Quickness/10
+	sneakChance := 30 + stealthSkill*5 + player.Agility/10 + player.Quickness/10 + unemoteSkillBonus(player)
 
 	// Harder to slip in unnoticed if someone is already in the destination room —
-	// reduce the chance by the highest Perception/5 among players there.
+	// reduce the chance by the highest Perception/5 among players there (a
+	// Bionic Ear's hearing counts toward it).
 	if room := e.rooms[player.RoomNumber]; room != nil {
 		if destNum, ok := room.Exits[dir]; ok && e.sessions != nil {
 			highestPerception := 0
 			for _, p := range e.sessions.OnlinePlayers() {
-				if p.RoomNumber == destNum && p.FirstName != player.FirstName && p.Perception > highestPerception {
-					highestPerception = p.Perception
+				if p.RoomNumber == destNum && p.FirstName != player.FirstName && p.Perception+p.cyberHearingBonus() > highestPerception {
+					highestPerception = p.Perception + p.cyberHearingBonus()
 				}
 			}
 			sneakChance -= highestPerception / 5
@@ -1439,7 +1546,7 @@ func (e *GameEngine) doSkin(ctx context.Context, player *Player, args []string) 
 		// it's already marked Skinned above — or players would just retry until it
 		// worked. Room text matches the 1996 capture: "Delight fails to skin a stone ogre."
 		sage, wood := player.Skills[32], player.Skills[18]
-		if !player.IsGM && rand.Intn(100) >= skinSuccessChance(sage, wood) {
+		if !player.IsGM && rand.Intn(100) >= skinSuccessChance(sage, wood)+unemoteSkillBonus(player) {
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("You fail to skin %s%s, ruining it.", article, displayName)},
 				RoomBroadcast: []string{fmt.Sprintf("%s fails to skin %s%s.", player.FirstName, article, displayName)},

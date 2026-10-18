@@ -42,6 +42,13 @@ type LogEntry struct {
 	Resolved   bool       `bson:"resolved,omitempty" json:"resolved,omitempty"`
 	ResolvedBy string     `bson:"resolvedBy,omitempty" json:"resolvedBy,omitempty"`
 	ResolvedAt *time.Time `bson:"resolvedAt,omitempty" json:"resolvedAt,omitempty"`
+	// Reply is a staff response to a player REPORT. It's shown to the player the
+	// next time they enter the game (or immediately, if they're online on this
+	// machine); ReplyDeliveredAt records when that happened so it's shown once.
+	Reply            string     `bson:"reply,omitempty" json:"reply,omitempty"`
+	RepliedBy        string     `bson:"repliedBy,omitempty" json:"repliedBy,omitempty"`
+	RepliedAt        *time.Time `bson:"repliedAt,omitempty" json:"repliedAt,omitempty"`
+	ReplyDeliveredAt *time.Time `bson:"replyDeliveredAt,omitempty" json:"replyDeliveredAt,omitempty"`
 }
 
 type Logger struct {
@@ -150,6 +157,86 @@ func (l *Logger) SetResolved(ctx context.Context, id string, resolved bool, reso
 		options.FindOneAndUpdate().SetReturnDocument(options.After))
 	var entry LogEntry
 	if err := res.Decode(&entry); err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+// SetReply stores (or replaces) a staff reply on a player REPORT and marks it
+// undelivered, so the player sees the latest reply on their next game entry.
+// An empty reply clears it.
+func (l *Logger) SetReply(ctx context.Context, id string, reply string, repliedBy string) (*LogEntry, error) {
+	if l.coll == nil {
+		return nil, fmt.Errorf("no database connection")
+	}
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid log id: %w", err)
+	}
+	var update bson.M
+	if reply == "" {
+		update = bson.M{"$unset": bson.M{"reply": "", "repliedBy": "", "repliedAt": "", "replyDeliveredAt": ""}}
+	} else {
+		update = bson.M{
+			"$set":   bson.M{"reply": reply, "repliedBy": repliedBy, "repliedAt": time.Now()},
+			"$unset": bson.M{"replyDeliveredAt": ""},
+		}
+	}
+	res := l.coll.FindOneAndUpdate(ctx, bson.M{"_id": oid, "event": EventReport}, update,
+		options.FindOneAndUpdate().SetReturnDocument(options.After))
+	var entry LogEntry
+	if err := res.Decode(&entry); err != nil {
+		return nil, err
+	}
+	return &entry, nil
+}
+
+// ClaimPendingReplies returns the undelivered report replies for a character
+// (matched on full name, as REPORT entries are logged) and marks each one
+// delivered. Each entry is claimed atomically, so two simultaneous logins
+// can't both show the same reply.
+func (l *Logger) ClaimPendingReplies(ctx context.Context, playerFullName string) ([]LogEntry, error) {
+	if l.coll == nil {
+		return nil, nil
+	}
+	filter := bson.M{
+		"event":            EventReport,
+		"player":           playerFullName,
+		"reply":            bson.M{"$exists": true, "$ne": ""},
+		"replyDeliveredAt": bson.M{"$exists": false},
+	}
+	cursor, err := l.coll.Find(ctx, filter, options.Find().SetSort(bson.D{{Key: "timestamp", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	var pending []LogEntry
+	if err := cursor.All(ctx, &pending); err != nil {
+		return nil, err
+	}
+	var claimed []LogEntry
+	for _, e := range pending {
+		res, err := l.coll.UpdateOne(ctx,
+			bson.M{"_id": e.ID, "replyDeliveredAt": bson.M{"$exists": false}},
+			bson.M{"$set": bson.M{"replyDeliveredAt": time.Now()}})
+		if err != nil || res.ModifiedCount == 0 {
+			continue
+		}
+		claimed = append(claimed, e)
+	}
+	return claimed, nil
+}
+
+// Get returns a single log entry by id.
+func (l *Logger) Get(ctx context.Context, id string) (*LogEntry, error) {
+	if l.coll == nil {
+		return nil, fmt.Errorf("no database connection")
+	}
+	oid, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return nil, fmt.Errorf("invalid log id: %w", err)
+	}
+	var entry LogEntry
+	if err := l.coll.FindOne(ctx, bson.M{"_id": oid}).Decode(&entry); err != nil {
 		return nil, err
 	}
 	return &entry, nil

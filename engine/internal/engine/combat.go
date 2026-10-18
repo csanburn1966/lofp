@@ -420,6 +420,20 @@ func weaponKillFlavor(dtype string, ranged bool) string {
 	return pool[rand.Intn(len(pool))]
 }
 
+// monsterGetsDeathCrit reports whether a monster can receive a fancy death
+// critical (weaponKillFlavor / elementalKillFlavor) when killed. GMSCRIPT.DOC
+// immunity #9 is "susceptibility to death criticals": 2 is the default, and
+// it's set low (almost always 0) on creatures lacking a normal humanoid or
+// animal physiology — oozes, elementals, constructs, etc. Anything below the
+// default suppresses the fancy line; the normal severity/damage line is shown.
+func monsterGetsDeathCrit(def *gameworld.MonsterDef) bool {
+	if def == nil {
+		return true
+	}
+	level, ok := def.Immunities[9]
+	return !ok || level >= 2
+}
+
 // isRangedWeaponType reports whether a weapon type fires/throws its damage rather
 // than delivering it in melee — used to pick the wider ranged-puncture kill-flavor
 // pool for bow/crossbow (and thrown) kills.
@@ -695,6 +709,37 @@ func (e *GameEngine) massProtectionGroupBonus(player *Player) int {
 	return 0
 }
 
+// groupFightingBonus is the to-hit bonus (added to attack rating, so each point is
+// +1% to hit) for fighting alongside your group: +2 per group member present in the
+// room, counting yourself. Wolflings' pack tactics make each fellow Wolfling worth
+// +5 instead of +2 to a Wolfling attacker; non-Wolflings get the flat +2 for every
+// member. E.g. 3 Wolflings + 2 Humans: Humans get 2*5 = +10, Wolflings get
+// 5*3 + 2*2 = +19. Dead or absent members don't count, and a player with no
+// group-mates in the room gets nothing.
+func (e *GameEngine) groupFightingBonus(player *Player) int {
+	const perMember, perWolfling = 2, 5
+	members, wolflings := 1, 0
+	if player.Race == RaceWolfling {
+		wolflings = 1
+	}
+	for _, mate := range e.groupMates(player) {
+		if mate.Dead || mate.RoomNumber != player.RoomNumber {
+			continue
+		}
+		members++
+		if mate.Race == RaceWolfling {
+			wolflings++
+		}
+	}
+	if members < 2 {
+		return 0
+	}
+	if player.Race == RaceWolfling {
+		return wolflings*perWolfling + (members-wolflings)*perMember
+	}
+	return members * perMember
+}
+
 func playerDefenseRating(player *Player) int {
 	rating := 25
 	rating += player.Level * 3
@@ -763,6 +808,10 @@ func armorSlotsForBodyPart(part string) []string {
 func armorDRForBodyPart(player *Player, items map[int]*gameworld.ItemDef, part string) int {
 	slots := armorSlotsForBodyPart(part)
 	total := 0
+	// Cyberplate Armor (cyberware.go) covers everything but head and hands.
+	if part != "head" && part != "right hand" && part != "left hand" {
+		total += player.cyberArmorDR()
+	}
 	for _, worn := range player.Worn {
 		def := items[worn.Archetype]
 		if def == nil || def.Type != "ARMOR" {
@@ -1193,7 +1242,16 @@ func (e *GameEngine) isArenaRoom(roomNum int) bool {
 
 // ---- Player attacks Monster ----
 
-func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target string) *CommandResult {
+func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target string) (res *CommandResult) {
+	// Once the attack engages (past every refusal below), an Ephemeral is drawn
+	// onto the physical plane — see ephemeral.go. Covers BITE and BACKSTAB too.
+	committed := false
+	defer func() {
+		if committed {
+			res = ephemeralGoOnOffense(player, res)
+		}
+	}()
+
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't do that. You are dead."}}
 	}
@@ -1218,7 +1276,10 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, target)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, target)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		// Check if they're trying to attack a player
 		if e.sessions != nil {
@@ -1310,6 +1371,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 	}
 
 	// Engage
+	committed = true
 	if backstab {
 		// Committed: leave hiding only now, so a backstab refused above
 		// (no back, not advanced, in round time...) keeps the player hidden.
@@ -1404,7 +1466,8 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 	}
 
 	// Resolve to-hit
-	attackRating := e.playerAttackRating(player, weaponDef) + wMod - fatPenalty
+	groupBonus := e.groupFightingBonus(player)
+	attackRating := e.playerAttackRating(player, weaponDef) + wMod - fatPenalty + groupBonus
 	if inst.Stunned {
 		attackRating += 20 // bonus for attacking a stunned target (LEGENDS.DOC: -20 defense while stunned)
 	}
@@ -1589,7 +1652,8 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		// killing base hit gets weaponKillFlavor in place of the normal severity line.
 		// weaponDef is nil for bare-handed/Martial Arts combat, so it can't be
 		// dereferenced directly here.
-		if killed && critType == "" {
+		deathCrit := monsterGetsDeathCrit(def)
+		if killed && critType == "" && deathCrit {
 			ranged := weaponDef != nil && isRangedWeaponType(weaponDef.Type)
 			if kf := weaponKillFlavor(dtype, ranged); kf != "" {
 				baseHitLine = " " + kf
@@ -1598,7 +1662,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		msgs = append(msgs, baseHitLine)
 
 		if len(critMsgs) > 0 {
-			if killed {
+			if killed && deathCrit {
 				if kf := elementalKillFlavor(critType); kf != "" {
 					msgs = append(msgs, critMsgs[0], " "+kf)
 				} else {
@@ -1739,7 +1803,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		case StanceWary:
 			ohAttack -= 5
 		}
-		ohAttack += wMod - fatPenalty
+		ohAttack += wMod - fatPenalty + groupBonus
 		ohToHit := calcToHit(ohAttack, monDefense)
 		ohRoll := rand.Intn(100) + 1
 		ohSelfVerb, ohThirdVerb, ohDmgNoun := attackVerb(offHandDef)
@@ -1835,7 +1899,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 
 			ohKilled, ohWoke := e.damageMonster(inst.ID, ohDmg, player.FirstName)
 
-			if ohKilled && ohCritType == "" {
+			if ohKilled && ohCritType == "" && monsterGetsDeathCrit(def) {
 				if kf := weaponKillFlavor(ohDtype, isRangedWeaponType(offHandDef.Type)); kf != "" {
 					ohBaseHitLine = " " + kf
 				}
@@ -1843,7 +1907,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			result.Messages = append(result.Messages, ohBaseHitLine)
 
 			if len(ohCritMsgs) > 0 {
-				if ohKilled {
+				if ohKilled && monsterGetsDeathCrit(def) {
 					if kf := elementalKillFlavor(ohCritType); kf != "" {
 						result.Messages = append(result.Messages, ohCritMsgs[0], " "+kf)
 					} else {
@@ -1867,10 +1931,20 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 				result.Messages = append(result.Messages, " It collapses, dead.")
 				e.handleMonsterDeath(e.sharedXPRecipients(player), inst, def)
 			}
-			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s %s at %s%s with their off hand. %s", player.DisplayNameCap(), ohThirdVerb, article, name, strings.TrimRight(ohHitLabel, "!")+"."))
+			// Same format as the main-hand broadcast, matching the original capture:
+			// "Trieste thrusts at a bog ooze. Hit! Massive damage."
+			ohBroadcast := fmt.Sprintf("%s %s at %s%s. %s %s.", player.DisplayNameCap(), ohThirdVerb, article, name, ohHitLabel, simplifiedDamageTier(ohDmg))
+			if ohKilled {
+				if deathText := def.TextOverrides["TEXD"]; deathText != "" {
+					ohBroadcast += fmt.Sprintf(" It %s", deathText)
+				} else {
+					ohBroadcast += " It collapses, dead."
+				}
+			}
+			result.RoomBroadcast = append(result.RoomBroadcast, ohBroadcast)
 		} else {
 			result.Messages = append(result.Messages, fmt.Sprintf(" [ToHit: %d, Roll: %d] Miss.", ohToHit, ohRoll))
-			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s %s at %s%s with their off hand. Miss.", player.DisplayNameCap(), ohThirdVerb, article, name))
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s %s at %s%s. Miss.", player.DisplayNameCap(), ohThirdVerb, article, name))
 		}
 	}
 
@@ -1968,11 +2042,16 @@ func (e *GameEngine) doBackstab(ctx context.Context, player *Player, target stri
 // the attack from attackerInst. Returns (intercepted, roomMessages, summonerNameToStun).
 // summonerNameToStun is non-empty when the elemental was destroyed; caller handles stun.
 // Safe to call without monsterMgr.mu held.
-func (e *GameEngine) elementalGuardIntercept(_ *MonsterInstance, attackerDef *gameworld.MonsterDef, player *Player) (bool, []string, string) {
+func (e *GameEngine) elementalGuardIntercept(attackerInst *MonsterInstance, attackerDef *gameworld.MonsterDef, player *Player) (bool, []string, string) {
 	e.monsterMgr.mu.Lock()
 	var guardIdx int = -1
 	for i := range e.monsterMgr.instances {
 		g := &e.monsterMgr.instances[i]
+		// A guard can't intercept its own attack — reported: a controlled zovembie
+		// turned on its guarded summoner and then "fought itself" every round.
+		if attackerInst != nil && g.ID == attackerInst.ID {
+			continue
+		}
 		if g.IsSummoned && g.Alive && g.RoomNumber == player.RoomNumber && containsString(g.GuardingPlayers, player.FirstName) {
 			guardIdx = i
 			break
@@ -2188,6 +2267,11 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 			roomMsgs = append(roomMsgs, fmt.Sprintf("%s%s %s %s, but the attack passes harmlessly through %s misty form!", capArt, name, monVerb, player.FirstName, player.Possessive()))
 			return playerMsgs, roomMsgs, player
 		}
+		if ephemeralPassesThrough(player, def) {
+			playerMsgs = append(playerMsgs, fmt.Sprintf(" %s%s's attack passes harmlessly through your ethereal form!", capArt, name))
+			roomMsgs = append(roomMsgs, fmt.Sprintf("%s%s %s %s, but the attack passes harmlessly through %s ethereal form!", capArt, name, monVerb, player.FirstName, player.Possessive()))
+			return playerMsgs, roomMsgs, player
+		}
 
 		dmg := monsterDamage(def)
 		if openEndedBonus > 0 {
@@ -2211,7 +2295,7 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 		}
 		dtype := damageTypeForWeapon(monWeaponDef, e)
 		woundLevel := woundLevelFromDamage(dmg, player.MaxBodyPoints)
-		player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, !player.Undead)
+		player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, player.CanBleed())
 		player.Bleeding = anyBleeding(player.Wounds)
 		player.BodyPoints -= dmg
 		rawBP := player.BodyPoints
@@ -2226,8 +2310,8 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 
 		// Monster poison/disease/fatigue on hit. GMSCRIPT.DOC immunity #7 ("life
 		// affecting") exempts undead from poison/disease due to lacking an active
-		// life force — mirrors the !player.Undead bleeding exemption in wounds.go.
-		if !player.Undead {
+		// life force — mirrors the !player.IsUndead() bleeding exemption in wounds.go.
+		if !player.IsUndead() {
 			if def.PoisonChance > 0 && rand.Intn(100) < def.PoisonChance {
 				player.Poisoned = true
 				if 1 > player.PoisonLevel {
@@ -2421,7 +2505,7 @@ func (e *GameEngine) applyMonsterElementalDamageToPlayer(player *Player, dmg int
 	dmg = formDamageReduction(player, dmg) // Mist Form: immune; Slime Form: 90% reduction
 	dtype = damageTypeForSpecAttack(dmgType)
 	level := woundLevelFromDamage(dmg, player.MaxBodyPoints)
-	player.Wounds = applyWoundToList(player.Wounds, part, dtype, level, !player.Undead)
+	player.Wounds = applyWoundToList(player.Wounds, part, dtype, level, player.CanBleed())
 	player.Bleeding = anyBleeding(player.Wounds)
 	player.BodyPoints -= dmg
 	rawBP = player.BodyPoints
@@ -2472,6 +2556,14 @@ func (e *GameEngine) monsterTrySpecialAttack(inst *MonsterInstance, def *gamewor
 		specText = fmt.Sprintf("%s%s uses a special attack on %s!", capArt, name, target.FirstName)
 	}
 
+	// A physical special (crush/slash — anything not HEAT/COLD/ELECTRIC) is a
+	// mundane attack, so it passes through an ethereal Ephemeral like a weapon would.
+	if damageTypeForSpecAttack(def.SpecDmgType) != "burn" && ephemeralPassesThrough(target, def) {
+		playerMsgs = append(playerMsgs, specText, " It passes harmlessly through your ethereal form!")
+		roomMsgs = append(roomMsgs, fmt.Sprintf("%s It passes harmlessly through %s ethereal form!", specText, target.Possessive()))
+		return playerMsgs, roomMsgs, target, true
+	}
+
 	dmg := def.SpecBase + rand.Intn(max(1, def.SpecDmg))
 	finalDmg, part, dtype, rawBP := e.applyMonsterElementalDamageToPlayer(target, dmg, def.SpecDmgType, true)
 
@@ -2517,6 +2609,9 @@ func (e *GameEngine) monsterTryStartCast(inst *MonsterInstance, def *gameworld.M
 	}
 	var affordable []int
 	for _, id := range def.Spells {
+		if _, summons := sorcerousSummonsDemon[id]; summons && e.sorcerousDemonPresent(id, inst.RoomNumber) {
+			continue
+		}
 		if sp := FindSpellByID(id); sp != nil && sp.ManaCost <= inst.CurrentMana {
 			affordable = append(affordable, id)
 		}
@@ -2555,6 +2650,44 @@ func (e *GameEngine) monsterTryStartCast(inst *MonsterInstance, def *gameworld.M
 		e.localRoomBroadcast(inst.RoomNumber, []string{texs})
 	}
 	return true
+}
+
+// monsterCastChance is a monster's percent chance to get a spell off. Spellcraft check
+// (SPELLSKILL, "base spellcraft skill" per GMSCRIPT.DOC): mirrors the shape of the
+// player formula (25 base + skill-derived bonus, capped 95%), with SPELLSKILL treated
+// as an already-scaled bonus — a judgment call, since the doc doesn't give the exact
+// formula, but it matches original/log.txt: every recorded black muldragun cast either
+// lands or gets disrupted, never shows its TEXQ miss.
+func monsterCastChance(def *gameworld.MonsterDef) int {
+	return max(5, min(25+def.SpellSkill, 95))
+}
+
+// resolveMonsterSorcerousSummons finishes a monster's Sorcerous Summons I/II cast:
+// the same cast roll as its other spells (TEXQ on a miss), then the spell's demon
+// appears in the monster's room (spawnSorcerousDemon). Returns the room messages.
+// Called without the monster lock held, and touches inst only to read its room —
+// the spawn can grow the instances slice that inst points into.
+func (e *GameEngine) resolveMonsterSorcerousSummons(inst *MonsterInstance, def *gameworld.MonsterDef, spellID int) []string {
+	name := FormatMonsterName(def, e.monAdjs)
+	capArt := capArticle(articleFor(name, def.Unique))
+	roomNum := inst.RoomNumber
+
+	gesture := fmt.Sprintf("%s%s gestures and chants a dark incantation.", capArt, name)
+	if texl := def.TextOverrides["TEXL"]; texl != "" {
+		gesture = texl + "." // e.g. "A vith drone focuses energy."
+	}
+	if rand.Intn(100) >= monsterCastChance(def) {
+		texq := def.TextOverrides["TEXQ"]
+		if texq == "" {
+			texq = fmt.Sprintf("%s%s's spell fizzles.", capArt, name)
+		}
+		return []string{gesture, texq}
+	}
+	appear, ok := e.spawnSorcerousDemon(spellID, roomNum)
+	if !ok {
+		return []string{gesture}
+	}
+	return []string{gesture, appear}
 }
 
 // monsterSpellHitFlavor returns the "<subject> <verb> ... at <object>!" line for a
@@ -2642,6 +2775,11 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 	if sp == nil || e.sessions == nil {
 		return nil, nil, nil
 	}
+	// Sorcerous Summons I/II (139/140) call up a demon rather than striking the
+	// target, so they don't need the target to still be here.
+	if _, summons := sorcerousSummonsDemon[spellID]; summons {
+		return nil, e.resolveMonsterSorcerousSummons(inst, def, spellID), nil
+	}
 	var target *Player
 	for _, p := range e.sessions.OnlinePlayers() {
 		if p.FirstName == targetName && p.RoomNumber == inst.RoomNumber && !p.Dead {
@@ -2664,20 +2802,7 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 	}
 	roomMsgs = append(roomMsgs, gestureMsg)
 
-	// Spellcraft check (SPELLSKILL, "base spellcraft skill" per GMSCRIPT.DOC): mirrors
-	// the shape of the player formula (25 base + skill-derived bonus, capped 95%), with
-	// SPELLSKILL treated as an already-scaled bonus — a judgment call, since the doc
-	// doesn't give the exact formula, but it matches original/log.txt: every recorded
-	// black muldragun cast either lands or gets disrupted, never shows its TEXQ miss.
-	castChance := 25 + def.SpellSkill
-	if castChance > 95 {
-		castChance = 95
-	}
-	if castChance < 5 {
-		castChance = 5
-	}
-
-	if rand.Intn(100) >= castChance {
+	if rand.Intn(100) >= monsterCastChance(def) {
 		texq := def.TextOverrides["TEXQ"]
 		if texq == "" {
 			texq = fmt.Sprintf("%s%s's spell fizzles.", capArt, name)
@@ -2918,6 +3043,11 @@ func (e *GameEngine) handlePlayerDeath(player *Player, killerName string) []stri
 	player.CombatTarget = nil
 	player.Joined = false
 	player.Position = 2 // laying down
+	// A corpse isn't stunned — and the stun gate in ProcessCommand would
+	// otherwise block DEPART until it expired.
+	player.Stunned = false
+	player.StunExpiry = time.Time{}
+	player.KnockedDown = false
 	// A corpse can't stay hidden/invisible/phantom-formed — it needs to be
 	// visible so other players can find and raise it.
 	player.Hidden = false
@@ -3376,8 +3506,8 @@ func (e *GameEngine) handleMonsterDeath(recipients []*Player, inst *MonsterInsta
 				room.Items = append(room.Items, ri)
 				wepName := e.formatItemName(wepDef, wep.Adj, 0, 0)
 				if e.localRoomBroadcast != nil {
-					article := articleFor(wepName, false)
-					e.localRoomBroadcast(killer.RoomNumber, []string{fmt.Sprintf("%s%s clatters to the ground.", capArticle(article), wepName)})
+					// formatItemName already includes the article ("a greatsword").
+					e.localRoomBroadcast(killer.RoomNumber, []string{fmt.Sprintf("%s clatters to the ground.", capitalize(wepName))})
 				}
 			}
 		}
@@ -3402,8 +3532,8 @@ func (e *GameEngine) handleMonsterDeath(recipients []*Player, inst *MonsterInsta
 			if e.gmBroadcast != nil {
 				monsterName := FormatMonsterName(def, e.monAdjs)
 				monsterPhrase := articleFor(monsterName, def.Unique) + monsterName
-				itemPhrase := articleFor(droppedItemName, false) + droppedItemName
-				e.gmBroadcast([]string{fmt.Sprintf("*HONK* %s just killed %s and got %s.", killer.FirstName, monsterPhrase, itemPhrase)})
+				// droppedItemName comes from formatItemName, article included.
+				e.gmBroadcast([]string{fmt.Sprintf("*HONK* %s just killed %s and got %s.", killer.FirstName, monsterPhrase, droppedItemName)})
 			}
 		}
 	}
@@ -3522,24 +3652,14 @@ func (e *GameEngine) rollQueuedTreasureDrop(roomNum int) (dropMsg, itemName stri
 	if itemDef == nil {
 		return "", ""
 	}
-	ri := gameworld.RoomItem{
-		Ref:       nextRoomItemRef(room),
-		Archetype: item.Archetype,
-		Adj1:      item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
-		Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5,
-		Sharpness:   item.Sharpness,
-		HardnessMod: item.HardnessMod,
-			CraftedValue: item.CraftedValue,
-		ItemBits:    item.ItemBits,
-		State:       item.State,
-		Extend:      item.Tail,
-	}
+	ri := roomItemFromInventory(&item)
+	ri.Ref = nextRoomItemRef(room)
 	if isContainerDef(itemDef) && len(item.Contents) > 0 {
 		e.roomContainerSet(roomNum, ri.Ref, item.Contents)
 	}
 	room.Items = append(room.Items, ri)
 	itemName = e.formatItemName(itemDef, item.Adj1, item.Adj2, item.Adj3, item.Tail)
-	return fmt.Sprintf("You see %s lies among the remains.", itemName), itemName
+	return fmt.Sprintf("You see %s lying among the remains.", itemName), itemName
 }
 
 // dropMonsterCarriedItems drops everything a GM silently staged into inst's carried
@@ -3559,24 +3679,14 @@ func (e *GameEngine) dropMonsterCarriedItems(roomNum int, inst *MonsterInstance)
 		if itemDef == nil {
 			continue
 		}
-		ri := gameworld.RoomItem{
-			Ref:       nextRoomItemRef(room),
-			Archetype: ii.Archetype,
-			Adj1:      ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
-			Sharpness:   ii.Sharpness,
-			HardnessMod: ii.HardnessMod,
-			CraftedValue: ii.CraftedValue,
-			ItemBits:    ii.ItemBits,
-			State:       ii.State,
-			Extend:      ii.Tail,
-		}
+		ri := roomItemFromInventory(&ii)
+		ri.Ref = nextRoomItemRef(room)
 		if isContainerDef(itemDef) && len(ii.Contents) > 0 {
 			e.roomContainerSet(roomNum, ri.Ref, ii.Contents)
 		}
 		room.Items = append(room.Items, ri)
 		name := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
-		msgs = append(msgs, fmt.Sprintf("You see %s lies among the remains.", name))
+		msgs = append(msgs, fmt.Sprintf("You see %s lying among the remains.", name))
 	}
 	inst.CarriedItems = nil
 	if e.monsterMgr != nil {
@@ -3614,6 +3724,10 @@ func (e *GameEngine) doFlee(ctx context.Context, player *Player) *CommandResult 
 	}
 	if player.Immobilized {
 		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
+	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
 
 	room := e.rooms[player.RoomNumber]

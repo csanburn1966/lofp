@@ -5,7 +5,7 @@
 ## Endpoint
 
 ```
-wss://lofp.metavert.io/ws/game
+wss://lofp.sanburnlab.com/ws/game
 ```
 
 ## Authentication

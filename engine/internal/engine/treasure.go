@@ -113,88 +113,18 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int, md *gamewo
 		dropChance = 60
 	}
 
+	// The original game could leave more than one treasure item on a corpse
+	// (captures show e.g. "You find a dagger, a coral barrette and a brilliant
+	// carnelian." — the dagger being the monster's own weapon). Multi-item hauls
+	// are rare in the captures, so each extra item is a chained roll at a
+	// fraction of the base chance, stopping at the first miss, and the number of
+	// possible extras grows with the treasure level.
 	if rand.Intn(100) < dropChance {
-		// Determine drop type — all tiers available from treasure level 1
-		roll := rand.Intn(100)
-		switch {
-		case roll < 20:
-			// Weapon drop
-			if item := e.randomWeaponDrop(treasureLevel); item != nil {
-				ref := nextRoomItemRef(room)
-				item.Ref = ref
-				room.Items = append(room.Items, *item)
-				def := e.items[item.Archetype]
-				if def != nil {
-					name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
-					msgs = append(msgs, fmt.Sprintf("You see %s lies among the remains.", name))
-				}
-			}
-
-		case roll < 40:
-			// Scroll drop — spell scroll with learnable spell (available at all levels)
-			if item := e.randomScrollDrop(treasureLevel); item != nil {
-				ref := nextRoomItemRef(room)
-				item.Ref = ref
-				room.Items = append(room.Items, *item)
-				msgs = append(msgs, "A scroll lies among the remains.")
-			}
-
-		case roll < 60:
-			// Locked container (20% of item drops — raised from 15% after
-			// playtesting showed containers dropping less often than in the
-			// original game captures; the extra 5 came out of armor's band)
-			if item := e.randomChestDrop(treasureLevel); item != nil {
-				ref := nextRoomItemRef(room)
-				item.Ref = ref
-				room.Items = append(room.Items, *item)
-				e.populateContainerLoot(roomNum, item.Ref, treasureLevel, md)
-				msgs = append(msgs, "A container lies among the remains.")
-			}
-
-		case roll < 75:
-			// Potion drop
-			if item := e.randomPotionDrop(treasureLevel); item != nil {
-				ref := nextRoomItemRef(room)
-				item.Ref = ref
-				room.Items = append(room.Items, *item)
-				def := e.items[item.Archetype]
-				if def != nil {
-					name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
-					msgs = append(msgs, fmt.Sprintf("You see %s among the remains.", name))
-				}
-			}
-
-		case roll < 88:
-			// Armor drop (13% of item drops)
-			if item := e.randomArmorDrop(treasureLevel); item != nil {
-				ref := nextRoomItemRef(room)
-				item.Ref = ref
-				room.Items = append(room.Items, *item)
-				def := e.items[item.Archetype]
-				if def != nil {
-					name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
-					msgs = append(msgs, fmt.Sprintf("Some %s lies among the remains.", name))
-				}
-			}
-
-		default:
-			// Jewelry drop (remaining 12% of item drops, requires treasure >= 5)
-			if treasureLevel >= 5 {
-				if item := e.randomJewelryDrop(treasureLevel); item != nil {
-					ref := nextRoomItemRef(room)
-					item.Ref = ref
-					room.Items = append(room.Items, *item)
-					def := e.items[item.Archetype]
-					if def != nil {
-						name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
-						if item.Val3 > 0 {
-							msgs = append(msgs, fmt.Sprintf("A %s glimmers with a faint magical light among the remains.", name))
-						} else {
-							msgs = append(msgs, fmt.Sprintf("A %s lies among the remains.", name))
-						}
-					}
-				}
-			}
+		msgs = append(msgs, e.rollTreasureItem(roomNum, treasureLevel, md)...)
+		maxItems := treasureMaxItems(treasureLevel)
+		extraChance := dropChance * treasureExtraItemChancePct / 100
+		for n := 1; n < maxItems && rand.Intn(100) < extraChance; n++ {
+			msgs = append(msgs, e.rollTreasureItem(roomNum, treasureLevel, md)...)
 		}
 	}
 
@@ -204,6 +134,113 @@ func (e *GameEngine) generateTreasure(roomNum int, treasureLevel int, md *gamewo
 		// This is handled by the enchantment on items already dropped
 	}
 
+	return msgs
+}
+
+// treasureExtraItemChancePct is the chance of each additional treasure item,
+// as a percentage of the monster's base item drop chance (so a 60% drop chance
+// gives a 24% chance of a second item, and a further 24% roll for each item
+// after that, up to treasureMaxItems).
+const treasureExtraItemChancePct = 40
+
+// treasureMaxItems is how many random treasure items a single kill can yield:
+// 2 for any treasure-bearing monster, 3 from TREASURE 30, 4 from TREASURE 60.
+func treasureMaxItems(treasureLevel int) int {
+	n := 2 + treasureLevel/30
+	if n > 4 {
+		n = 4
+	}
+	return n
+}
+
+// rollTreasureItem picks one random treasure item type, places it in the room,
+// and returns the room message(s) for it (empty if the chosen type produced
+// nothing, e.g. jewelry below TREASURE 5).
+func (e *GameEngine) rollTreasureItem(roomNum, treasureLevel int, md *gameworld.MoneyDef) []string {
+	room := e.rooms[roomNum]
+	var msgs []string
+	// Determine drop type — all tiers available from treasure level 1
+	roll := rand.Intn(100)
+	switch {
+	case roll < 20:
+		// Weapon drop
+		if item := e.randomWeaponDrop(treasureLevel); item != nil {
+			ref := nextRoomItemRef(room)
+			item.Ref = ref
+			room.Items = append(room.Items, *item)
+			def := e.items[item.Archetype]
+			if def != nil {
+				name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
+				msgs = append(msgs, fmt.Sprintf("You see %s lies among the remains.", name))
+			}
+		}
+
+	case roll < 40:
+		// Scroll drop — spell scroll with learnable spell (available at all levels)
+		if item := e.randomScrollDrop(treasureLevel); item != nil {
+			ref := nextRoomItemRef(room)
+			item.Ref = ref
+			room.Items = append(room.Items, *item)
+			msgs = append(msgs, "A scroll lies among the remains.")
+		}
+
+	case roll < 60:
+		// Locked container (20% of item drops — raised from 15% after
+		// playtesting showed containers dropping less often than in the
+		// original game captures; the extra 5 came out of armor's band)
+		if item := e.randomChestDrop(treasureLevel); item != nil {
+			ref := nextRoomItemRef(room)
+			item.Ref = ref
+			room.Items = append(room.Items, *item)
+			e.populateContainerLoot(roomNum, item.Ref, treasureLevel, md)
+			msgs = append(msgs, "A container lies among the remains.")
+		}
+
+	case roll < 75:
+		// Potion drop
+		if item := e.randomPotionDrop(treasureLevel); item != nil {
+			ref := nextRoomItemRef(room)
+			item.Ref = ref
+			room.Items = append(room.Items, *item)
+			def := e.items[item.Archetype]
+			if def != nil {
+				name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
+				msgs = append(msgs, fmt.Sprintf("You see %s among the remains.", name))
+			}
+		}
+
+	case roll < 88:
+		// Armor drop (13% of item drops)
+		if item := e.randomArmorDrop(treasureLevel); item != nil {
+			ref := nextRoomItemRef(room)
+			item.Ref = ref
+			room.Items = append(room.Items, *item)
+			def := e.items[item.Archetype]
+			if def != nil {
+				name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
+				msgs = append(msgs, fmt.Sprintf("Some %s lies among the remains.", name))
+			}
+		}
+
+	default:
+		// Jewelry drop (remaining 12% of item drops, requires treasure >= 5)
+		if treasureLevel >= 5 {
+			if item := e.randomJewelryDrop(treasureLevel); item != nil {
+				ref := nextRoomItemRef(room)
+				item.Ref = ref
+				room.Items = append(room.Items, *item)
+				def := e.items[item.Archetype]
+				if def != nil {
+					name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
+					if item.Val3 > 0 {
+						msgs = append(msgs, fmt.Sprintf("A %s glimmers with a faint magical light among the remains.", name))
+					} else {
+						msgs = append(msgs, fmt.Sprintf("A %s lies among the remains.", name))
+					}
+				}
+			}
+		}
+	}
 	return msgs
 }
 

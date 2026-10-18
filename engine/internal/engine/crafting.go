@@ -271,7 +271,7 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 	}
 
 	// Success chance: base 30% + mining*5 + STR/10
-	chance := 30 + miningSkill*5 + player.Strength/10
+	chance := 30 + miningSkill*5 + player.Strength/10 + unemoteSkillBonus(player)
 	if chance > 90 {
 		chance = 90
 	}
@@ -731,7 +731,7 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 		player.RoundTime = smeltRT
 
 		// Roll against purity + skill bonus
-		smeltChance := purity + smithSkill*2
+		smeltChance := purity + smithSkill*2 + unemoteSkillBonus(player)
 		if smeltChance > 95 {
 			smeltChance = 95
 		}
@@ -1383,7 +1383,7 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 				tempRI := gameworld.RoomItem{
 					Ref: -1, Archetype: ii.Archetype,
 					Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 					ItemBits: ii.ItemBits,
 				}
 				sc := e.RunPreverbScripts(player, room, "WORK", &tempRI, itemDef)
@@ -1483,7 +1483,7 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		smithSkill := player.Skills[8]
 		baseChance := metalDifficulty(player.CraftingMetal)
 		// Add skill bonus: +3% per skill level
-		chance := baseChance + smithSkill*3
+		chance := baseChance + smithSkill*3 + unemoteSkillBonus(player)
 		if chance > 95 {
 			chance = 95
 		}
@@ -1749,14 +1749,18 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		return &CommandResult{Messages: []string{fmt.Sprintf("You are still working... %.0f seconds remaining.", remaining+0.5)}}
 	}
 
-	target := strings.ToLower(strings.Join(args, " "))
+	rawTarget := strings.ToLower(strings.Join(args, " "))
+	target, skip := parseOrdinal(rawTarget)
+	// "REPAIR 4 broadsword" / "REPAIR fourth broadsword" names one specific weapon:
+	// the 4th name-match, counted the same way as every other ordinal command.
+	hasOrdinal := target != rawTarget
 
-	// Find the weapon in inventory with DAMAGED state. Keep scanning past
-	// name-matches that aren't damaged — a player carrying more than one item
-	// with the same name (e.g. two steel stilettos, one damaged, one not)
-	// would otherwise always hit whichever one happens to sit first in the
-	// slice and be wrongly told "That doesn't need repair" even though a
-	// damaged match exists later on.
+	// Find the weapon in inventory with DAMAGED state. Without an ordinal, keep
+	// scanning past name-matches that aren't damaged — a player carrying more than
+	// one item with the same name (e.g. two steel stilettos, one damaged, one not)
+	// would otherwise always hit whichever one happens to sit first in the slice
+	// and be wrongly told "That doesn't need repair" even though a damaged match
+	// exists later on. With an ordinal, the named weapon is the one checked.
 	found := false
 	for i, ii := range player.Inventory {
 		def := e.items[ii.Archetype]
@@ -1770,9 +1774,16 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		if !matchesTarget(name, target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
 			continue
 		}
+		if skip > 0 {
+			skip--
+			continue
+		}
 		found = true
 
 		if ii.State != "DAMAGED" {
+			if hasOrdinal {
+				break
+			}
 			continue
 		}
 
@@ -1801,7 +1812,7 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		}
 
 		// Skill check: base 40% + skill*5
-		chance := 40 + skill*5
+		chance := 40 + skill*5 + unemoteSkillBonus(player)
 		if chance > 95 {
 			chance = 95
 		}
@@ -1875,7 +1886,7 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 
 	// Success chance grows with Wood Lore skill and Perception, mirroring MINE's
 	// skill-scaled chance (base 30% + skill*5 + STR/10, capped 90%).
-	chance := 30 + woodLore*6 + player.Perception/10
+	chance := 30 + woodLore*6 + player.Perception/10 + unemoteSkillBonus(player)
 	if chance > 90 {
 		chance = 90
 	}
@@ -1934,10 +1945,15 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 			if itemDef == nil {
 				continue
 			}
+			// FORAGEDEF has no copper-value field (unlike SKINITEM/MINDEF), so
+			// without a stamp computeSellValue fell back to weight+1 and every
+			// foraged find sold for 1 copper. Stamped into CraftedValue, not Val1:
+			// item 1858's (wrinkled mushroom) LICK script uses ITEMVAL1 as scratch.
 			item := InventoryItem{
-				Archetype: fd.ItemNum,
-				Val2:      fd.Val2,
-				Val5:      fd.Val5,
+				Archetype:    fd.ItemNum,
+				Val2:         fd.Val2,
+				Val5:         fd.Val5,
+				CraftedValue: e.forageItemValue(fd.ItemNum, fd.AdjNum),
 			}
 			if fd.AdjNum > 0 {
 				// Item scripts (e.g. the herb IFVAR ITEMADJ3 = ... blocks in
@@ -1963,6 +1979,67 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 	return &CommandResult{
 		Messages:    []string{"You search but find nothing useful.", fmt.Sprintf("[Round: %d sec]", rt)},
 		PlayerState: player,
+	}
+}
+
+// forageItemValue returns the copper value of a forageable item (archetype +
+// variety adjective; adj <= 0 means none), or 0 if it isn't forageable. If any
+// shop sells the same item (STOREITEM), the cheapest listing in copper is used,
+// so selling a foraged herb pays half what a merchant charges for it (e.g.
+// mandrake root, thesnia leaf, rosewood). Otherwise the value scales with the
+// item's rarity — the lowest FORAGEDEF ratio across terrains.
+func (e *GameEngine) forageItemValue(arch, adj int) int {
+	if adj < 0 {
+		adj = 0
+	}
+	minRatio := 0
+	for _, fd := range e.forageDefs {
+		fadj := fd.AdjNum
+		if fadj < 0 {
+			fadj = 0
+		}
+		if fd.ItemNum == arch && fadj == adj && (minRatio == 0 || fd.Ratio < minRatio) {
+			minRatio = fd.Ratio
+		}
+	}
+	if minRatio == 0 {
+		return 0
+	}
+
+	shopPrice := 0
+	for num, room := range e.rooms {
+		for _, si := range room.StoreItems {
+			sadj := si.Adj
+			if sadj < 0 {
+				sadj = 0
+			}
+			// Price 1 is a placeholder, not a real price — e.g. Morthain's private
+			// workshop (KKLUNK.SC9 room 45) lists rosewood and metals at 1 copper.
+			if si.Archetype != arch || sadj != adj || si.Price <= 1 {
+				continue
+			}
+			copper := currencyToCopper(e.roomCurrency(num), si.Price)
+			if shopPrice == 0 || copper < shopPrice {
+				shopPrice = copper
+			}
+		}
+	}
+	if shopPrice > 0 {
+		return shopPrice
+	}
+
+	// No shop sells it: rarer finds (lower ratio) are worth more. Tunable.
+	switch {
+	case minRatio >= 10:
+		return 20
+	case minRatio >= 7:
+		return 40
+	case minRatio >= 5:
+		return 80
+	case minRatio >= 3:
+		return 150
+	default:
+		return 300
 	}
 }
 
@@ -3213,7 +3290,7 @@ func (e *GameEngine) doMold(ctx context.Context, player *Player, args []string) 
 	player.RoundTimeExpiry = time.Now().Add(time.Duration(moldRT) * time.Second)
 	player.RoundTime = moldRT
 
-	failChance := moldFailChance(player.Level)
+	failChance := max(moldFailChance(player.Level)-unemoteSkillBonus(player), 1)
 	roll := rand.Intn(100) + 1
 
 	if roll <= failChance {

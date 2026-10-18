@@ -112,11 +112,18 @@ func (e *GameEngine) doAdvance(ctx context.Context, player *Player, args []strin
 	if player.IsImprisoned() {
 		return &CommandResult{Messages: []string{"You are trapped within a blue force bubble and cannot move!"}}
 	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
+	}
 
 	target := strings.ToLower(strings.Join(args, " "))
 
 	// Try monster first.
-	inst, def := e.findMonsterInRoom(player, target)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, target)
+	if refusal != nil {
+		return refusal
+	}
 	if inst != nil {
 		// A guard monster (GUARDITEM, see findGuardFor) steps in front of its
 		// charge — the advance lands on the guard instead, mirroring how
@@ -148,16 +155,18 @@ func (e *GameEngine) doAdvance(ctx context.Context, player *Player, args []strin
 			return &CommandResult{Messages: []string{fmt.Sprintf("You are already engaging %s%s.", article, name)}}
 		}
 		player.AdvancedOnMonsters = append(player.AdvancedOnMonsters, inst.ID)
+		// Advancing is going on the offense — draws an Ephemeral onto the
+		// physical plane (ephemeral.go), as do the other two advances below.
 		if blockedMsg != "" {
-			return &CommandResult{
+			return ephemeralGoOnOffense(player, &CommandResult{
 				Messages:      []string{blockedMsg, fmt.Sprintf("You advance towards %s%s instead.", article, name)},
 				RoomBroadcast: []string{blockedBroadcast, fmt.Sprintf("%s advances towards %s%s instead.", player.DisplayNameCap(), article, name)},
-			}
+			})
 		}
-		return &CommandResult{
+		return ephemeralGoOnOffense(player, &CommandResult{
 			Messages:      []string{fmt.Sprintf("You advance towards %s%s.", article, name)},
 			RoomBroadcast: []string{fmt.Sprintf("%s advances towards %s%s.", player.DisplayNameCap(), article, name)},
-		}
+		})
 	}
 
 	// Then a player.
@@ -174,10 +183,10 @@ func (e *GameEngine) doAdvance(ctx context.Context, player *Player, args []strin
 		}
 		player.AdvancedOnPlayers = append(player.AdvancedOnPlayers, found.FirstName)
 		found.AdvancedByPlayers = append(found.AdvancedByPlayers, player.FirstName)
-		return &CommandResult{
+		return ephemeralGoOnOffense(player, &CommandResult{
 			Messages:      []string{fmt.Sprintf("You advance towards %s.", found.DisplayName())},
 			RoomBroadcast: []string{fmt.Sprintf("%s advances towards %s.", player.DisplayNameCap(), found.DisplayName())},
-		}
+		})
 	}
 
 	return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", strings.Join(args, " "))}}
@@ -219,6 +228,10 @@ func (e *GameEngine) doRetreat(ctx context.Context, player *Player) *CommandResu
 	}
 	if !e.isEngagedInMelee(player) {
 		return &CommandResult{Messages: []string{"You aren't engaged with anyone."}}
+	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
 
 	e.breakAllMeleeEngagements(player)

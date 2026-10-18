@@ -17,12 +17,38 @@ const (
 	RaceDrakin     = 6
 	RaceMechanoid  = 7
 	RaceEphemeral  = 8
+	RaceVampire    = 9
 )
 
+// Racial groups (GMSCRIPT.DOC "RACE #", the same numbers monsters use). In the
+// original a GM could set a player's RACE to one of these, or to Vampire, to
+// override their birth race during role play — e.g. a character who becomes
+// undead (see Player.IsUndead). Never offered at character creation, which is
+// limited to the eight playable races (PlayableRaces, ValidateCharacterInput).
+const (
+	RaceExtraplanar = 21
+	RaceUndead      = 22
+	RaceArachnid    = 23
+	RaceKvantar     = 24
+	RaceTroll       = 25
+	RaceLycanthrope = 26
+	RaceGiant       = 27
+	RaceConstruct   = 28
+	RaceGoblin      = 29
+	RaceOgre        = 30
+	RaceDragon      = 31
+)
+
+// RaceNames names every race a player can have: the playable races plus the
+// GM-only ones above (settable with "@set race").
 var RaceNames = map[int]string{
 	RaceHuman: "Human", RaceAelfen: "Aelfen", RaceHighlander: "Highlander",
 	RaceWolfling: "Wolfling", RaceMurg: "Murg", RaceDrakin: "Drakin",
-	RaceMechanoid: "Mechanoid", RaceEphemeral: "Ephemeral",
+	RaceMechanoid: "Mechanoid", RaceEphemeral: "Ephemeral", RaceVampire: "Vampire",
+	RaceExtraplanar: "Extraplanar", RaceUndead: "Undead", RaceArachnid: "Arachnid",
+	RaceKvantar: "Kvantar", RaceTroll: "Troll", RaceLycanthrope: "Lycanthrope",
+	RaceGiant: "Giant", RaceConstruct: "Construct", RaceGoblin: "Goblin",
+	RaceOgre: "Ogre", RaceDragon: "Dragon",
 }
 
 // Stat ranges per race: [min, max] for each of 7 stats
@@ -192,11 +218,20 @@ type Player struct {
 	// Status conditions
 	Bleeding     bool    `bson:"bleeding" json:"bleeding"` // derived: recomputed from Wounds after every add/remove
 	Wounds       []Wound `bson:"wounds,omitempty" json:"wounds,omitempty"`
-	Stunned      bool `bson:"stunned" json:"stunned"`
+	// Stunned is transient like StunExpiry: when it was persisted, a player saved
+	// mid-stun came back Stunned with a zero StunExpiry that nothing ever expired,
+	// locking them out of every non-allowlisted command (incl. DEPART) for good.
+	Stunned      bool `bson:"-" json:"stunned"`
 	// StunExpiry is when a melee-crit stun (see monsterAttackPlayer) wears off —
 	// cleared by regenTick, mirroring MonsterInstance.StunExpiry. Transient: a
 	// stun surviving a disconnect/relog wouldn't make sense to resume.
 	StunExpiry time.Time `bson:"-" json:"-"`
+	// EphemeralPhysicalUntil is when an Ephemeral drawn onto the physical plane by
+	// offensive action fades back to ethereal; EphemeralSubstantial is whether the
+	// "becomes more substantial" transition has been announced (so the fade is
+	// announced exactly once). See ephemeral.go. Transient — a relog starts ethereal.
+	EphemeralPhysicalUntil time.Time `bson:"-" json:"-"`
+	EphemeralSubstantial   bool      `bson:"-" json:"-"`
 	// KnockedDown mirrors MonsterInstance.KnockedDown — a melee-crit stagger (see
 	// monsterAttackPlayer) that also forces Position to 2 (laying), matching
 	// LEGENDS.DOC: "a -50 penalty is imposed on your defense until you stand up
@@ -248,7 +283,10 @@ type Player struct {
 	RoomEntrySeq int `bson:"-" json:"-"`
 	TelepathyActive bool      `bson:"telepathyActive,omitempty" json:"telepathyActive,omitempty"`
 	TelepathyExpiry time.Time `bson:"telepathyExpiry,omitempty" json:"telepathyExpiry,omitempty"`
-	Emotional       bool      `bson:"emotional,omitempty" json:"emotional,omitempty"`
+	// Cyberware: implants installed at CyberTech (cyberware.go).
+	Cyberware []CyberImplant `bson:"cyberware,omitempty" json:"cyberware,omitempty"`
+	// Unemoted: a mechanoid on the analytical half of their brain (UNEMOTE) — see mechanoid.go.
+	Unemoted bool `bson:"unemoted,omitempty" json:"unemoted,omitempty"`
 
 	// Temporary strength buff (Strength I/II/III spells)
 	StrengthBuffID     int       `bson:"strengthBuffId,omitempty" json:"strengthBuffId,omitempty"`
@@ -303,6 +341,12 @@ type Player struct {
 	// Skills[33] itself, so SKILLS display/prerequisites still reflect real training.
 	CamouflageBonus  int       `bson:"camouflageBonus,omitempty" json:"camouflageBonus,omitempty"`
 	CamouflageExpiry time.Time `bson:"camouflageExpiry,omitempty" json:"camouflageExpiry,omitempty"`
+
+	// Light (113) / Night Vision (520) spell timers — see darkness.go. Light makes
+	// the player a light source for any DARKNESS room they're in; Night Vision lets
+	// them see in one. Faded with a message by regenTick.
+	LightSpellExpiry  time.Time `bson:"lightSpellExpiry,omitempty" json:"lightSpellExpiry,omitempty"`
+	NightVisionExpiry time.Time `bson:"nightVisionExpiry,omitempty" json:"nightVisionExpiry,omitempty"`
 
 	// Temporary Divine Blessing buff (spell 347): +3 effective weapon skill
 	// ranks (whichever skill applies to the player's current weapon, or
@@ -523,6 +567,7 @@ type Player struct {
 	GMTrace    bool `bson:"-" json:"-"`                                     // @trace: show script debug output
 	GMHat      bool `bson:"gmHat,omitempty" json:"gmHat,omitempty"`        // visible as GM on WHO list
 	GMHidden   bool `bson:"gmHidden,omitempty" json:"gmHidden,omitempty"`  // hidden from WHO list
+	GMChannel  bool `bson:"gmChannel,omitempty" json:"-"`                  // listening on the private @GM channel
 	GMInvis      bool   `bson:"gmInvis,omitempty" json:"gmInvis,omitempty"`    // invisible to players
 	GMEditTarget string `bson:"-" json:"-"` // @edpl target name for subsequent @set commands
 
@@ -756,6 +801,14 @@ func (p *Player) PromptIndicators() string {
 // RaceName returns the string name of the player's race.
 func (p *Player) RaceName() string {
 	return RaceNameByID(p.Race)
+}
+
+// IsUndead reports whether the player is undead: RACE Undead (22) or Vampire (9),
+// or the legacy Undead flag. Undead have no active life force (GMSCRIPT.DOC
+// immunity #7), so they don't bleed and are immune to poison and disease;
+// healing magic sears them, and undead-only spells work for them.
+func (p *Player) IsUndead() bool {
+	return p.Undead || p.Race == RaceUndead || p.Race == RaceVampire
 }
 
 // RaceNameByID returns the race name for a given race ID.

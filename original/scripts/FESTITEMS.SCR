@@ -1,0 +1,434 @@
+; FESTITEMS.SCR — permanent definitions for Fall Festival / Halloween keepsakes
+; =============================================================================
+; Loaded from LEGENDS.CFG (unlike FALLFEST.SCR / HALLOWEEN2026.SCR, which are
+; hot-loaded only for the festival). Everything players can buy or earn at the
+; festival is defined here, so those items keep their names, descriptions and
+; scripts after the event files are removed and the server restarts.
+; Room fixtures, scenery, monsters and story logic stay in the event files.
+; See original/HALLOWEEN_RUNBOOK.md.
+;
+; ID ranges (the 93xx block is reserved for Halloween / Fall Festival):
+;   NOUNDEF 9300-9303, 9350-9351    ADJDEF 9300-9311, 9350-9356
+;   INUMBER 9302-9306, 9320-9331, 9344-9346 (Last Lantern of Fayd, 2026)
+;           9350-9357 (Fall Festival goods)
+; =============================================================================
+
+; ── Vocabulary ────────────────────────────────────────────────────────────────
+NOUNDEF 9300 gravestone
+NOUNDEF 9301 gravestones
+NOUNDEF 9302 strip
+NOUNDEF 9303 prybar
+ADJDEF 9300 sunrise
+ADJDEF 9301 teardrop
+ADJDEF 9302 wheatsheaf
+ADJDEF 9303 hammer
+ADJDEF 9304 birdcage
+ADJDEF 9305 hound
+ADJDEF 9306 handprint
+ADJDEF 9307 leafless
+ADJDEF 9308 obelisk
+ADJDEF 9309 funeral
+ADJDEF 9310 maytan
+ADJDEF 9311 ironbound
+
+NOUNDEF 9350 campfire
+NOUNDEF 9351 cider
+ADJDEF 9350 treasure
+ADJDEF 9351 spiderweb
+ADJDEF 9352 festival
+ADJDEF 9353 spiced
+ADJDEF 9354 caramel
+ADJDEF 9355 trestle
+ADJDEF 9356 crackling
+
+; ── Festival goods ────────────────────────────────────────────────────────────
+
+; Fall Festival shirt (Tailor's Shop). Shirt slot/flags copied from the plain
+; shirt in ITEM1.SCR. Edit the tagline each festival year.
+INUMBER 9350
+NAME 183
+ADJECTIVE 9352
+MISC
+WORN_TORSO2
+WEIGHT 1
+VOLUME 2
+SUBSTANCE CLOTH
+*DESCRIPTION_START EXAMINE
+Printed across the front of this soft shirt is a grinning jack-o'-lantern above the words "FAYD FALL FESTIVAL" in jagged letters. Beneath them, in smaller print, it reads: "I braved the Old Fayd Cemetery and all I got was this shirt."
+*DESCRIPTION_END
+;
+; Festival mask (Tailor's Shop). Sold as pumpkin/skull/ghostly/black via the
+; store adjective. WORN_DON like the existing masks.
+INUMBER 9357
+NAME 522
+MISC
+WORN_DON
+WEIGHT 1
+VOLUME 1
+SUBSTANCE CLOTH
+*DESCRIPTION_START EXAMINE
+A festival mask of stiffened, painted cloth with a ribbon to tie it on. The eyeholes are just a little too large, which makes the wearer look permanently startled.
+*DESCRIPTION_END
+;
+; Sugar skull (Bakery).
+INUMBER 9351
+NAME 188
+ADJECTIVE 1070
+FOOD
+WEIGHT 1
+VOLUME 1
+PARAMETER1 3
+SUBSTANCE INSUBSTANTIAL
+*DESCRIPTION_START EXAMINE
+A fist-sized skull of pressed sugar, decorated with swirls of bright icing: flowers around the eye sockets, a row of neat little teeth, and a tiny heart on the forehead.
+*DESCRIPTION_END
+IFVERB EAT -1
+  ECHO PLAYER The sugar skull crunches and then melts on your tongue, sweet enough to make your teeth ache.
+ENDIF
+;
+; Caramel apple (Bakery).
+INUMBER 9352
+NAME 704
+ADJECTIVE 9354
+FOOD
+WEIGHT 1
+VOLUME 1
+PARAMETER1 5
+*DESCRIPTION_START EXAMINE
+A crisp red apple on a stick, dipped in thick, glossy caramel and rolled in crushed nuts.
+*DESCRIPTION_END
+IFVERB EAT -1
+  ECHO PLAYER The caramel sticks to your teeth, the apple crunches, and for a moment all is right with the world.
+  ECHO OTHERS %N happily chews on a caramel apple, getting caramel all over %h chin.
+ENDIF
+;
+; Spiced cider (Bakery, and free at the festival lot's table).
+INUMBER 9353
+NAME 9351
+ADJECTIVE 9353
+LIQUID
+ARTICLE SOME
+PARAMETER1 4
+WEIGHT 1
+VOLUME 1
+IFVERB DRINK -1
+  ECHO PLAYER The hot cider tastes of apples, cinnamon and clove, and warms you all the way down to your toes.
+ENDIF
+;
+; Pumpkin bread (Bakery, and free at the festival lot's table).
+INUMBER 9354
+NAME 345
+ADJECTIVE 971
+FOOD
+ARTICLE SOME
+WEIGHT 1
+VOLUME 1
+PARAMETER1 5
+IFVERB EAT -1
+  ECHO PLAYER The pumpkin bread is moist and warm, rich with nutmeg and brown sugar.
+ENDIF
+;
+; Plastic spider ring (Randolphs, and a treasure-balloon prize). One fixed
+; adjective only — with two ("plastic spider ring") the target matcher can't take
+; "black spider ring". Randolphs sells it by color ("a black spider ring"); the
+; balloon prize is "a black plastic spider ring" (ADJ1 black, ADJ2 plastic).
+INUMBER 9355
+NAME 167
+ADJECTIVE 545
+MISC
+WORN_RING
+WEIGHT 1
+VOLUME 1
+*DESCRIPTION_START EXAMINE
+A cheap, bendable plastic ring topped with a fat little spider whose eight legs wobble whenever you move your hand. It is utterly tasteless, and you love it.
+*DESCRIPTION_END
+IFPREVERB TAP -1
+  CLEARVERB
+  ECHO PLAYER You flick the spider on your ring and watch its legs wobble.
+  ECHO OTHERS %N flicks the plastic spider on %h ring, making its legs wobble.
+ENDIF
+;
+; Spiderweb earcuff (Randolphs, and a treasure-balloon prize).
+INUMBER 9356
+NAME 80
+ADJECTIVE 9351
+MISC
+WORN_EAR
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+Fine wire has been worked into a delicate spiderweb that climbs the curve of the ear. A tiny bead of polished jet sits in the web where the spider ought to be.
+*DESCRIPTION_END
+;
+
+; ── The Last Lantern of Fayd (2026): clue keepsakes ──────────────────────────
+
+; The token left in the ashes: "an ancient obelisk token" (ADJ1=7 ancient).
+INUMBER 9302
+NAME 1031
+ADJECTIVE 9308
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+An ancient grave token of blackened bronze, still faintly warm from the ashes. Stamped into its face is the shape of a broken obelisk.
+*DESCRIPTION_END
+;
+; Clue 1: the copper strip from the skull.
+INUMBER 9303
+NAME 9302
+ADJECTIVE 68
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A thin strip of copper, green with age, stamped with the image of a long, feathery leaf -- unmistakably the leaf of a Maytan tree. Words are inscribed along its length.
+*DESCRIPTION_END
+IFPREVERB READ -1
+  CLEARVERB
+  ECHO PLAYER Inscribed along the copper strip, beneath the Maytan leaf:
+  ECHO PLAYER "Where grey leaves brush the names of the forgotten,
+  ECHO PLAYER  seek the roots that drank the keeper's blood."
+  ECHO OTHERS %N reads the words inscribed on a thin copper strip.
+ENDIF
+;
+; Clue 2: the brass key from the Maytan roots ("a tarnished brass key").
+INUMBER 9304
+NAME 119
+ADJECTIVE 32
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A heavy, old-fashioned key of tarnished brass. The rotted remains of a leather cord are still knotted through its bow, as if someone once wore it around his neck.
+*DESCRIPTION_END
+;
+; Clue 3: the blackened parchment from the caretaker's compartment.
+INUMBER 9305
+NAME 1401
+ADJECTIVE 404
+MISC
+WEIGHT 1
+VOLUME 1
+*DESCRIPTION_START EXAMINE
+A brittle piece of parchment, blackened at the edges as if by fire. Beneath a few lines of cramped writing is a crude drawing of a stone arch -- the entrance of a mausoleum on a small hill.
+*DESCRIPTION_END
+IFPREVERB READ -1
+  CLEARVERB
+  ECHO PLAYER In a cramped, careful hand, the blackened parchment reads:
+  ECHO PLAYER "I buried no treasure among the dead. From the hill I watched them --
+  ECHO PLAYER  and beneath the watcher, I hid what remained."
+  ECHO PLAYER Below the words is a crude drawing of the stone arch of a mausoleum.
+  ECHO OTHERS %N reads a piece of blackened parchment.
+ENDIF
+;
+; The rusty prybar leaning against the caretaker's house (room 307).
+INUMBER 9306
+NAME 9303
+ADJECTIVE 272
+MISC
+WEIGHT 3
+VOLUME 4
+SUBSTANCE HARDMETAL
+*DESCRIPTION_START EXAMINE
+A length of rusted iron, flattened and bent at one end. Good for prying things up that were meant to stay down.
+*DESCRIPTION_END
+;
+
+; ── The twelve funeral tokens (9320-9331) ─────────────────────────────────────
+INUMBER 9320
+NAME 1031
+ADJECTIVE 9300
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a rising sun divided by a vertical line.
+*DESCRIPTION_END
+;
+INUMBER 9321
+NAME 1031
+ADJECTIVE 9301
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a closed eye shedding a single tear.
+*DESCRIPTION_END
+;
+INUMBER 9322
+NAME 1031
+ADJECTIVE 9302
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears three stalks of wheat bound with cord.
+*DESCRIPTION_END
+;
+INUMBER 9323
+NAME 1031
+ADJECTIVE 9303
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a hammer resting across a small flame.
+*DESCRIPTION_END
+;
+INUMBER 9324
+NAME 1031
+ADJECTIVE 9304
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a bird escaping an open cage.
+*DESCRIPTION_END
+;
+INUMBER 9325
+NAME 1031
+ADJECTIVE 379
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears two hands clasped beneath a crescent moon.
+*DESCRIPTION_END
+;
+INUMBER 9326
+NAME 1031
+ADJECTIVE 309
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a five-pointed star above three wavy lines.
+*DESCRIPTION_END
+;
+INUMBER 9327
+NAME 1031
+ADJECTIVE 9305
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a hound seated beneath a full moon.
+*DESCRIPTION_END
+;
+INUMBER 9328
+NAME 1031
+ADJECTIVE 953
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a quill laid across an ornate key.
+*DESCRIPTION_END
+;
+INUMBER 9329
+NAME 1031
+ADJECTIVE 9307
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears a leafless tree with seven exposed roots.
+*DESCRIPTION_END
+;
+INUMBER 9330
+NAME 1031
+ADJECTIVE 9306
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears the small handprint of a child.
+*DESCRIPTION_END
+;
+INUMBER 9331
+NAME 1031
+ADJECTIVE 1163
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A small funeral token of dark bronze. Its face bears an unlit hooded lantern.
+*DESCRIPTION_END
+
+; ── Rewards ───────────────────────────────────────────────────────────────────
+
+; Antique silver necklace (granted with ADJ1=851 antique, ADJ2=292 silver) —
+; everyone who claims a share. It starts unenchanted;
+; RUB activates whatever spell a GM imprints on it (@editem: VAL3 = spell
+; number, VAL2 = charges), the same mechanism as other rub-to-cast jewelry, so
+; it can take over the role of a player's existing enchanted necklace. Charge
+; Wand (243) can recharge it once it has a spell.
+INUMBER 9344
+NAME 141
+MISC
+WORN_NECK
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A fine silver chain from which hangs a tarnished medallion. Engraved on it, in astonishing detail, is the skyline of Old Fayd as it stood before the Cataclysm: towers and domes that no living person has seen. On the back, tiny letters read, "Remembered."
+*DESCRIPTION_END
+IFVERB RUB -1
+  IFITEM -1 WORN
+    IFVAR ITEMVAL3 > 0
+      ECHO ALL %N's antique silver necklace glows softly.
+      ROUTINE 1
+    ENDIF
+  ENDIF
+ENDIF
+;
+; Marren Vey's Lantern Charm — everyone who claims a share. Granted with
+; VAL3=113 (Light) and VAL2=50 charges; RUB to cast. Rechargeable with Charge
+; Wand (243).
+INUMBER 9345
+NAME 1021
+ADJECTIVE 1163
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A tiny charm shaped like a hooded lantern, no longer than your thumb, worked in tarnished silver. It is cold with the memory of Old Fayd. When you hold it close, you could swear you smell lamp oil and wet earth.
+*DESCRIPTION_END
+IFPREVERB RUB -1
+  CLEARVERB
+  ECHO PLAYER You rub the tiny lantern charm, and a pale golden light kindles inside it.
+  ECHO OTHERS %N rubs a tiny lantern charm, and a pale golden light kindles inside it.
+  ROUTINE 1
+ENDIF
+;
+; Engraved funeral ring — GM-awarded to the first finder of each leg
+; (@additem 9346 adj1=115 → "an engraved funeral ring", then @give).
+INUMBER 9346
+NAME 167
+ADJECTIVE 9309
+MISC
+WORN_RING
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A heavy ring of dark silver. Its bezel is engraved with the symbol of the Old Fayd Cemetery: a broken obelisk beneath a hooded lantern. Inside the band are the words "He kept faith."
+*DESCRIPTION_END

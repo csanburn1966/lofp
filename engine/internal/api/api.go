@@ -391,6 +391,12 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/gm/scripts/{filename}", s.handleSaveGMScript).Methods("POST")
 	api.HandleFunc("/gm/scripts/{filename}", s.handleDeleteGMScript).Methods("DELETE")
 	api.HandleFunc("/gm/scripts/{filename}/restore/{index}", s.handleRestoreGMScript).Methods("POST")
+	api.HandleFunc("/gm/scripts/{filename}/draft", s.handleSetGMScriptDraft).Methods("POST")
+	api.HandleFunc("/gm/ranges", s.handleGMNumberRanges).Methods("GET")
+	api.HandleFunc("/gm/reservations", s.handleListNumberReservations).Methods("GET")
+	api.HandleFunc("/gm/reservations", s.handleSaveNumberReservation).Methods("POST")
+	api.HandleFunc("/gm/reservations/{id}", s.handleSaveNumberReservation).Methods("PUT")
+	api.HandleFunc("/gm/reservations/{id}", s.handleDeleteNumberReservation).Methods("DELETE")
 
 	// Admin bootstrap (only works if no admins exist yet)
 	api.HandleFunc("/admin/bootstrap", s.handleBootstrapAdmin).Methods("POST")
@@ -404,6 +410,7 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/admin/characters/{firstName}/reassign", s.handleAdminReassignCharacter).Methods("PUT")
 	api.HandleFunc("/admin/logs", s.handleAdminLogs).Methods("GET")
 	api.HandleFunc("/admin/logs/{id}/resolve", s.handleAdminResolveLog).Methods("PUT")
+	api.HandleFunc("/admin/logs/{id}/reply", s.handleAdminReplyLog).Methods("PUT")
 	api.HandleFunc("/admin/characters/deleted", s.handleAdminListDeletedCharacters).Methods("GET")
 	api.HandleFunc("/admin/characters/{firstName}/recover", s.handleAdminRecoverCharacter).Methods("PUT")
 
@@ -559,7 +566,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		"data": engine.EngineEvent{
 			Time:     time.Now(),
 			Category: "system",
-			Message:  fmt.Sprintf("Event monitor connected. Game time: Hour %d, Day %d of %s, Year %d", engine.GameHour(), engine.GameDay(), engine.GameMonthName(), engine.GameYear()),
+			Message:  fmt.Sprintf("Event monitor connected. Game time: Hour %d, %s", engine.GameHour(), engine.GameDateText()),
 		},
 	})
 
@@ -745,6 +752,7 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			}
 			result := s.engine.EnterRoom(ctx, player)
 			s.sendResult(session, result)
+			s.deliverReportReplies(ctx, session)
 			session.Conn.SendTypedMessage("auth_result", map[string]interface{}{
 				"success":   true,
 				"character": player.FirstName,
@@ -847,6 +855,7 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			if len(result.GMBroadcast) > 0 {
 				s.broadcastToGMs(result.GMBroadcast)
 			}
+			s.deliverReportReplies(ctx, session)
 			// Reset capture status so frontend UI is in sync
 			session.Conn.SendTypedMessage("capture_status", map[string]interface{}{"recording": false})
 
@@ -1081,6 +1090,15 @@ func (s *Server) dispatchCommandResult(session *Session, result *engine.CommandR
 			s.feedback.Submit(session.Player.FullName(), session.Player.RoomNumber, roomName, result.LogEventDetail)
 		}
 	}
+	// @GM channel — only GMs who have the channel on
+	if len(result.GMChannelMsg) > 0 {
+		s.broadcastGMChannel(result.GMChannelSender, result.GMChannelMsg)
+		s.hub.Publish(&hub.Event{
+			Type:           "gm_channel",
+			ExcludePlayers: []string{result.GMChannelSender},
+			Messages:       result.GMChannelMsg,
+		})
+	}
 	// Telepathy broadcast
 	if result.TelepathyMsg != "" {
 		telepathyLines := []string{
@@ -1271,6 +1289,23 @@ func (s *Server) broadcastToGMs(messages []string) {
 	})
 }
 
+// broadcastGMChannel delivers to local GMs listening on the @GM channel, except
+// the sender. Caller must not hold s.mu.
+func (s *Server) broadcastGMChannel(sender string, messages []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.deliverGMChannelLocked(sender, messages)
+}
+
+func (s *Server) deliverGMChannelLocked(sender string, messages []string) {
+	for _, sess := range s.sessions {
+		if sess.Player == nil || !sess.Player.IsGM || !sess.Player.GMChannel || sess.Player.FirstName == sender {
+			continue
+		}
+		s.sendBroadcast(sess, messages)
+	}
+}
+
 // deliverRemoteEvent handles events from other machines, delivering to local connections.
 func (s *Server) deliverRemoteEvent(event *hub.Event) {
 	s.mu.RLock()
@@ -1304,6 +1339,12 @@ func (s *Server) deliverRemoteEvent(event *hub.Event) {
 		if sess, ok := s.sessions[event.TargetPlayer]; ok {
 			s.sendBroadcast(sess, event.Messages)
 		}
+	case "gm_channel":
+		sender := ""
+		if len(event.ExcludePlayers) > 0 {
+			sender = event.ExcludePlayers[0]
+		}
+		s.deliverGMChannelLocked(sender, event.Messages)
 	case "gm_broadcast":
 		for _, sess := range s.sessions {
 			if sess.Player == nil || !sess.Player.IsGM {
@@ -1640,6 +1681,20 @@ func (s *Server) resolveAdj(id int) string {
 	return fmt.Sprintf("adj#%d", id)
 }
 
+// resolveMonAdj looks up a monster adjective (MADJDEF), which is a separate
+// table from item adjectives — resolveAdj would show the wrong word.
+func (s *Server) resolveMonAdj(id int) string {
+	for _, a := range s.parsed.MonsterAdjs {
+		if a.ID == id {
+			return a.Name
+		}
+	}
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprintf("madj#%d", id)
+}
+
 func (s *Server) handleGetItem(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdmin(w, r) == nil {
 		return
@@ -1696,7 +1751,7 @@ func (s *Server) handleGetMonster(w http.ResponseWriter, r *http.Request) {
 				"number":      mon.Number,
 				"name":        mon.Name,
 				"adjective":   mon.Adjective,
-				"adjName":     s.resolveAdj(mon.Adjective),
+				"adjName":     s.resolveMonAdj(mon.Adjective),
 				"description": mon.Description,
 				"bodyType":    mon.BodyType,
 				"body":        mon.Body,
@@ -2327,6 +2382,98 @@ func (s *Server) handleListGMScripts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(scripts)
 }
 
+// handleGMNumberRanges reports which room/item/monster numbers are used (live
+// world + draft GM scripts) and which contiguous blocks are free, for handing out
+// number blocks to GMs.
+func (s *Server) handleGMNumberRanges(w http.ResponseWriter, r *http.Request) {
+	if s.requireGM(w, r) == nil {
+		return
+	}
+	report, err := s.engine.NumberRanges(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
+// gmActorName is the name recorded for a GM's change: their character, or the
+// account name when an admin works without one.
+func gmActorName(r *http.Request, account *auth.Account) string {
+	if name := r.Header.Get("X-Character"); name != "" {
+		return name
+	}
+	return account.Name
+}
+
+// handleListNumberReservations lists the advisory number-block reservations.
+func (s *Server) handleListNumberReservations(w http.ResponseWriter, r *http.Request) {
+	if s.requireGM(w, r) == nil {
+		return
+	}
+	list, err := s.engine.ListNumberReservations(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+// handleSaveNumberReservation creates (POST) or updates (PUT /{id}) a reservation.
+// Any GM may manage reservations — they're a shared, non-enforced reference.
+func (s *Server) handleSaveNumberReservation(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	var res engine.NumberReservation
+	if err := json.NewDecoder(r.Body).Decode(&res); err != nil {
+		http.Error(w, "invalid request body", 400)
+		return
+	}
+	res.ID = bson.ObjectID{}
+	if idStr := mux.Vars(r)["id"]; idStr != "" {
+		id, err := bson.ObjectIDFromHex(idStr)
+		if err != nil {
+			http.Error(w, "invalid reservation id", 400)
+			return
+		}
+		res.ID = id
+	}
+	actor := gmActorName(r, account)
+	stored, err := s.engine.SaveNumberReservation(r.Context(), &res, actor)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, actor, account.ID.Hex(), "", 0,
+		fmt.Sprintf("number reservation %s %d-%d for %s", stored.Kind, stored.Start, stored.End, stored.GM))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stored)
+}
+
+// handleDeleteNumberReservation removes a reservation.
+func (s *Server) handleDeleteNumberReservation(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	id, err := bson.ObjectIDFromHex(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, "invalid reservation id", 400)
+		return
+	}
+	if err := s.engine.DeleteNumberReservation(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, gmActorName(r, account), account.ID.Hex(), "", 0,
+		fmt.Sprintf("deleted number reservation %s", id.Hex()))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleGetGMScript(w http.ResponseWriter, r *http.Request) {
 	if s.requireGM(w, r) == nil {
 		return
@@ -2351,6 +2498,9 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Content  string `json:"content"`
 		Priority int    `json:"priority"`
+		// Draft saves the script without applying it to the running game (and it
+		// isn't loaded at startup). Saving a live script as a draft withdraws it.
+		Draft bool `json:"draft"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", 400)
@@ -2374,7 +2524,7 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		uploaderName = account.Name
 	}
 
-	// Parse and validate the script first
+	// Parse and validate the script first (drafts too, so errors show up early)
 	if engine.ScriptParser == nil {
 		http.Error(w, "script parser not available", 500)
 		return
@@ -2387,8 +2537,12 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply to running engine
-	stats := s.engine.ApplyParsedData(parsedData)
+	existing, _ := s.engine.GetGMScript(r.Context(), filename)
+	stats, withdrawn, err := s.stageGMScript(r.Context(), filename, existing, parsedData, req.Draft)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	// Save to MongoDB
 	script := &engine.GMScript{
@@ -2396,6 +2550,7 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		Name:                req.Name,
 		Content:             req.Content,
 		Priority:            req.Priority,
+		Draft:               req.Draft,
 		Size:                len(req.Content),
 		UploadedBy:          uploaderName,
 		UploadedByAccountID: account.ID.Hex(),
@@ -2407,15 +2562,115 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verb := "Uploaded"
+	if req.Draft {
+		verb = "Saved draft"
+	}
 	s.gamelog.Log(gamelog.EventGMCommand, uploaderName, account.ID.Hex(), "",
-		0, fmt.Sprintf("Uploaded script %s: %d rooms, %d items, %d monsters", filename, stats.Rooms, stats.Items, stats.Monsters))
+		0, fmt.Sprintf("%s script %s: %d rooms, %d items, %d monsters", verb, filename, stats.Rooms, stats.Items, stats.Monsters))
 
+	msg := "Script saved and applied"
+	if req.Draft {
+		msg = "Script saved as draft (not applied)"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":  "Script saved and applied",
-		"filename": filename,
-		"stats":    stats,
+		"message":   msg,
+		"filename":  filename,
+		"draft":     req.Draft,
+		"stats":     stats,
+		"withdrawn": withdrawn,
 	})
+}
+
+// stageGMScript puts a new version of a GM script into effect (or not, for a
+// draft). If the previous version was live it is withdrawn first — entirely for a
+// draft, or just the entities the new version no longer defines. Returns the
+// apply stats (for a draft, what it defines) and what was withdrawn, if anything.
+func (s *Server) stageGMScript(ctx context.Context, filename string, existing *engine.GMScript, parsed *gameworld.ParsedData, draft bool) (engine.ScriptApplyStats, *engine.WithdrawStats, error) {
+	var withdrawn *engine.WithdrawStats
+	if existing != nil && !existing.Draft && existing.Content != "" {
+		var keep *gameworld.ParsedData
+		if !draft {
+			keep = parsed
+		}
+		ws, err := s.engine.WithdrawGMScript(ctx, filename, existing.Content, keep)
+		if err != nil {
+			return engine.ScriptApplyStats{}, nil, fmt.Errorf("could not withdraw the live version: %v", err)
+		}
+		withdrawn = &ws
+	}
+	if draft {
+		return engine.ParsedStats(parsed), withdrawn, nil
+	}
+	return s.engine.ApplyParsedData(parsed), withdrawn, nil
+}
+
+// handleSetGMScriptDraft switches a stored script between draft and live without
+// changing its content: going live applies it, going to draft withdraws it from
+// the running game.
+func (s *Server) handleSetGMScriptDraft(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	filename := mux.Vars(r)["filename"]
+	var req struct {
+		Draft bool `json:"draft"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", 400)
+		return
+	}
+	script, err := s.engine.GetGMScript(r.Context(), filename)
+	if err != nil {
+		http.Error(w, "script not found", 404)
+		return
+	}
+	uploaderName := r.Header.Get("X-Character")
+	if uploaderName == "" {
+		uploaderName = account.Name
+	}
+	resp := map[string]interface{}{"filename": filename, "draft": req.Draft}
+	switch {
+	case script.Draft == req.Draft:
+		resp["message"] = "No change"
+	case req.Draft:
+		ws, err := s.engine.WithdrawGMScript(r.Context(), filename, script.Content, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("withdraw failed: %v", err), 500)
+			return
+		}
+		resp["withdrawn"] = ws
+		resp["message"] = "Script disabled: now a draft and removed from the game"
+	default:
+		if engine.ScriptParser == nil {
+			http.Error(w, "script parser not available", 500)
+			return
+		}
+		parsed, err := engine.ScriptParser(script.Content, filename)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse error: %v", err)})
+			return
+		}
+		resp["stats"] = s.engine.ApplyParsedData(parsed)
+		resp["message"] = "Script activated and applied"
+	}
+	if script.Draft != req.Draft {
+		if err := s.engine.SetGMScriptDraft(r.Context(), filename, req.Draft); err != nil {
+			http.Error(w, fmt.Sprintf("save failed: %v", err), 500)
+			return
+		}
+		action := "Activated"
+		if req.Draft {
+			action = "Disabled (to draft)"
+		}
+		s.gamelog.Log(gamelog.EventGMCommand, uploaderName, account.ID.Hex(), "", 0, fmt.Sprintf("%s script %s", action, filename))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
@@ -2424,6 +2679,17 @@ func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := mux.Vars(r)["filename"]
+	// A live script is withdrawn from the running game before it's deleted, so its
+	// rooms/items/monsters don't linger until the next restart.
+	var withdrawn *engine.WithdrawStats
+	if script, err := s.engine.GetGMScript(r.Context(), filename); err == nil && !script.Draft && script.Content != "" {
+		ws, err := s.engine.WithdrawGMScript(r.Context(), filename, script.Content, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("withdraw failed: %v", err), 500)
+			return
+		}
+		withdrawn = &ws
+	}
 	if err := s.engine.DeleteGMScript(r.Context(), filename); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -2436,7 +2702,7 @@ func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
 		0, fmt.Sprintf("Deleted script %s", filename))
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"message": "deleted", "withdrawn": withdrawn})
 }
 
 func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
@@ -2468,7 +2734,7 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		uploaderName = account.Name
 	}
 
-	// Parse and apply
+	// Parse, then apply — unless the script is a draft, which stays a draft.
 	if engine.ScriptParser == nil {
 		http.Error(w, "script parser not available", 500)
 		return
@@ -2480,7 +2746,11 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse error on restore: %v", parseErr)})
 		return
 	}
-	stats := s.engine.ApplyParsedData(parsedData)
+	stats, withdrawn, err := s.stageGMScript(r.Context(), filename, script, parsedData, script.Draft)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	// Save as new version
 	updated := &engine.GMScript{
@@ -2488,6 +2758,7 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		Name:                script.Name,
 		Content:             restoredContent,
 		Priority:            script.Priority,
+		Draft:               script.Draft,
 		Size:                len(restoredContent),
 		UploadedBy:          uploaderName,
 		UploadedByAccountID: account.ID.Hex(),
@@ -2499,11 +2770,17 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	msg := "Script restored and applied"
+	if script.Draft {
+		msg = "Script restored (still a draft, not applied)"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":  "Script restored and applied",
-		"filename": filename,
-		"stats":    stats,
+		"message":   msg,
+		"filename":  filename,
+		"draft":     script.Draft,
+		"stats":     stats,
+		"withdrawn": withdrawn,
 	})
 }
 
@@ -2743,6 +3020,87 @@ func (s *Server) handleAdminResolveLog(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entry)
+}
+
+// handleAdminReplyLog stores a staff reply on a player REPORT. The player sees it
+// the next time they enter the game; if they're online on this machine right
+// now, it's delivered immediately instead.
+func (s *Server) handleAdminReplyLog(w http.ResponseWriter, r *http.Request) {
+	account := s.requireAdmin(w, r)
+	if account == nil {
+		return
+	}
+	vars := mux.Vars(r)
+	var req struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	reply := strings.TrimSpace(req.Reply)
+	if len(reply) > 2000 {
+		http.Error(w, "reply too long (max 2000 characters)", 400)
+		return
+	}
+	repliedBy := account.Name
+	if repliedBy == "" {
+		repliedBy = account.Email
+	}
+	entry, err := s.gamelog.SetReply(r.Context(), vars["id"], reply, repliedBy)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	if reply != "" {
+		s.mu.RLock()
+		var session *Session
+		for _, sess := range s.sessions {
+			if sess.Player != nil && sess.Player.FullName() == entry.Player {
+				session = sess
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if session != nil {
+			s.deliverReportReplies(r.Context(), session)
+			// Re-read so the admin UI shows it as delivered.
+			if updated, err := s.gamelog.Get(r.Context(), vars["id"]); err == nil {
+				entry = updated
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entry)
+}
+
+// deliverReportReplies shows the player any staff replies to their REPORTs that
+// they haven't seen yet. Called on every game entry path (web, telnet, ssh).
+func (s *Server) deliverReportReplies(ctx context.Context, session *Session) {
+	if session == nil || session.Player == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	replies, err := s.gamelog.ClaimPendingReplies(ctx, session.Player.FullName())
+	if err != nil {
+		log.Printf("report replies: lookup failed for %s: %v", session.Player.FullName(), err)
+		return
+	}
+	if len(replies) == 0 {
+		return
+	}
+	var lines []string
+	for _, e := range replies {
+		lines = append(lines,
+			"",
+			fmt.Sprintf("*** The Game Masters have replied to your report of %s:", e.Timestamp.Format("Jan 2, 2006")),
+			fmt.Sprintf("    You wrote: %s", e.Details),
+			fmt.Sprintf("    Reply: %s", e.Reply),
+		)
+	}
+	lines = append(lines, "")
+	s.sendResult(session, &engine.CommandResult{Messages: lines})
 }
 
 func (s *Server) handleBootstrapAdmin(w http.ResponseWriter, r *http.Request) {

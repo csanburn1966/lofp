@@ -845,10 +845,10 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 		roomMsg = "Something prepares a spell."
 	}
 	roomMsgs = append(roomMsgs, roomMsg)
-	return &CommandResult{
+	return ephemeralGoOnOffense(player, &CommandResult{
 		Messages:      prepMsgs,
 		RoomBroadcast: roomMsgs,
-	}
+	})
 }
 
 // doRelease handles RELEASE — cancels a prepared spell or psionic discipline
@@ -874,7 +874,16 @@ func (e *GameEngine) doRelease(ctx context.Context, player *Player) *CommandResu
 }
 
 // doCastSpell handles CAST [target].
-func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []string) *CommandResult {
+func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []string) (res *CommandResult) {
+	// A cast that actually goes off (mana spent, target found) keeps an Ephemeral
+	// on the physical plane — see ephemeral.go.
+	committed := false
+	defer func() {
+		if committed && res != nil && !res.TargetNotFound {
+			res = ephemeralGoOnOffense(player, res)
+		}
+	}()
+
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't cast spells while dead."}}
 	}
@@ -963,6 +972,7 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	// Deduct mana
 	player.Mana -= manaCost
 	player.PreparedSpell = 0
+	committed = true
 	usedMoonstone := player.PreparedMoonstoneBonus
 	player.PreparedMoonstoneBonus = false
 
@@ -1015,7 +1025,10 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	}
 
 	castRoll := rand.Intn(100) + 1
-	if castRoll == 100 && !player.IsGM {
+	// Sorcerous Summons I/II (139/140) aren't aimed at anyone, so there's nothing to
+	// turn back on the caster — a fumbled one is just an ordinary failure (below).
+	_, untargetedSummons := sorcerousSummonsDemon[spell.ID]
+	if castRoll == 100 && !player.IsGM && !untargetedSummons {
 		// Extreme failure! Per LEGENDS.DOC, a fumble "may result in a harmful
 		// side-effect" — the spell still goes off, but hits the caster instead
 		// of whatever/whoever they were aiming at.
@@ -1069,6 +1082,10 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		result = e.castBuffSpell(player, spell, args)
 	case "utility":
 		switch spell.ID {
+		case 113: // Light
+			result = e.castLightSpell(player, spell, args)
+		case 520: // Night Vision
+			result = e.castNightVisionSpell(player, spell, args)
 		case 114: // Mystic Key
 			result = e.castMysticKey(player, args)
 		case 141: // Pyrotechnics
@@ -1109,6 +1126,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castStickToSnake(player)
 		case 106, 107, 108, 109, 123: // Summon Fire/Air/Water/Gargoyle/Earth Elemental
 			result = e.castSummonElemental(player, spell)
+		case 139, 140: // Sorcerous Summons I/II — hostile demon
+			result = e.castSorcerousSummons(player, spell)
 		case 306: // Animate Skeleton
 			result = e.castAnimateUndead(player, 1, "The ground trembles as bones knit together, rising as")
 		case 307: // Animate Zombie
@@ -1194,8 +1213,9 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	// Prepend success roll message — insert right after the opening gesture line if
 	// the spell-specific handler already led with one (the classic gesture -> roll
 	// -> effect ordering), otherwise put it first. "You gesture." (self-only) and
-	// "You gesture at <target>." (named target) both count as the opening line.
-	if len(result.Messages) > 0 && (result.Messages[0] == "You gesture." || result.Messages[0] == "You gesture into the air." || strings.HasPrefix(result.Messages[0], "You gesture at ") || result.Messages[0] == "You narrow your eyes and gaze about the area.") {
+	// "You gesture at <target>." (named target) both count as the opening line, as
+	// does Mindlink's touch ("You place your fingers upon <target>'s temples.").
+	if len(result.Messages) > 0 && (result.Messages[0] == "You gesture." || result.Messages[0] == "You gesture into the air." || strings.HasPrefix(result.Messages[0], "You gesture at ") || result.Messages[0] == "You narrow your eyes and gaze about the area." || strings.HasPrefix(result.Messages[0], "You place your fingers upon ")) {
 		result.Messages = append([]string{result.Messages[0], successMsg}, result.Messages[1:]...)
 	} else {
 		result.Messages = append([]string{successMsg}, result.Messages...)
@@ -1222,7 +1242,7 @@ func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spel
 		// Turn Undead I/II and Destroy Undead I/II/III only harm the undead (see
 		// isUndeadOnlySpell) — a non-undead caster is just as immune to their own
 		// backfire as any other living target would be to the spell itself.
-		if isUndeadOnlySpell(spell.ID) && !player.Undead {
+		if isUndeadOnlySpell(spell.ID) && !player.IsUndead() {
 			return &CommandResult{
 				Messages:      []string{"The magic twists out of your control, but since you aren't undead, it has no effect on you!"},
 				RoomBroadcast: []string{fmt.Sprintf("Magic flares wildly around %s but fizzles harmlessly.", player.DisplayName())},
@@ -1236,7 +1256,7 @@ func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spel
 		part, _ := rollBodyPart("HUMAN", 0)
 		dtype := damageTypeForSpecAttack(spell.DmgType)
 		woundLevel := woundLevelFromDamage(dmg, player.MaxBodyPoints)
-		player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, !player.Undead)
+		player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, player.CanBleed())
 		player.Bleeding = anyBleeding(player.Wounds)
 		player.BodyPoints -= dmg
 		rawBP := player.BodyPoints
@@ -1434,7 +1454,10 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		return &CommandResult{Messages: []string{"Cast at what? Specify a target."}, TargetNotFound: true}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -1594,7 +1617,7 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 	if killed {
 		// The killing blow gets its own damage-type flavor line describing how the
 		// creature actually died, in place of the normal severity/damage line.
-		if kf := elementalKillFlavor(spell.DmgType); kf != "" {
+		if kf := elementalKillFlavor(spell.DmgType); kf != "" && monsterGetsDeathCrit(def) {
 			msgs = append(msgs, kf)
 			roomMsgs = append(roomMsgs, kf)
 		} else {
@@ -1715,7 +1738,7 @@ func (e *GameEngine) castMeteorSpell(player *Player, spell *SpellDef, inst *Mons
 	if killed {
 		// The killing blow gets its own flavor line describing how the creature
 		// actually died, in place of the normal per-component severity lines.
-		if kf := elementalKillFlavor("heat"); kf != "" {
+		if kf := elementalKillFlavor("heat"); kf != "" && monsterGetsDeathCrit(def) {
 			msgs = append(msgs, kf)
 			roomMsgs = append(roomMsgs, kf)
 		} else {
@@ -1925,7 +1948,7 @@ func (e *GameEngine) castFlamingArrowsSpell(player *Player, spell *SpellDef, arg
 		if killed {
 			// The killing blow gets its own flavor line describing how the creature
 			// actually died, in place of the normal severity/damage line.
-			if kf := elementalKillFlavor(spell.DmgType); kf != "" {
+			if kf := elementalKillFlavor(spell.DmgType); kf != "" && monsterGetsDeathCrit(en.Def) {
 				msgs = append(msgs, kf)
 				roomMsgs = append(roomMsgs, kf)
 			} else {
@@ -1973,7 +1996,10 @@ func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []
 		if targetName == "" {
 			return &CommandResult{Messages: []string{"Cast Siryx's Terrible Tentacles at what?"}, TargetNotFound: true}
 		}
-		inst, def := e.findMonsterInRoom(player, targetName)
+		inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+		if refusal != nil {
+			return refusal
+		}
 		if inst == nil {
 			return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 		}
@@ -2066,7 +2092,7 @@ func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *S
 	amount := rand.Intn(spell.HealMax-spell.HealMin+1) + spell.HealMin
 
 	// Body Restoration I/II/III (316/317/318) sear the undead with holy energy instead of healing them.
-	if (spell.ID == 316 || spell.ID == 317 || spell.ID == 318) && target.Undead {
+	if (spell.ID == 316 || spell.ID == 317 || spell.ID == 318) && target.IsUndead() {
 		return e.castBodyRestorationOnUndead(ctx, player, target, spell, targetName, amount)
 	}
 
@@ -2205,22 +2231,24 @@ func (e *GameEngine) castBodyRestorationOnUndead(ctx context.Context, player, ta
 }
 
 // castReconstruction handles Reconstruction (337) — heals only undead targets;
-// living targets are unaffected.
+// living targets are unaffected. The target can be a player or a summoned/controlled
+// creature such as an animated skeleton (see resolveBuffTarget). A name that matches
+// neither used to fall back to the caster silently — reported as "it keeps targeting
+// me" when aimed at a controlled undead pet.
 func (e *GameEngine) castReconstruction(player *Player, spell *SpellDef, args []string) *CommandResult {
-	target := player
+	target, mInst, mDef, _, notFound := e.resolveBuffTarget(player, args)
+	if notFound {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", strings.Join(args, " "))}, TargetNotFound: true}
+	}
+	if mInst != nil {
+		return e.castReconstructionOnMonster(player, spell, mInst, mDef)
+	}
 	targetName := "yourself"
-	if len(args) > 0 {
-		t := strings.ToLower(strings.Join(args, " "))
-		if t != "me" && t != "myself" && t != "self" {
-			found := e.findPlayerInRoom(player, t)
-			if found != nil {
-				target = found
-				targetName = found.FirstName
-			}
-		}
+	if target != player {
+		targetName = target.FirstName
 	}
 
-	if !target.Undead {
+	if !target.IsUndead() {
 		if target == player {
 			return &CommandResult{Messages: []string{fmt.Sprintf("You gesture and cast %s, but the spell fizzles — you are not undead.", spell.Name)}}
 		}
@@ -2245,6 +2273,41 @@ func (e *GameEngine) castReconstruction(player *Player, spell *SpellDef, args []
 		TargetName:    target.FirstName,
 		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you, restoring %d body points. [BP: %d/%d]", player.FirstName, spell.Name, amount, target.BodyPoints, target.MaxBodyPoints)},
 		PlayerState:   target,
+	}
+}
+
+// castReconstructionOnMonster handles Reconstruction cast on a summoned/controlled
+// creature. Only undead creatures (RACE 22, e.g. Animate Skeleton/Zombie's MNUMBER 1/2)
+// are healed. inst is a snapshot copy, so the heal is written to the live instance by
+// ID under the lock (see applyMysticArmorBuffMonster).
+func (e *GameEngine) castReconstructionOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
+	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+	if def.Race != 22 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You gesture and cast %s on the %s, but the spell fizzles — it is not undead.", spell.Name, name)}}
+	}
+
+	amount := rand.Intn(spell.HealMax-spell.HealMin+1) + spell.HealMin
+	healed, hp, maxHP := 0, 0, 0
+	e.monsterMgr.mu.Lock()
+	if idx := e.monsterMgr.indexOfID(inst.ID); idx >= 0 {
+		cur := &e.monsterMgr.instances[idx]
+		old := cur.CurrentHP
+		cur.CurrentHP = min(cur.CurrentHP+amount, cur.MaxHP)
+		healed, hp, maxHP = cur.CurrentHP-old, cur.CurrentHP, cur.MaxHP
+	}
+	e.monsterMgr.mu.Unlock()
+
+	roomMsg := fmt.Sprintf("%s gestures and casts %s on the %s.", player.DisplayName(), spell.Name, name)
+	if healed <= 0 {
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s on the %s, but it is already whole.", spell.Name, name)},
+			RoomBroadcast: []string{roomMsg},
+		}
+	}
+	e.notifySummonerOfBuff(player, inst, fmt.Sprintf("%s casts %s on your %s.", player.FirstName, spell.Name, name))
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s on the %s, knitting its undead flesh back together, healing %d body points. [BP: %d/%d]", spell.Name, name, healed, hp, maxHP)},
+		RoomBroadcast: []string{roomMsg},
 	}
 }
 
@@ -2866,7 +2929,7 @@ func (e *GameEngine) tryCastSpellAtPreparedItem(ctx context.Context, player *Pla
 		tempRI := gameworld.RoomItem{
 			Ref: -1, Archetype: invItem.Archetype,
 			Adj1: invItem.Adj1, Adj2: invItem.Adj2, Adj3: invItem.Adj3,
-			Val1: invItem.Val1, Val2: invItem.Val2, Val3: invItem.Val3, Val4: invItem.Val4, Val5: invItem.Val5,
+			Val1: invItem.Val1, Val2: invItem.Val2, Val3: invItem.Val3, Val4: invItem.Val4, Val5: invItem.Val5, CraftedValue: invItem.CraftedValue,
 			ItemBits: invItem.ItemBits, State: invItem.State,
 		}
 		sc = e.RunPreverbScripts(player, room, "CAST", &tempRI, def)
@@ -3518,7 +3581,9 @@ func activeDispellableEffects(target *Player) []dispellableEffect {
 			return "Your immunity to plant snares and webs fades."
 		}})
 	}
-	if target.TelepathyActive {
+	// Only Mindlink's timed telepathy is dispellable; an Ephemeral's or a
+	// Telepathor's is part of the character.
+	if target.TelepathyActive && !target.hasInnateTelepathy() {
 		effects = append(effects, dispellableEffect{"Mindlink", func() string {
 			target.TelepathyActive = false
 			target.TelepathyExpiry = time.Time{}
@@ -4349,18 +4414,26 @@ func (e *GameEngine) castMindlink(player *Player, spell *SpellDef, args []string
 	target.TelepathyActive = true
 	target.TelepathyExpiry = time.Now().Add(1 * time.Hour)
 
+	// Original wording — a touch to the temples when cast on someone else, a plain
+	// gesture on yourself; onlookers just see that the recipient "seems changed".
+	// doCastSpell slots the [Success] roll line in after the opening line.
+	const expanding = "You feel the power of your mind expanding."
+	changed := fmt.Sprintf("%s seems changed.", target.DisplayNameCap())
 	if !isSelf {
 		e.SavePlayer(context.Background(), target)
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
-			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
-			TargetName:    target.FirstName,
-			TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel your mind open to the thoughts of others.", player.FirstName, spell.Name)},
+			Messages: []string{fmt.Sprintf("You place your fingers upon %s's temples.", target.DisplayName()), changed},
+			RoomBroadcast: []string{
+				fmt.Sprintf("%s places %s fingers upon %s's temples.", player.DisplayNameCap(), player.Possessive(), target.DisplayName()),
+				changed,
+			},
+			TargetName: target.FirstName,
+			TargetMsg:  []string{fmt.Sprintf("%s places %s fingers upon your temples.", player.DisplayNameCap(), player.Possessive()), expanding},
 		}
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel your mind open to the thoughts of others.", spell.Name)},
-		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
+		Messages:      []string{"You gesture.", expanding},
+		RoomBroadcast: []string{fmt.Sprintf("%s gestures.", player.DisplayNameCap()), changed},
 	}
 }
 
@@ -5199,7 +5272,11 @@ func (e *GameEngine) castSlowSpell(ctx context.Context, player *Player, spell *S
 				// Not a player — Slow is a debuff, so unlike Haste/Mystic Armor's
 				// findSummonedCreatureInRoom (allies only) it can target any hostile
 				// monster in the room too, not just a summoned/controlled creature.
-				if inst, def := e.findMonsterInRoom(player, t); inst != nil {
+				inst, def, refusal := e.findHostileMonsterInRoom(player, t)
+				if refusal != nil {
+					return refusal
+				}
+				if inst != nil {
 					return e.castSlowSpellOnMonster(player, spell, inst, def)
 				}
 				return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", strings.Join(args, " "))}, TargetNotFound: true}
@@ -5748,7 +5825,10 @@ func (e *GameEngine) castSlumberSpell(player *Player, spell *SpellDef, args []st
 		return &CommandResult{Messages: []string{fmt.Sprintf("Cast %s at what?", spell.Name)}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -5816,7 +5896,10 @@ func (e *GameEngine) castWebSpell(player *Player, spell *SpellDef, args []string
 		return &CommandResult{Messages: []string{"Cast Web at what?"}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -5867,7 +5950,10 @@ func (e *GameEngine) castSunraySpell(player *Player, spell *SpellDef, args []str
 		return &CommandResult{Messages: []string{"Cast Sunray at what?"}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -5910,7 +5996,10 @@ func (e *GameEngine) castFearSpell(player *Player, spell *SpellDef, args []strin
 		return &CommandResult{Messages: []string{"Cast Fear at what?"}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -5966,7 +6055,10 @@ func (e *GameEngine) castCharmSpell(player *Player, spell *SpellDef, args []stri
 		return &CommandResult{Messages: []string{"Cast Charm at what?"}}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -6288,7 +6380,7 @@ func (e *GameEngine) springSigilTrap(ctx context.Context, player *Player, sigilS
 	part, _ := rollBodyPart("HUMAN", 0)
 	dtype := damageTypeForSpecAttack(base.DmgType)
 	woundLevel := woundLevelFromDamage(dmg, player.MaxBodyPoints)
-	player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, !player.Undead)
+	player.Wounds = applyWoundToList(player.Wounds, part, dtype, woundLevel, player.CanBleed())
 	player.Bleeding = anyBleeding(player.Wounds)
 	player.BodyPoints -= dmg
 	rawBP := player.BodyPoints
@@ -6698,7 +6790,10 @@ func (e *GameEngine) castSilenceSpell(ctx context.Context, player *Player, spell
 		}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
@@ -6756,7 +6851,10 @@ func (e *GameEngine) castImprisonSpell(ctx context.Context, player *Player, spel
 		}
 	}
 
-	inst, def := e.findMonsterInRoom(player, targetName)
+	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
+	if refusal != nil {
+		return refusal
+	}
 	if inst == nil {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}

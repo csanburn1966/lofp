@@ -9,6 +9,442 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.0.0 &mdash; October 18, 2026</h2>
+            <p className="text-gray-400 mb-3">A major update: CyberTech is open for business. Implants bought in Fayd are now grafted onto your body as they were in the original game, trading Empathy for strength, speed, sharper senses, telepathy or full-body plating. The calendar gains the seven Feast Days of the Feast of the Great Moon that open each year, and a new <code className="text-amber-300">DATECVT</code> command converts between real and in-game dates. Fighting alongside your group now helps you hit, with Wolflings fighting as a pack. Sorcerous Summons finally calls its demons, and a number of bugs are fixed, including a shop that disconnected players.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Cyberware</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Buying an implant at CyberTech now installs it. You&rsquo;re sedated and wake on the operating table in the surgery, sore and woozy. <code className="text-amber-300">INFO</code> lists your implants under &ldquo;Cyberware:&rdquo;</li>
+                  <li>Bionic Arms raise Strength, Bionic Legs raise Quickness, and Reflexors raise Agility and Quickness. Each comes in Alpha, Beta, Gamma and Omega grades, and an Omega Arm alone adds 24 Strength</li>
+                  <li>Bionic Eyes raise Perception, and from Beta up they let you see in the dark. Bionic Ears sharpen your hearing, making it easier to find someone hiding and to notice someone sneaking in</li>
+                  <li>The Telepathor gives you permanent telepathy. <code className="text-amber-300">TELEPATHY</code> turns it on or off, and <code className="text-amber-300">THINK</code> sends your thoughts. It doesn&rsquo;t grant <code className="text-amber-300">CONTACT</code></li>
+                  <li>Cyberplate Armor protects your body, arms, back and legs: 70% at Alpha, up to 85% at Omega. It weighs nothing and can&rsquo;t be lost or damaged</li>
+                  <li>When Cyberplate is installed, any body armor, shoulder or thigh guards and bracers you&rsquo;re wearing go into your pack, and you can&rsquo;t wear them again. Helms, gloves, gauntlets and boots still fit, and so do cloaks</li>
+                  <li>Every implant drains Empathy, and your mana shrinks with it. Heavy cyberware can end your spellcasting altogether</li>
+                  <li>Buying a higher grade replaces the implant you have. You can&rsquo;t buy the same grade twice or a lower one. Ephemerals can&rsquo;t receive implants</li>
+                  <li>Implants bought before this update, which sat uselessly in your pack, are installed automatically the next time you log in</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Feast of the Great Moon</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Each year now opens with the seven Feast Days of the Feast of the Great Moon, the New Year&rsquo;s celebration, before Abra. The year is 343 days long, as in the original lore</li>
+                  <li><code className="text-amber-300">TIME</code> reads, for example, &ldquo;It is the third day of the Feast of the Great Moon, 1047&rdquo;. The Feast is not a month, and it counts as winter</li>
+                  <li>Today&rsquo;s date and time stay exactly where they were. Only future years gain the Feast Days</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: DATECVT</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">DATECVT 10-25-2026</code> tells you which in-game days a real date covers. Add a time, such as <code className="text-amber-300">DATECVT 10-25-2026 3:30pm</code>, for the exact in-game moment</li>
+                  <li><code className="text-amber-300">DATECVT GAME Manta 14 1047</code> (or <code className="text-amber-300">GAME 3-14-1047</code>, or <code className="text-amber-300">GAME FEAST 3 1047</code>) gives the real date and time span. <code className="text-amber-300">DATECVT NOW</code> and <code className="text-amber-300">DATECVT TODAY</code> also work</li>
+                  <li>Replies give the in-game day of the week and use the server&rsquo;s time zone, which is named in the reply. Dates far from today are estimates, because the game clock pauses while the server is down</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Group Fighting Bonus</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Fighting with your group gives +2% to hit for every group member in the room, counting yourself. It applies to weapons, claws, bites and backstabs</li>
+                  <li>Wolflings fight as a pack: each Wolfling in the group is worth +5% to a Wolfling. In a group of 3 Wolflings and 2 Humans, the Humans get +10% and the Wolflings +19%</li>
+                  <li>Your attack modifier in <code className="text-amber-300">INFO</code> includes the bonus</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Sorcerous Summons</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Sorcerous Summons I (139) tears open the air and calls a lesser demon. Sorcerous Summons II (140) calls a greater demon. Neither demon can be controlled, and each attacks everyone, including whoever summoned it</li>
+                  <li>A badly fumbled cast simply fails instead of backfiring</li>
+                  <li>Creatures that know these spells, such as the vith drone and the winged panther, now really summon a demon, and won&rsquo;t summon another while theirs is still alive</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Hiding, Surfaces and Repairs</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Darkness and night now help you <code className="text-amber-300">HIDE</code>, not just make you harder to find: +20% in an unlit dark room, and +10% outdoors between 7pm and 5am</li>
+                  <li><code className="text-amber-300">GET</code> now picks items up off tables, workbenches and other surfaces in the room when there&rsquo;s no match on the floor. <code className="text-amber-300">GET 2 LOCKPICK</code> counts floor items first, then those on surfaces</li>
+                  <li><code className="text-amber-300">LOOK ON</code> a surface lists what&rsquo;s on it, and <code className="text-amber-300">LOOK IN</code> a surface shows the same. Surfaces no longer show as &ldquo;(open)&rdquo; or &ldquo;(closed)&rdquo;</li>
+                  <li><code className="text-amber-300">REPAIR</code> accepts numbers and ordinals: <code className="text-amber-300">REPAIR 4 BROADSWORD</code> or <code className="text-amber-300">REPAIR FOURTH BROADSWORD</code></li>
+                  <li>The Reconstruction spell can now target your undead pet instead of always targeting you. It only works on undead creatures</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Pushing coins at the Key&rsquo;n Anchor locksmith disconnected you and lost your money. The purchase now works and leaves your item on the workbench. Similar crashes are prevented when other scripted items are flipped or read</li>
+                  <li>Mindlink&rsquo;s telepathy (from the spell, herb or potion) now wears off after an hour as intended. It used to last forever</li>
+                  <li>Dispel no longer strips an Ephemeral&rsquo;s natural telepathy or a Telepathor&rsquo;s</li>
+                  <li>The day of the month was off by one: the last day of each month showed as the 1st. Dates now count correctly</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>New <code className="text-amber-300">@cyberware &lt;player&gt;</code> lists a player&rsquo;s implants. <code className="text-amber-300">@cyberware &lt;player&gt; add &lt;kind&gt; &lt;grade&gt;</code> installs one, and <code className="text-amber-300">remove &lt;kind&gt;</code> takes one out, undoing its stat changes. The kinds are arm, leg, ear, armor, telepathor, reflexor and eye</li>
+                  <li>The script variable <code className="text-amber-300">MONTH</code> is 13 during the Feast Days, as GMSCRIPT.DOC describes. <code className="text-amber-300">DATE</code> is now the day of the month (1&ndash;28, or 1&ndash;7 during the Feast), as documented, instead of the day of the year</li>
+                  <li>The <code className="text-amber-300">INTANGIBLE</code> item flag is now read from scripts</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v14.0.0 &mdash; October 16, 2026</h2>
+            <p className="text-gray-400 mb-3">A major update: darkness is real. Rooms the original game marked as dark can no longer be seen in without a light, as it worked in 1996. Torches, lanterns, the Light and Night Vision spells all matter again, and races that see in the dark finally have that edge. Two races also gain the abilities the manual always promised. Ephemerals are untouchable by ordinary weapons until they go on the attack, and Mechanoids can switch their emotions off for sharper skills. GMs can now set a character&rsquo;s race, including undead, and have a new view of free room, item and creature numbers. <code className="text-amber-300">@dupe</code> now makes a true copy.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Darkness</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>In a dark room, <code className="text-amber-300">LOOK</code> shows only the room&rsquo;s name, &ldquo;It is too dark to see anything.&rdquo;, and the exits. You can&rsquo;t see the description, items or people there</li>
+                  <li>Looking in a direction, into a container, or at anything, as well as <code className="text-amber-300">READ</code>, <code className="text-amber-300">SEARCH</code> and <code className="text-amber-300">SKIN</code>, gets &ldquo;It is too dark to do that.&rdquo; Peering into a dark room next door shows only its name</li>
+                  <li>A lit torch, lantern or flashlight lights the room for everyone there, whether it&rsquo;s held, worn, carried or lying on the floor. So does anyone with the Light spell active</li>
+                  <li>Murgs, Highlanders and Ephemerals see in the dark, as does anyone under the Night Vision spell</li>
+                  <li>Only rooms the game marks as dark are affected. Night-time doesn&rsquo;t darken other rooms</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Light and Night Vision Spells, LIGHT</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The Light spell (113) now surrounds you with a glow that lights dark rooms for 20 minutes. Night Vision (520) lets you see in the dark for 20 minutes. Casting either again adds more time, up to 4 hours</li>
+                  <li>You&rsquo;re told when each one wears off</li>
+                  <li><code className="text-amber-300">LIGHT</code> now finds a torch you&rsquo;re holding in either hand or wearing, not just one in your pack. It tells you if the item is already lit, and the room sees you light it</li>
+                  <li>You can&rsquo;t light anything underwater: &ldquo;You can&rsquo;t do that underwater.&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Ephemeral Abilities</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Ordinary weapons, claws and bites pass harmlessly through an Ephemeral. Spells, psionics, elemental attacks and magical creatures still harm them</li>
+                  <li>Going on the offense draws an Ephemeral onto the physical plane for 30 seconds: preparing a spell, choosing a psionic discipline, or advancing on or attacking a target. While on the physical plane they can be hurt like anyone else. Each further attack resets the 30 seconds. You and the room see &ldquo;becomes more substantial&rdquo; and, later, &ldquo;becomes more ethereal&rdquo;</li>
+                  <li>Ephemerals don&rsquo;t bleed</li>
+                  <li>Ephemerals can&rsquo;t pick up, wield, wear, accept or buy anything over 2 pounds. Gear an Ephemeral already has is left alone</li>
+                  <li>Darkness gives someone hiding no advantage against an Ephemeral&rsquo;s <code className="text-amber-300">SEARCH</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Mechanoid EMOTE and UNEMOTE</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">UNEMOTE</code> switches a Mechanoid to the analytical half of its brain. Mining, smelting, forging, repairing, foraging, gem molding, hiding, sneaking, skinning, picking locks, disarming traps, legerdemain and scripted skill checks all get +10% to their chance of success. Combat, spells and psionics are unchanged</li>
+                  <li>While unemoted, a Mechanoid intones everything it says (&ldquo;Alpe intones, &hellip;&rdquo;) and can&rsquo;t use emotional emotes such as <code className="text-amber-300">LAUGH</code>, <code className="text-amber-300">SMILE</code> or <code className="text-amber-300">CRY</code>. Gestures like <code className="text-amber-300">NOD</code>, <code className="text-amber-300">BOW</code> and <code className="text-amber-300">WAVE</code> still work</li>
+                  <li><code className="text-amber-300">EMOTE</code> switches back to normal. Every Mechanoid starts in this mode</li>
+                  <li>New Mechanoid emotes: <code className="text-amber-300">BEEP</code>, <code className="text-amber-300">CLICK</code> and <code className="text-amber-300">BUZZ</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Mindlink Messages</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Casting Mindlink (403) on yourself now reads &ldquo;You gesture.&rdquo; then &ldquo;You feel the power of your mind expanding.&rdquo;, and the room sees that you seem changed</li>
+                  <li>Casting it on someone else shows you placing your fingers upon their temples, and they feel the power of their mind expanding</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Items Losing Details When Moved</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Picking up or dropping an item could lose some of its details: writing on a note, sigils, a blade imbue, or other stored values. <code className="text-amber-300">GET ALL</code> also lost an item&rsquo;s tail. Every way of moving an item between the floor and your hands now keeps all of them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@dupe</code> now makes an exact copy, including the item&rsquo;s tail, written text, sigils, blade imbue, crafted value and item bits, and the contents of a container</li>
+                  <li><code className="text-amber-300">@set race</code> now works after <code className="text-amber-300">@edpl</code>. Give the race as a number or a name. An unknown name lists the valid races</li>
+                  <li>GMs can set races players can&rsquo;t choose at creation: Vampire (9) and the racial groups 21&ndash;31 (Extraplanar, Undead, Construct and others)</li>
+                  <li>An undead or vampire character is immune to poison, disease and bleeding, and any they have is cured when the race is set. Healing harms them, and undead-only spells work for them</li>
+                  <li>Making a character Ephemeral turns on its innate telepathy, and changing away from Ephemeral turns it off. Changing a Wolfling to another race ends wolf form</li>
+                  <li>The GM panel has a new Number Ranges tab. It shows which room, item and creature numbers are in use, the free ranges between them, and any numbers used twice. Room, item and creature numbers have no upper limit</li>
+                  <li>The Number Ranges tab includes a reservation list, so a block of numbers can be noted as set aside for a GM. Reservations are only a reference: nothing stops GMs working in the same numbers when they collaborate</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.9.0 &mdash; October 14, 2026</h2>
+            <p className="text-gray-400 mb-3">You can now help a fallen friend back to their feet with <code className="text-amber-300">PULL</code>. Speaking in cant no longer gives you away to people who can&rsquo;t understand it, and keeps your capitalization. A mug of ale poured for you by script now actually has ale in it. Scripts can read and set an item&rsquo;s crafted value, so every place that buys goods can use the same price. The API docs link and the MUD client connection details on the main page are fixed.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Help Someone to Their Feet</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">PULL &lt;player&gt;</code> on someone lying down now stands them up. They see &ldquo;&lt;you&gt; helps you to your feet.&rdquo; and everyone else sees &ldquo;&lt;you&gt; helps &lt;them&gt; to his/her feet.&rdquo;</li>
+                  <li>It doesn&rsquo;t work on someone who is unconscious, asleep, dead, or held fast by webs, plants, tentacles and the like. In those cases <code className="text-amber-300">PULL</code> works as before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Cant Is Truly Secret</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When you use <code className="text-amber-300">CANT</code>, people who can&rsquo;t understand it no longer see &ldquo;&lt;name&gt; mutters something under their breath.&rdquo; They now see nothing at all</li>
+                  <li>Those who can understand cant still hear what you said, as before</li>
+                  <li>Your cant message keeps the capitalization you typed instead of being shown in all capitals</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Empty Mug of Ale</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Asking Torm for a taste in the Foresters crafts area gave you a pint mug that looked empty. <code className="text-amber-300">LOOK IN</code> now shows the ale, whether the mug is on the floor or in your hands</li>
+                  <li>You can <code className="text-amber-300">DRINK</code> the ale from the mug once you&rsquo;re holding it. The same applies to any drink a script pours into a cup or mug</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Main Page Links</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The API docs link on the main page returned a &ldquo;not found&rdquo; error. It now opens the docs</li>
+                  <li>The MUD client connection details, and the addresses in the API docs and examples, now show this server&rsquo;s address instead of the old one</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>New variable <code className="text-amber-300">ITEMCRAFTEDVALUE</code> reads an item&rsquo;s crafted value, and can be set with <code className="text-amber-300">EQUAL</code>, <code className="text-amber-300">ADD</code> and <code className="text-amber-300">SUB</code> like <code className="text-amber-300">ITEMVAL1</code></li>
+                  <li>New variable <code className="text-amber-300">ITEMWORTH</code> gives an item&rsquo;s sale value: its crafted value if it has one, otherwise <code className="text-amber-300">ITEMVAL1</code>. Scripts that buy items, such as the weavers&rsquo; storage cabinet, should check <code className="text-amber-300">ITEMWORTH</code> instead of <code className="text-amber-300">ITEMVAL1</code> so crafted and foraged goods are priced the same as at merchants</li>
+                  <li><code className="text-amber-300">NEWITEM</code> and <code className="text-amber-300">NEWPUT</code> accept <code className="text-amber-300">CRAFTEDVALUE=</code> alongside <code className="text-amber-300">VAL1=</code> and the others</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.8.0 &mdash; October 12, 2026</h2>
+            <p className="text-gray-400 mb-3">Defeated creatures can now leave more than one treasure item behind, as they could in the original game. Foraged herbs and woods are worth real money at merchants instead of a single copper. Training in a region with its own money, such as Kragenholm, is now paid in the local currency. Items stored by script in a room&rsquo;s containers, such as the Weavers Storage Alcove cabinet and cooler, now survive a server restart.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: More Than One Treasure Item</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When a creature drops a treasure item, there is now a chance of a second, and each further item gets the same chance again. A creature that drops an item 60% of the time has about a 1-in-4 chance of a second one</li>
+                  <li>Every creature that carries treasure can drop up to 2 items. Creatures with more treasure can drop up to 3 or 4</li>
+                  <li>Each item is chosen separately, so one kill can leave, for example, a piece of jewelry and a locked container. The chance of the first item is unchanged</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Foraged Items Sold for 1 Copper</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Everything found with <code className="text-amber-300">FORAGE</code> sold for a single copper. Foraged items now have a value</li>
+                  <li>Items that a shop also sells are worth that shop&rsquo;s price, so merchants pay half of it: about 25 gold crowns for mandrake root and nearly 13 for the rare jungle herbs. Items no shop sells are valued by how rare they are</li>
+                  <li>Foraged items you&rsquo;re already carrying, and herbs bought from shops, sell at the new value too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Training Fees in Local Currency</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Trainers in regions with their own money charged gold crowns even though the region&rsquo;s shops take local money. The Kragenholm Weaponmaster&rsquo;s yard now charges kragenmarks, at the usual rate of 12 to the crown</li>
+                  <li>The fee itself is unchanged: 5 gold crowns per rank, or the local equivalent, for characters above level 4</li>
+                  <li>Where training is paid in crowns, you no longer need gold coins on hand. The fee can be paid from silver and copper, with change made, as in shops</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Stored Items Lost on Restart</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Some room containers, such as the cabinet and cooler in the Weavers Storage Alcove, take your item and store a copy of it by script. Those copies were lost whenever the server restarted, while the rack next to them kept its pelts. They are now saved like anything put in by hand</li>
+                  <li>Items stored before this update are still lost at the next restart. Anything stored from now on is kept</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">NEWPUT</code> into a container now stores the item the same way a player&rsquo;s <code className="text-amber-300">PUT</code> does, so a container marked with <code className="text-amber-300">ITEMBIT19</code> keeps it through a restart. <code className="text-amber-300">LOOK IN</code>, <code className="text-amber-300">GET</code> and <code className="text-amber-300">IFIN</code> behave as before</li>
+                  <li><code className="text-amber-300">@rdata</code> listed items stored inside a container by script as if they were on the floor, with the container&rsquo;s item number, and showed the container as empty. They now appear in the container&rsquo;s Contents line, and the Items count leaves them out</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.7.0 &mdash; October 10, 2026</h2>
+            <p className="text-gray-400 mb-3">Game Masters get new tools for running the world. Uploaded scripts can be kept as drafts until they&rsquo;re ready, and switched on or off at any time without a restart. The season can be held or set by hand. A GM can now restart the server from inside the game, with a countdown warning for everyone online. Seasons also change on schedule again. For players: <code className="text-amber-300">PUT &hellip; ON</code> works, balloons can be popped, and a few scripted objects behave better.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Draft Scripts in the GM Panel</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Scripts uploaded in the GM panel can be saved with <b>Save as Draft</b>. A draft is stored and readable by every GM, but it isn&rsquo;t applied to the game and isn&rsquo;t loaded when the server starts. Each script shows a <b>LIVE</b> or <b>DRAFT</b> badge</li>
+                  <li><b>Activate</b> puts a draft into the game. <b>Disable</b> turns a live script back into a draft and takes it out of the game straight away, with no restart: the rooms, items, creatures and timed events it changed return to their original versions, and creatures that only it defined are removed</li>
+                  <li>Saving changes to a live script now also removes anything the new version no longer contains, and deleting a live script removes it from the game first. Previously both needed a server restart</li>
+                  <li>Re-uploading a script no longer makes its timed events run twice as often</li>
+                  <li>Scripts that were already uploaded stay live</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Season Control</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@season</code> shows the current season, the game date and roughly how long until the next season change</li>
+                  <li><code className="text-amber-300">@season hold</code> freezes the current season, <code className="text-amber-300">@season set autumn</code> (or spring, summer, winter) switches season immediately and holds it, and <code className="text-amber-300">@season release</code> returns to the calendar. A held season survives server restarts. Time of day and dates keep moving while it&rsquo;s held</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Restart From Inside the Game</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">@reboot &lt;seconds&gt;</code> (10 to 1800) or <code className="text-amber-300">@reboot now</code> saves every online character, the game clock and global values, then restarts the server, so a GM without access to the host can do it. Everyone online is warned when it&rsquo;s scheduled and again at 5 minutes, 2 minutes, 1 minute, 30 seconds and 10 seconds. <code className="text-amber-300">@reboot cancel</code> stops it</li>
+                  <li>It must be typed in full, so an abbreviation can&rsquo;t trigger it by accident. The server only comes back on its own if the host is set to restart it automatically</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Seasons</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The world only changed season while someone had the admin event monitor open, so seasons could go months late. They now change on schedule</li>
+                  <li>Rooms a live GM script has replaced keep the script&rsquo;s version when the season changes, instead of being overwritten with the seasonal description</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Commands</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">PUT &lt;item&gt; ON &lt;thing&gt;</code> now works; before, only <code className="text-amber-300">PUT &hellip; IN</code> was understood</li>
+                  <li><code className="text-amber-300">POP</code>, <code className="text-amber-300">RIP</code>, <code className="text-amber-300">LIFT</code> and <code className="text-amber-300">PRY</code> are now commands, so objects that react to them work. Ripping a balloon to pop it had never worked, because <code className="text-amber-300">RIP</code> wasn&rsquo;t a command. <code className="text-amber-300">PRY &lt;thing&gt; WITH &lt;tool&gt;</code> is accepted</li>
+                  <li>Looking at a scripted object now shows only its scripted description. Previously the default description came first; for example, the Cafe de la Paix menu said &ldquo;It is nondescript.&rdquo; before &ldquo;You&rsquo;ll have to read that.&rdquo;</li>
+                  <li>Items handed to you by a scripted event are saved right away, so a crash or restart can&rsquo;t lose them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">UNLOCK</code> now runs a room item&rsquo;s <code className="text-amber-300">IFPREVERB UNLOCK</code> script before checking whether the item is lockable, the same way <code className="text-amber-300">OPEN</code> already did</li>
+                  <li>An <code className="text-amber-300">IFPREVERB LOOK</code> script that uses <code className="text-amber-300">CLEARVERB</code> and echoes text now replaces the item&rsquo;s default description instead of being added after it</li>
+                  <li><code className="text-amber-300">REMOVEITEM -1</code> removes the exact item the script is running on (matching adjectives and values) before falling back to any item of the same type. Popping a special balloon can no longer use up a plain one you&rsquo;re also carrying</li>
+                  <li><code className="text-amber-300">NEWITEM -1</code> saves the character immediately</li>
+                  <li>A GM script&rsquo;s <code className="text-amber-300">CEVENT</code> replaces an already-loaded one with the same number and room instead of running alongside it</li>
+                  <li>Disabling a script does not undo vocabulary, named variables or monster adjectives it added. They&rsquo;re harmless and clear at the next restart. Disabling also replaces the affected rooms, so items dropped in them are lost</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.6.0 &mdash; October 8, 2026</h2>
+            <p className="text-gray-400 mb-3">Fatigue, mana and psi now all recover at the same, faster rate. Searching for hidden players has been reworked so that darkness and night help the hider and no one is ever impossible (or certain) to find. Walking through a door or into an alley while hidden now gives you away; use <code className="text-amber-300">SNEAK</code> instead. Several ways of getting stuck are gone: you can no longer be left permanently stunned, and <code className="text-amber-300">DEPART</code> and <code className="text-amber-300">REPORT</code> always work. Also: looking through windows and fences shows who&rsquo;s on the other side, and other players now see what happens when you eat or drink something special.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Faster, Even Regeneration</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Each minute, fatigue, mana and psi now recover one tenth of the matching stat, rounded up: Constitution for fatigue, Empathy for mana, Willpower for psi. A stat of 75 recovers 8 points a minute while standing</li>
+                  <li>Mana used to recover noticeably slower than fatigue and psi. All three now use the same rate</li>
+                  <li>Resting still helps as before: kneeling recovers 1.5 times as fast, sitting twice as fast and lying down three times as fast</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Searching for Hidden Players</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Only the searcher&rsquo;s Perception counts now. Your own Stealth skill no longer helps you find others</li>
+                  <li>A search always has at least a 5% chance and never more than a 95% chance of finding someone, the same limits combat uses</li>
+                  <li>Hiders get a bonus in a dark room with no light source, and another bonus outdoors between 7pm and 5am. The two add together</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Moving While Hidden</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Using <code className="text-amber-300">GO</code> to walk through a door, gate or alley now reveals you, just as walking in a direction always has. If the way is blocked, you stay hidden</li>
+                  <li><code className="text-amber-300">SNEAK</code> now works on alleys and similar places, as in <code className="text-amber-300">SNEAK ALLEY</code>, not just on directions. <code className="text-amber-300">STEAL ALLEY</code> still works too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Getting Stuck</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Logging out or a server restart while stunned could leave you stunned forever, unable to do almost anything. Stuns no longer survive logging out, and anyone stuck this way is freed the next time they log in</li>
+                  <li>Dying now clears any stun</li>
+                  <li><code className="text-amber-300">DEPART</code> and <code className="text-amber-300">REPORT</code> now always work, whether you&rsquo;re dead, unconscious, stunned or in round time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">RETREAT</code>, <code className="text-amber-300">ADVANCE</code> and <code className="text-amber-300">FLEE</code> could be used while still in round time. They now wait, like walking does, and tell you how long is left</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Looking Into Other Rooms</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Looking through a window, fence or peephole into another room only showed that room&rsquo;s description. You now see everything a <code className="text-amber-300">LOOK</code> there would show: the people and creatures present, items, weather and exits. For example, <code className="text-amber-300">LOOK FENCE</code> at the Cafe de la Paix in Fayd shows who&rsquo;s out on the street</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: What Others See</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When you ate or drank something with a special effect, only you saw what happened. Biting into a chocolate and spitting out a gem now shows to everyone in the room</li>
+                  <li>The off-hand swing of a two-weapon attack now reads like the main hand, damage included: &ldquo;Trieste backstabs at a bog ooze. Hit! Massive damage.&rdquo;</li>
+                  <li>A monster&rsquo;s dropped weapon read &ldquo;An a greatsword clatters to the ground.&rdquo; It now reads &ldquo;A greatsword clatters to the ground.&rdquo;</li>
+                  <li>&ldquo;You see a dagger lies among the remains.&rdquo; now reads &ldquo;You see a dagger lying among the remains.&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: Crescent Isle</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The lower muldragun spawn rate in v13.5.0 never actually took effect, because a second copy of the old values was overriding it. Muldraguns and bhulondags now really do appear less often, about a third as often as originally</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SHOWROOM</code> now shows a full <code className="text-amber-300">LOOK</code> of the target room (occupants, monsters, items, weather, exits), as <code className="text-amber-300">GMSCRIPT.DOC</code> describes, instead of only the name and description. This affects all of its roughly 520 uses in the scripts. Hidden and invisible players stay hidden</li>
+                  <li>Monster group 107 is defined in both <code className="text-amber-300">MONSTERS.SCR</code> and <code className="text-amber-300">HAVEN.SCR</code>. <code className="text-amber-300">HAVEN.SCR</code> loads later, so its copy is the one used. Both are now 30/15/5; keep them identical. Before changing any spawn group, check every script file for other copies of it</li>
+                  <li><code className="text-amber-300">ECHO OTHERS</code>, <code className="text-amber-300">ECHO ALL</code> and <code className="text-amber-300">GMMSG</code> in an item&rsquo;s <code className="text-amber-300">EAT</code> or <code className="text-amber-300">DRINK</code> script now reach the room and the GMs</li>
+                  <li><code className="text-amber-300">SNEAK &lt;item&gt;</code> runs the item&rsquo;s <code className="text-amber-300">IFPREVERB STEAL</code> script, the verb the original alley items use for sneaking in. <code className="text-amber-300">GO</code> through a portal or scripted item un-hides the player before its scripts run, so their <code className="text-amber-300">ECHO OTHERS</code> lines are seen</li>
+                  <li>Search tuning: a dark room with no light source gives the hider +20, outdoors from 7pm to 5am gives +10</li>
+                  <li>The admin Monsters page showed item adjectives instead of monster adjectives (monster 95 appeared as &ldquo;amazing beetle&rdquo; instead of &ldquo;fire beetle&rdquo;). Fixed</li>
+                  <li>The <code className="text-amber-300">*HONK*</code> alert for a queued treasure drop no longer reads &ldquo;got an a &hellip;&rdquo;</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v13.5.0 &mdash; October 6, 2026</h2>
+            <p className="text-gray-400 mb-3">When you <code className="text-amber-300">REPORT</code> a problem, the Game Masters can now write back, and you&rsquo;ll see their reply the next time you log in. Hiding now works as it did in the original game: it takes 5 seconds of round time and can&rsquo;t be tried while you&rsquo;re still in round time, and neither can preparing a psionic discipline. Creatures that aren&rsquo;t made of flesh and bone no longer get gory death messages. Also: winter worgs are more vulnerable to fire, snowy caterpillars can be skinned, and Crescent Isle is a little less crowded.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Replies to Your Reports</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The Game Masters can now reply to anything you send with <code className="text-amber-300">REPORT</code>. The next time you enter the game, you&rsquo;ll see what you reported and their reply, just after the room description</li>
+                  <li>If you&rsquo;re already playing when they reply, it shows up right away</li>
+                  <li>Each reply is shown once. If a GM changes a reply, you&rsquo;ll see the new version on your next login</li>
+                  <li>Works the same whether you play in the browser or through telnet or SSH</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Hiding Takes Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">HIDE</code> now costs 5 seconds of round time, whether or not you find a hiding place. Haste from a spell or psionic power halves it</li>
+                  <li>You can&rsquo;t try to hide while you&rsquo;re still in round time. You&rsquo;ll see <code className="text-amber-300">[Wait 4 seconds...]</code> instead</li>
+                  <li>When you fail to hide, others in the room now see &ldquo;Rhys gropes around, trying to hide.&rdquo; instead of &ldquo;Rhys looks around nervously.&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Psionics During Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>You could prepare a discipline with <code className="text-amber-300">PSI</code> while still in round time. It now waits until your round time is over and tells you how long is left, like <code className="text-amber-300">[Wait 4 seconds...]</code>. Typing <code className="text-amber-300">PSI</code> by itself still lists your disciplines at any time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Gory Deaths for Creatures Without Bodies</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Killing blows on slimes, elementals, constructs, and other creatures without a normal humanoid or animal body could describe ruptured organs, a lacerated liver, and similar deaths. These creatures now get the normal damage line instead</li>
+                  <li>This applies to weapon kills (including off-hand weapons), elemental weapon criticals, and spell kills</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Balance: Winter Creatures and Crescent Isle</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Winter worgs now take extra damage from heat and only half damage from cold</li>
+                  <li>Snowy caterpillars can now be skinned for a snow-white pelt. Their spine attack also no longer reads &ldquo;flings its spines spines&rdquo;</li>
+                  <li>Muldraguns and bhulondags on Crescent Isle appear about half as often as before</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Player reports on the admin Logs page have a new <strong>Reply</strong> button. Under each report you can see the reply and whether the player has seen it yet. <strong>Edit Reply</strong> changes it (and the player sees it again), <strong>Remove</strong> deletes it. Replying doesn&rsquo;t mark the report Done; that&rsquo;s still separate. Replies are signed &ldquo;The Game Masters&rdquo;, so your account name isn&rsquo;t shown to players</li>
+                  <li>Replies go to the character with the reporter&rsquo;s full name, and disappear with the report after 90 days if never seen</li>
+                  <li><code className="text-amber-300">IMMUNITY 9</code> (susceptibility to death criticals) is now enforced. Any value below the default of 2 turns off the fancy death lines for that creature; most creatures that use it are set to <code className="text-amber-300">IMMUNITY 9 0</code>. The creature&rsquo;s own <code className="text-amber-300">TEXD</code> death text is still shown</li>
+                  <li>Winter worg (<code className="text-amber-300">WINMON.SCR</code>, monster 44): added <code className="text-amber-300">IMMUNITY 3 3</code> and <code className="text-amber-300">IMMUNITY 5 1</code>. Snowy caterpillar (monster 92): added <code className="text-amber-300">SKINITEM 509</code> with <code className="text-amber-300">SKINADJ 1108</code></li>
+                  <li>Monster group 107 (Crescent Isle) in <code className="text-amber-300">MONSTERS.SCR</code>: 100/50/10 &rarr; 50/25/5</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v13.4.0 &mdash; October 4, 2026</h2>
             <p className="text-gray-400 mb-3">Backstab is now a real skill: you need training in it, a puncture weapon, and a target with a back, and every successful backstab strikes that back. Potions can be poured together again to top them off or gamble on a mix, as in the original game. Locked chests turn up a little more often, a damaged weapon warns you before it breaks, and experienced skinners rarely ruin a corpse. Also: winter spawns in the Dark Keep are back to normal, and you can take out items that were placed in a room&rsquo;s containers.</p>
 

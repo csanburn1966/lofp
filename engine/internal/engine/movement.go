@@ -220,11 +220,9 @@ func (e *GameEngine) EnterRoom(ctx context.Context, player *Player) *CommandResu
 	weather := strings.ToLower(e.GetRoomWeather(player.RoomNumber))
 	var timeMsg string
 	if weather != "" {
-		timeMsg = fmt.Sprintf("It is %s %d, %d. It is %s. %s",
-			GameMonthName(), GameDay()%28+1, GameYear(), period, weather)
+		timeMsg = fmt.Sprintf("It is %s. It is %s. %s", GameDateText(), period, weather)
 	} else {
-		timeMsg = fmt.Sprintf("It is %s %d, %d. It is %s.",
-			GameMonthName(), GameDay()%28+1, GameYear(), period)
+		timeMsg = fmt.Sprintf("It is %s. It is %s.", GameDateText(), period)
 	}
 
 	result := e.doLook(player)
@@ -294,24 +292,13 @@ func (e *GameEngine) applySeasonalRooms() {
 	for i := range rooms {
 		r := &rooms[i]
 		if existing := e.rooms[r.Number]; existing != nil {
-			// Override description and terrain but preserve dynamic state
-			existing.Name = r.Name
-			existing.Description = r.Description
-			existing.Terrain = r.Terrain
-			existing.Exits = r.Exits
-			existing.MonsterGroup = r.MonsterGroup
-			if len(r.Items) > 0 {
-				existing.Items = r.Items
+			// A room a live GM script has replaced (e.g. HALLOWEEN2026.SCR's cemetery)
+			// keeps the script's version; withdrawing the script restores the base room
+			// with the then-current season (see revertScriptEntities).
+			if base, ok := e.baseRooms[r.Number]; ok && base != existing {
+				continue
 			}
-			if len(r.Modifiers) > 0 {
-				existing.Modifiers = r.Modifiers
-			}
-			if len(r.ItemDescriptions) > 0 {
-				existing.ItemDescriptions = r.ItemDescriptions
-			}
-			if len(r.Scripts) > 0 {
-				existing.Scripts = r.Scripts
-			}
+			applySeasonalRoomOverride(existing, r)
 			count++
 		} else {
 			// New room from seasonal script
@@ -321,6 +308,28 @@ func (e *GameEngine) applySeasonalRooms() {
 	}
 	if count > 0 {
 		log.Printf("Applied %d seasonal room overrides for %s", count, SeasonName())
+	}
+}
+
+// applySeasonalRoomOverride copies one seasonal room definition onto a live room:
+// description and terrain change, dynamic state is preserved.
+func applySeasonalRoomOverride(existing, r *gameworld.Room) {
+	existing.Name = r.Name
+	existing.Description = r.Description
+	existing.Terrain = r.Terrain
+	existing.Exits = r.Exits
+	existing.MonsterGroup = r.MonsterGroup
+	if len(r.Items) > 0 {
+		existing.Items = r.Items
+	}
+	if len(r.Modifiers) > 0 {
+		existing.Modifiers = r.Modifiers
+	}
+	if len(r.ItemDescriptions) > 0 {
+		existing.ItemDescriptions = r.ItemDescriptions
+	}
+	if len(r.Scripts) > 0 {
+		existing.Scripts = r.Scripts
 	}
 }
 
@@ -453,41 +462,8 @@ func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string)
 			skip--
 			continue
 		}
-		// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
-		// immediately, so reading it after script execution would give the new room).
-		originalRoom := player.RoomNumber
-		sc := e.RunPreverbScripts(player, room, "STEAL", &room.Items[i], itemDef)
-		// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
-		// after the delay is lost.
-		if len(sc.DeferredSegments) > 0 {
-			e.scheduleScriptSegments(player, sc.DeferredSegments)
-		}
-		result := &CommandResult{}
-		result.Messages = append(result.Messages, sc.Messages...)
-		result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
-		result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
-		if sc.MoveGroupTo > 0 {
-			e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
-			return result
-		}
-		if sc.MoveTo > 0 {
-			dest := e.rooms[sc.MoveTo]
-			if dest != nil {
-				player.RoomNumber = sc.MoveTo
-				e.SavePlayer(ctx, player)
-				lookResult := e.doLook(player)
-				result.Messages = append(result.Messages, lookResult.Messages...)
-				result.RoomName = lookResult.RoomName
-				result.RoomDesc = lookResult.RoomDesc
-				result.Exits = lookResult.Exits
-				result.Items = lookResult.Items
-				result.OldRoom = originalRoom
-				result.OldRoomMsg = []string{fmt.Sprintf("%s slips away.", player.DisplayNameCap())}
-				result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s slips in from somewhere.", player.DisplayNameCap()))
-				e.applyEntryScripts(ctx, player, dest, result)
-			}
-		}
-		if len(result.Messages) == 0 && len(result.RoomBroadcast) == 0 && !sc.Blocked {
+		result, reacted := e.runStealItemScripts(ctx, player, room, &room.Items[i], itemDef)
+		if !reacted {
 			// No STEAL script reacted — it's an ordinary item on the floor.
 			return e.doFilch(ctx, player, args)
 		}
@@ -510,6 +486,69 @@ func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string)
 
 	// Not a floor item — pick a player's or creature's pocket.
 	return e.doRob(ctx, player, args)
+}
+
+// runStealItemScripts runs a room item's IFPREVERB STEAL scripts — the verb the
+// original alley items (ITEM6.SCR 692, JANUS1.SCR) use for sneaking in, as opposed
+// to GO, which walks in openly. reacted is false when no script produced output,
+// blocked, or moved the player, i.e. the item has no STEAL behavior. Shared by
+// STEAL <item> and SNEAK <item>.
+func (e *GameEngine) runStealItemScripts(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef) (result *CommandResult, reacted bool) {
+	// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
+	// immediately, so reading it after script execution would give the new room).
+	originalRoom := player.RoomNumber
+	sc := e.RunPreverbScripts(player, room, "STEAL", ri, itemDef)
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+	// after the delay is lost.
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
+	result = &CommandResult{}
+	result.Messages = append(result.Messages, sc.Messages...)
+	result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
+	result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+	if sc.MoveGroupTo > 0 {
+		e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
+		return result, true
+	}
+	if sc.MoveTo > 0 {
+		dest := e.rooms[sc.MoveTo]
+		if dest != nil {
+			player.RoomNumber = sc.MoveTo
+			e.SavePlayer(ctx, player)
+			lookResult := e.doLook(player)
+			result.Messages = append(result.Messages, lookResult.Messages...)
+			result.RoomName = lookResult.RoomName
+			result.RoomDesc = lookResult.RoomDesc
+			result.Exits = lookResult.Exits
+			result.Items = lookResult.Items
+			result.OldRoom = originalRoom
+			result.OldRoomMsg = []string{fmt.Sprintf("%s slips away.", player.DisplayNameCap())}
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s slips in from somewhere.", player.DisplayNameCap()))
+			e.applyEntryScripts(ctx, player, dest, result)
+		}
+	}
+	reacted = len(result.Messages) > 0 || len(result.RoomBroadcast) > 0 || sc.Blocked
+	return result, reacted
+}
+
+// revealForOpenMove un-hides a hidden player who is about to walk through a
+// portal or scripted item with GO — the open way in, which reveals you just like
+// a compass move does (doMove); SNEAK is the stealthy way. It's done before the
+// item's scripts run so their ECHO OTHERS lines (e.g. the alley's "%N ducks into
+// an opening") aren't suppressed as a concealed player's. The returned func, to be
+// deferred, re-hides them if they never actually left originalRoom (blocked, closed,
+// guarded...). Ethereal Projection is psi-maintained and unaffected, as in doMove.
+func revealForOpenMove(player *Player, originalRoom int) func() {
+	if !player.Hidden || player.EtherealActive {
+		return func() {}
+	}
+	player.Hidden = false
+	return func() {
+		if player.RoomNumber == originalRoom {
+			player.Hidden = true
+		}
+	}
 }
 
 func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -609,7 +648,7 @@ func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *C
 		originalRoom := player.RoomNumber
 		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 			ItemBits: ii.ItemBits, State: ii.State, Extend: ii.Tail}
 		return e.runGoItemScripts(ctx, player, room, &tempRI, itemDef, originalRoom)
 	}
@@ -622,6 +661,7 @@ func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *C
 // worn/wielded/off-hand item — and turns the result into a CommandResult, handling
 // MOVE/MOVEGROUP/CLEARVERB the same way regardless of where the item was found.
 func (e *GameEngine) runGoItemScripts(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef, originalRoom int) *CommandResult {
+	defer revealForOpenMove(player, originalRoom)()
 	// runNestedItemVerbScripts is the only walk that reaches an IFVERB nested
 	// inside a top-level IFITEM/IFNOITEM wrapper (e.g. item 1290's bedroll:
 	// "IFITEM -1 OPEN ... IFVERB GO -1 ... ENDIF", see SHANTA.SCR) — RunPreverbScripts
@@ -736,6 +776,7 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 
 	// Capture room before running scripts — MOVE in scripts can change player.RoomNumber directly.
 	originalRoom := player.RoomNumber
+	defer revealForOpenMove(player, originalRoom)()
 
 	// Run IFPREVERB GO scripts (can CLEARVERB to block)
 	sc := e.RunPreverbScripts(player, room, "GO", ri, itemDef)

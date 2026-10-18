@@ -66,6 +66,70 @@ func (e *GameEngine) castSummonElemental(player *Player, spell *SpellDef) *Comma
 	return e.spawnSummonedCreature(player, mnumberMap[spell.ID], false, flavorMap[spell.ID])
 }
 
+// sorcerousSummonsDemon maps Sorcerous Summons I/II (139/140) to the demon each one
+// calls: the lesser (MNUMBER 110) and greater (MNUMBER 111) demons of Idemmu Ag. No
+// surviving doc names them; they're the only lesser/greater demon pair in MONSTERS.SCR.
+var sorcerousSummonsDemon = map[int]int{
+	139: 110, // Sorcerous Summons I — lesser demon
+	140: 111, // Sorcerous Summons II — greater demon
+}
+
+// castSorcerousSummons handles Sorcerous Summons I & II (139/140). Per MAGIC.TXT they
+// "summon an angry, uncontrollable demon", so the demon is spawned as an ordinary wild
+// monster rather than a summon — no SummonerName, no COMMAND — and the normal hostile
+// aggro pass (both demons are STRATEGY 501) turns it on everyone in the room, caster
+// included. There's no one-summon limit for the same reason: the caster doesn't own it.
+func (e *GameEngine) castSorcerousSummons(player *Player, spell *SpellDef) *CommandResult {
+	appear, ok := e.spawnSorcerousDemon(spell.ID, player.RoomNumber)
+	if !ok {
+		return &CommandResult{Messages: []string{"The summoning fails — no creature answers your call."}}
+	}
+	return &CommandResult{
+		Messages:      []string{appear},
+		RoomBroadcast: []string{appear},
+	}
+}
+
+// spawnSorcerousDemon spawns spell 139/140's demon in roomNum as a wild hostile
+// monster and returns its appearance line. Shared by player casts and monsters that
+// list the spell (the vith drone, KOSS.SCR's winged panther — see resolveMonsterCast).
+// It takes the monster lock itself, so the caller must not hold it.
+func (e *GameEngine) spawnSorcerousDemon(spellID, roomNum int) (appear string, ok bool) {
+	def := e.monsters[sorcerousSummonsDemon[spellID]]
+	if def == nil || e.monsterMgr == nil {
+		return "", false
+	}
+	hp := def.Body
+	if def.ExtraBody > 0 {
+		hp += rand.Intn(def.ExtraBody/2+1) + def.ExtraBody/2
+	}
+	e.monsterMgr.SpawnOne(def.Number, roomNum, hp, def.Mana, def.Psi)
+
+	// TEXG is the monster's own appearance line (the lesser demon's "A thickening
+	// cloud of mist gradually takes the form of a lesser demon."); the greater demon
+	// has none, so it gets a generic one.
+	appear = def.TextOverrides["TEXG"]
+	if appear == "" {
+		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+		appear = fmt.Sprintf("The air tears open with a foul stench, and %s%s steps through!", articleFor(name, def.Unique), name)
+	}
+	return appear, true
+}
+
+// sorcerousDemonPresent reports whether spell 139/140's demon is already alive in
+// roomNum. Monsters won't cast the summons again while it is — their mana never
+// recovers but KOSS.SCR's panther has 500 of it, enough to flood a room with 25
+// demons in one fight. Takes the monster lock itself.
+func (e *GameEngine) sorcerousDemonPresent(spellID, roomNum int) bool {
+	demon := sorcerousSummonsDemon[spellID]
+	for _, m := range e.monsterMgr.MonstersInRoom(roomNum) {
+		if m.DefNumber == demon {
+			return true
+		}
+	}
+	return false
+}
+
 // spawnSummonedCreature creates a summoned monster in the player's room, links it to the player,
 // and returns a CommandResult with flavor text. isFamiliar enables COMMAND WATCH WILL.
 func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamiliar bool, flavorPrefix string) *CommandResult {

@@ -12,6 +12,20 @@ import (
 	"github.com/jonradoff/lofp/internal/gameworld"
 )
 
+// roomItemStillAt reports whether room.Items[i] is still orig. A script stage that
+// REMOVEITEMs its own item (the room 594 locksmith in THIEF.SCR taking PUSHed coins)
+// shifts room.Items, so a later stage must not index room.Items[i] blindly: past the
+// end it panics, dropping the player's connection after the script already took the
+// coins; otherwise it silently runs on whatever item slid into that slot.
+func roomItemStillAt(room *gameworld.Room, i int, orig gameworld.RoomItem) bool {
+	if i >= len(room.Items) {
+		return false
+	}
+	cur := room.Items[i]
+	return cur.Ref == orig.Ref && cur.Archetype == orig.Archetype &&
+		cur.Adj1 == orig.Adj1 && cur.Adj2 == orig.Adj2 && cur.Adj3 == orig.Adj3 && cur.Val1 == orig.Val1
+}
+
 // doItemInteraction handles verbs like PULL, PUSH, TURN, RUB, TAP, TOUCH, SEARCH, DIG.
 // These run IFPREVERB scripts on the target item. If no script handles it, a default message is shown.
 func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb string, args []string) *CommandResult {
@@ -60,12 +74,19 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 		sc0 := e.RunItemScripts(player, room, verb, &room.Items[i], itemDef)
 		result.Messages = append(result.Messages, sc0.Messages...)
 		result.GMBroadcast = append(result.GMBroadcast, sc0.GMMsgs...)
+		// Each later stage runs only if the item is still there — see roomItemStillAt
+		// (PUSHing coins to the room 594 locksmith REMOVEITEMs them in the preverb stage).
+		sc, sc2 := &ScriptContext{}, &ScriptContext{}
 		// Run IFPREVERB scripts (item-level + room specific-ref + room -1 catch-all)
-		sc := e.RunPreverbScripts(player, room, verb, &room.Items[i], itemDef)
+		if roomItemStillAt(room, i, ri) {
+			sc = e.RunPreverbScripts(player, room, verb, &room.Items[i], itemDef)
+		}
 		result.Messages = append(result.Messages, sc.Messages...)
 		result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
 		// Run IFVERB scripts (item-level + room specific-ref + room -1 catch-all)
-		sc2 := e.RunVerbScripts(player, room, verb, &room.Items[i], itemDef)
+		if roomItemStillAt(room, i, ri) {
+			sc2 = e.RunVerbScripts(player, room, verb, &room.Items[i], itemDef)
+		}
 		result.Messages = append(result.Messages, sc2.Messages...)
 		result.GMBroadcast = append(result.GMBroadcast, sc2.GMMsgs...)
 		// PLREVENT/CONTPLREVENT-deferred actions (e.g. a multi-stage scripted sequence)
@@ -74,6 +95,12 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 			if len(segs) > 0 {
 				e.scheduleScriptSegments(player, segs)
 			}
+		}
+		// Persist anything the scripts gave or changed (NEWITEM -1, ADD WEALTH, INTNUM
+		// flags) — e.g. a SEARCH that hands over a quest item — rather than relying on a
+		// later save that a crash or redeploy could pre-empt.
+		if sc0.NeedsSave || sc.NeedsSave || sc2.NeedsSave {
+			e.SavePlayer(ctx, player)
 		}
 		moveTo := sc0.MoveTo
 		if sc.MoveTo > 0 {
@@ -197,7 +224,7 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 			}
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits,
 				State: itemState}
 			result := &CommandResult{}
@@ -269,6 +296,13 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 				return &CommandResult{Messages: []string{fmt.Sprintf("You %s %s. Nothing happens.", verbLower, itemName)}}
 			}
 			return result
+		}
+	}
+
+	// PULL on a player who is lying down helps them up instead of the plain emote.
+	if verb == "PULL" {
+		if helped := e.doPullPlayerUp(ctx, player, args); helped != nil {
+			return helped
 		}
 	}
 
@@ -422,6 +456,11 @@ func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string
 			e.scheduleScriptSegments(player, sc.DeferredSegments)
 		}
 		if sc.Blocked {
+			// A blocking GET script may hand out its own item instead (NEWITEM -1 —
+			// e.g. FALLFEST.SCR's refreshment table); persist it.
+			if sc.NeedsSave {
+				e.SavePlayer(ctx, player)
+			}
 			result := &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 			if len(result.Messages) == 0 {
 				result.Messages = []string{"You can't take that."}
@@ -485,6 +524,10 @@ func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string
 			}
 		}
 
+		if msg := ephemeralTooHeavy(player, e.roomItemWeight(room, &ri)); msg != "" {
+			return &CommandResult{Messages: append(scriptMsgs, msg), RoomBroadcast: scriptRoomMsgs, GMBroadcast: scriptGMMsgs}
+		}
+
 		fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 
 		// Check for item guard before pickup
@@ -496,17 +539,7 @@ func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string
 			}
 		} else if len(guardRoomMsgs) > 0 {
 			// Guard was bypassed — pick up with bypass messages
-			newItem := InventoryItem{
-				Archetype: ri.Archetype,
-				Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
-				Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-				Sharpness: ri.Sharpness,
-				HardnessMod: ri.HardnessMod,
-			CraftedValue: ri.CraftedValue,
-				ItemBits:  ri.ItemBits,
-				State:     ri.State,
-				Tail:      ri.Extend,
-			}
+			newItem := inventoryFromRoomItem(&ri)
 			if isContainerDef(itemDef) {
 				newItem.Contents = e.roomContainerGet(player.RoomNumber, ri.Ref)
 				e.roomContainerDelete(player.RoomNumber, ri.Ref)
@@ -524,17 +557,7 @@ func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string
 		}
 
 		// Add to inventory
-		newItem := InventoryItem{
-			Archetype: ri.Archetype,
-			Adj1:      ri.Adj1, Adj2: ri.Adj2, Adj3: ri.Adj3,
-			Val1: ri.Val1, Val2: ri.Val2, Val3: ri.Val3, Val4: ri.Val4, Val5: ri.Val5,
-			Sharpness: ri.Sharpness,
-			HardnessMod: ri.HardnessMod,
-			CraftedValue: ri.CraftedValue,
-			ItemBits:  ri.ItemBits,
-			State:     ri.State,
-			Tail:      ri.Extend,
-		}
+		newItem := inventoryFromRoomItem(&ri)
 		if isContainerDef(itemDef) {
 			newItem.Contents = e.roomContainerGet(player.RoomNumber, ri.Ref)
 			e.roomContainerDelete(player.RoomNumber, ri.Ref)
@@ -556,6 +579,11 @@ func (e *GameEngine) doGetFloor(ctx context.Context, player *Player, verb string
 
 	if echo != pickupEchoNormal {
 		return &CommandResult{Messages: []string{"You don't see that here."}}
+	}
+
+	// Nothing on the floor — try the room's surfaces (workbench, table, counter).
+	if res := e.takeFromRoomSurfaces(ctx, player, room, target, &skip); res != nil {
+		return res
 	}
 
 	// No matching room item — check for a monster with a GET handler, e.g. the
@@ -623,7 +651,7 @@ func (e *GameEngine) doDrop(ctx context.Context, player *Player, args []string) 
 			// Check room IFPREVERB DROP scripts before executing (e.g., item falls into fissure).
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits}
 			sc := &ScriptContext{Player: player, Room: room, Engine: e, ItemRef: &tempRI, ItemDef: itemDef, activeVerb: "DROP", activeRef: "-1"}
 			// Room -1 catch-all IFPREVERB DROP scripts (fissure, pit, etc.)
@@ -662,18 +690,8 @@ func (e *GameEngine) doDrop(ctx context.Context, player *Player, args []string) 
 				return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 			}
 
-			droppedItem := gameworld.RoomItem{
-				Ref:       nextRoomItemRef(room),
-				Archetype: ii.Archetype,
-				Adj1:      ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
-				Sharpness: ii.Sharpness,
-				HardnessMod: ii.HardnessMod,
-			CraftedValue: ii.CraftedValue,
-				ItemBits:  ii.ItemBits,
-				State:     ii.State,
-				Extend:    ii.Tail,
-			}
+			droppedItem := roomItemFromInventory(&ii)
+			droppedItem.Ref = nextRoomItemRef(room)
 			if isContainerDef(itemDef) {
 				e.roomContainerSet(player.RoomNumber, droppedItem.Ref, ii.Contents)
 			}
@@ -944,7 +962,7 @@ func (e *GameEngine) doStatus(player *Player) *CommandResult {
 
 	// Attack/Defense modifiers
 	weaponDef := e.currentWeaponDef(player)
-	atkRating := e.playerAttackRating(player, weaponDef)
+	atkRating := e.playerAttackRating(player, weaponDef) + e.groupFightingBonus(player)
 	defRating := playerDefenseRating(player) + armorEnchantBonus(player, e.items) + shieldDefenseBonus(player, e.items) + e.massProtectionGroupBonus(player)
 	stanceLabel := stanceNames[player.Stance]
 
@@ -956,8 +974,9 @@ func (e *GameEngine) doStatus(player *Player) *CommandResult {
 		fmt.Sprintf("Mana: %d/%d", player.Mana, player.MaxMana),
 		fmt.Sprintf("Psi: %d/%d", player.Psi, player.MaxPsi),
 		fmt.Sprintf("Fatigue: %d/%d", player.Fatigue, player.MaxFatigue),
-		"[Type SPELLS or SKILLS for more information.]",
 	)
+	msgs = append(msgs, player.cyberwareLines()...)
+	msgs = append(msgs, "", "[Type SPELLS or SKILLS for more information.]")
 
 	return &CommandResult{Messages: msgs}
 }
@@ -1065,6 +1084,12 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 			return e.doWear(ctx, player, args)
 		}
 
+		if isWeapon(itemDef.Type) || itemDef.Type == "SHIELD" {
+			if msg := ephemeralTooHeavy(player, e.inventoryItemWeight(&ii)); msg != "" {
+				return &CommandResult{Messages: []string{msg}}
+			}
+		}
+
 		// Shields go to off-hand
 		if itemDef.Type == "SHIELD" {
 			if player.Wielded != nil {
@@ -1098,7 +1123,7 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 			if room != nil {
 				tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 					Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 					ItemBits: ii.ItemBits, State: ii.State, Extend: ii.Tail}
 				sc := e.RunPreverbScripts(player, room, "WIELD", &tempRI, itemDef)
 				if sc.Blocked {
@@ -1283,7 +1308,7 @@ func (e *GameEngine) runItemOwnPreverbHook(player *Player, room *gameworld.Room,
 	}
 	tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 		Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 		ItemBits: ii.ItemBits, State: ii.State}
 	sc := e.RunPreverbScripts(player, room, verb, &tempRI, def)
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
@@ -1340,6 +1365,16 @@ func (e *GameEngine) doWear(ctx context.Context, player *Player, args []string) 
 				skip--
 				continue
 			}
+			if msg := ephemeralTooHeavy(player, e.inventoryItemWeight(&ii)); msg != "" {
+				return &CommandResult{Messages: []string{msg}}
+			}
+
+			if player.cyberTier(cyberArmor) > 0 && cyberArmorBlocks(itemDef) {
+				if conflictMsg == "" {
+					conflictMsg = "Your cyberplate armor leaves no room for that. Only helms, gloves, gauntlets and boots fit over it."
+				}
+				continue
+			}
 
 			// Enforce slot capacity
 			slot := itemDef.WornSlot
@@ -1365,7 +1400,7 @@ func (e *GameEngine) doWear(ctx context.Context, player *Player, args []string) 
 			// via CLEARVERB.
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits, State: ii.State}
 			sc0 := e.RunItemScripts(player, room, "WEAR", &tempRI, itemDef)
 			sc1 := e.RunPreverbScripts(player, room, "WEAR", &tempRI, itemDef)
@@ -1438,7 +1473,7 @@ func (e *GameEngine) doRemove(ctx context.Context, player *Player, args []string
 			room := e.rooms[player.RoomNumber]
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits, State: "WORN"}
 			sc0 := e.RunItemScripts(player, room, "REMOVE", &tempRI, itemDef)
 			sc1 := e.RunPreverbScripts(player, room, "REMOVE", &tempRI, itemDef)
@@ -1776,8 +1811,8 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 	var msgs []string
 	physicalHarm := false
 	// Undead lack an active life force for poison to act on (GMSCRIPT.DOC immunity
-	// #7, "life affecting") — mirrors the !player.Undead exemptions in combat.go.
-	poisonImmune := player.Undead
+	// #7, "life affecting") — mirrors the !player.IsUndead() exemptions in combat.go.
+	poisonImmune := player.IsUndead()
 	switch {
 	case trapType == 1: // Needle, minor poison
 		msgs = append(msgs, "A needle springs out and pricks your finger!")
@@ -2085,6 +2120,9 @@ func (e *GameEngine) doGive(ctx context.Context, player *Player, args []string) 
 		}
 		// Transfer item
 		fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+		if ephemeralTooHeavy(target, e.inventoryItemWeight(&ii)) != "" {
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s's insubstantial form cannot take hold of anything that heavy.", target.DisplayNameCap())}}
+		}
 		target.Inventory = append(target.Inventory, ii)
 		player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
 
@@ -2287,12 +2325,17 @@ func (e *GameEngine) doEat(ctx context.Context, player *Player, args []string) *
 			// Run item scripts FIRST — they may set ITEMVAL3 based on adjective checks
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits}
 			// Run all item-level scripts (IFVAR at root level + IFVERB EAT)
 			sc := e.RunItemScripts(player, room, "EAT", &tempRI, itemDef)
 			sc2 := e.RunVerbScripts(player, room, "EAT", &tempRI, itemDef)
 			sc.Messages = append(sc.Messages, sc2.Messages...)
+			// The scripts' ECHO OTHERS/ALL lines (e.g. chocolate 1391's "%N bites down on
+			// something hard, then spits out a gem!") — captured now, before
+			// applyItemSpellOnPlayer below appends its own lines to sc.RoomMsgs.
+			scriptRoomMsgs := append(append([]string{}, sc.RoomMsgs...), sc2.RoomMsgs...)
+			scriptGMMsgs := append(append([]string{}, sc.GMMsgs...), sc2.GMMsgs...)
 			// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
 			// after the delay is lost.
 			for _, segs := range [][]ScriptSegment{sc.DeferredSegments, sc2.DeferredSegments} {
@@ -2357,10 +2400,12 @@ func (e *GameEngine) doEat(ctx context.Context, player *Player, args []string) *
 			}
 			e.SavePlayer(ctx, player)
 			roomBroadcast := []string{fmt.Sprintf("%s eats %s.", player.DisplayNameCap(), fullName)}
+			roomBroadcast = append(roomBroadcast, scriptRoomMsgs...)
 			roomBroadcast = append(roomBroadcast, extraRoomMsgs...)
 			return &CommandResult{
 				Messages:      msgs,
 				RoomBroadcast: roomBroadcast,
+				GMBroadcast:   scriptGMMsgs,
 				PlayerState:   player,
 			}
 		}
@@ -2405,6 +2450,14 @@ func (e *GameEngine) doBuy(ctx context.Context, player *Player, args []string) *
 		if skip > 0 {
 			skip--
 			continue
+		}
+		// CyberTech implants are grafted on, not handed over (cyberware.go).
+		if k := cyberKindForItem(itemDef); k != nil {
+			return e.buyCyberware(ctx, player, k, si.Adj, si.Price)
+		}
+		// Refuse before taking any money — the purchase is handed straight to the buyer.
+		if msg := ephemeralTooHeavy(player, itemDef.Weight); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
 		}
 
 		// Check affordability and pay. A shop in a currency region (currency.go)
@@ -2649,6 +2702,11 @@ func (e *GameEngine) computeSellValue(itemDef *gameworld.ItemDef, ii *InventoryI
 		sellValue = ii.Val1
 	}
 	if sellValue <= 0 {
+		// Foraged items picked up before doForageReal stamped CraftedValue (and
+		// store-bought non-MATERIAL herbs, which doBuy doesn't stamp).
+		sellValue = e.forageItemValue(itemDef.Number, ii.Adj3)
+	}
+	if sellValue <= 0 {
 		sellValue = itemDef.Weight + 1
 	}
 	sellValue = sellValue / 2
@@ -2791,6 +2849,15 @@ func (e *GameEngine) doDrink(ctx context.Context, player *Player, args []string)
 			// EAT logic — redirect to doEat
 			return e.doEat(ctx, player, args)
 		}
+		// An unfilled vessel holding a named liquid item (e.g. a barkeep script's
+		// NEWPUT ale in a mug) — drink that, not the vessel's own empty Val2.
+		if itemDef.Type == "LIQCONTAINER" && ii.Val2 <= 0 {
+			if j := e.namedLiquidIndex(ii.Contents); j >= 0 {
+				return e.drinkItem(ctx, player, &ii.Contents[j], e.items[ii.Contents[j].Archetype], func() {
+					ii.Contents = append(ii.Contents[:j], ii.Contents[j+1:]...)
+				})
+			}
+		}
 		idx := i
 		return e.drinkItem(ctx, player, ii, itemDef, func() {
 			player.Inventory = append(player.Inventory[:idx], player.Inventory[idx+1:]...)
@@ -2859,9 +2926,13 @@ func (e *GameEngine) drinkItem(ctx context.Context, player *Player, ii *Inventor
 	room := e.rooms[player.RoomNumber]
 	tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 		Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 		ItemBits: ii.ItemBits}
 	sc := e.RunItemScripts(player, room, "DRINK", &tempRI, itemDef)
+	// The script's own ECHO OTHERS/ALL lines, captured before applyItemSpellOnPlayer
+	// below appends its lines to sc.RoomMsgs (see the same fix in doEat).
+	scriptRoomMsgs := append([]string{}, sc.RoomMsgs...)
+	scriptGMMsgs := append([]string{}, sc.GMMsgs...)
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
 	// the delay is lost.
 	if len(sc.DeferredSegments) > 0 {
@@ -2935,10 +3006,12 @@ func (e *GameEngine) drinkItem(ctx context.Context, player *Player, ii *Inventor
 	} else {
 		roomBroadcast = []string{fmt.Sprintf("%s drinks from %s.", player.DisplayNameCap(), displayName)}
 	}
+	roomBroadcast = append(roomBroadcast, scriptRoomMsgs...)
 	roomBroadcast = append(roomBroadcast, extraRoomMsgs...)
 	return &CommandResult{
 		Messages:      msgs,
 		RoomBroadcast: roomBroadcast,
+		GMBroadcast:   scriptGMMsgs,
 		PlayerState:   player,
 	}
 }
@@ -2961,9 +3034,30 @@ func (e *GameEngine) doLight(ctx context.Context, player *Player, args []string,
 	if result := e.runVerbScriptsForTarget(ctx, player, e.rooms[player.RoomNumber], verb, target); result != nil {
 		return result
 	}
+	if lightOn {
+		if room := e.rooms[player.RoomNumber]; room != nil && room.Terrain == "UNDERSEA" {
+			// original/csanburn: "ign tor" / "You can't do that underwater."
+			return &CommandResult{Messages: []string{"You can't do that underwater."}}
+		}
+	}
 	target, ordSkip := parseOrdinal(target)
 	skip := ordSkip
-	for i, ii := range player.Inventory {
+	// A torch or flashlight is usually held, and a lightable helm or diadem worn —
+	// check hands and worn gear before the pack, so LIGHT works on what you're using.
+	var candidates []*InventoryItem
+	if player.Wielded != nil {
+		candidates = append(candidates, player.Wielded)
+	}
+	if player.OffHand != nil {
+		candidates = append(candidates, player.OffHand)
+	}
+	for i := range player.Worn {
+		candidates = append(candidates, &player.Worn[i])
+	}
+	for i := range player.Inventory {
+		candidates = append(candidates, &player.Inventory[i])
+	}
+	for _, ii := range candidates {
 		itemDef := e.items[ii.Archetype]
 		if itemDef == nil {
 			continue
@@ -2980,14 +3074,27 @@ func (e *GameEngine) doLight(ctx context.Context, player *Player, args []string,
 			continue
 		}
 		displayName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+		lit := ii.State == "LIT"
 		if lightOn {
-			player.Inventory[i].State = "LIT"
+			if lit {
+				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already lit.", capitalize(displayName))}}
+			}
+			ii.State = "LIT"
 			e.SavePlayer(ctx, player)
-			return &CommandResult{Messages: []string{fmt.Sprintf("You light %s.", displayName)}}
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("You light %s.", displayName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s lights %s.", player.DisplayNameCap(), displayName)},
+			}
 		}
-		player.Inventory[i].State = "UNLIT"
+		if !lit {
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't lit.", capitalize(displayName))}}
+		}
+		ii.State = "UNLIT"
 		e.SavePlayer(ctx, player)
-		return &CommandResult{Messages: []string{fmt.Sprintf("You extinguish %s.", displayName)}}
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You extinguish %s.", displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s extinguishes %s.", player.DisplayNameCap(), displayName)},
+		}
 	}
 	return &CommandResult{Messages: []string{"You don't have anything to light."}}
 }
@@ -3022,7 +3129,7 @@ func (e *GameEngine) doFlip(ctx context.Context, player *Player, args []string) 
 		displayName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 			ItemBits: ii.ItemBits, State: ii.State}
 		preSc := e.RunPreverbScripts(player, room, "FLIP", &tempRI, itemDef)
 		if len(preSc.DeferredSegments) > 0 {
@@ -3075,7 +3182,7 @@ func (e *GameEngine) doFlip(ctx context.Context, player *Player, args []string) 
 		if len(preSc.DeferredSegments) > 0 {
 			e.scheduleScriptSegments(player, preSc.DeferredSegments)
 		}
-		if preSc.Blocked || len(preSc.Messages) > 0 || len(preSc.RoomMsgs) > 0 {
+		if preSc.Blocked || len(preSc.Messages) > 0 || len(preSc.RoomMsgs) > 0 || !roomItemStillAt(room, i, ri) {
 			return &CommandResult{Messages: preSc.Messages, RoomBroadcast: preSc.RoomMsgs}
 		}
 		if !containsFlag(itemDef.Flags, "FLIPABLE") {
@@ -3324,6 +3431,17 @@ func (e *GameEngine) doUnlock(ctx context.Context, player *Player, args []string
 				skip--
 				continue
 			}
+			// IFPREVERB UNLOCK scripts run first, as doOpen does for OPEN — a scripted
+			// lock (e.g. HALLOWEEN2026.SCR's chest, whose key "will not turn" until the
+			// story allows it) must be able to answer instead of the LOCKABLE check below.
+			sc := e.RunPreverbScripts(player, room, "UNLOCK", &room.Items[i], itemDef)
+			if len(sc.DeferredSegments) > 0 {
+				e.scheduleScriptSegments(player, sc.DeferredSegments)
+			}
+			if sc.Blocked {
+				return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
+			}
+			ri = room.Items[i]
 			// See doLock: check LOCKABLE against the selected item, not as a pre-filter,
 			// so ordinals ("2 door") agree with OPEN/CLOSE/TAP's numbering of room items.
 			if !containsFlag(itemDef.Flags, "LOCKABLE") {
@@ -3778,7 +3896,10 @@ func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 			// Without this second call, any item using IFVERB (rather than IFPREVERB)
 			// for its READ text silently fell through to "There is nothing written on it."
 			sc := e.RunPreverbScripts(player, room, "READ", &room.Items[i], itemDef)
-			sc2 := e.RunVerbScripts(player, room, "READ", &room.Items[i], itemDef)
+			sc2 := &ScriptContext{}
+			if roomItemStillAt(room, i, ri) {
+				sc2 = e.RunVerbScripts(player, room, "READ", &room.Items[i], itemDef)
+			}
 			sc.Messages = append(sc.Messages, sc2.Messages...)
 			sc.RoomMsgs = append(sc.RoomMsgs, sc2.RoomMsgs...)
 			sc.Blocked = sc.Blocked || sc2.Blocked
@@ -3788,7 +3909,7 @@ func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 			if len(sc.DeferredSegments) > 0 {
 				e.scheduleScriptSegments(player, sc.DeferredSegments)
 			}
-			if sc.Blocked || len(sc.Messages) > 0 {
+			if sc.Blocked || len(sc.Messages) > 0 || !roomItemStillAt(room, i, ri) {
 				return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs}
 			}
 			return e.readRoomItem(room, itemDef, &room.Items[i])
@@ -3820,7 +3941,7 @@ func (e *GameEngine) doRead(player *Player, args []string) *CommandResult {
 			// fell through to the generic "nothing written on it" message below.
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits}
 			sc := e.RunPreverbScripts(player, room, "READ", &tempRI, itemDef)
 			sc2 := e.RunVerbScripts(player, room, "READ", &tempRI, itemDef)
@@ -4095,7 +4216,7 @@ func (e *GameEngine) doDisarm(ctx context.Context, player *Player, args []string
 		}
 
 		// Skill check: base 20% + skill_level * 5%, capped at 95%
-		successChance := 20 + trapSkill*5
+		successChance := 20 + trapSkill*5 + unemoteSkillBonus(player)
 		if successChance > 95 {
 			successChance = 95
 		}

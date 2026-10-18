@@ -1,4 +1,6 @@
 export default function APIDocs({ onBack }: { onBack: () => void }) {
+  // Show this server's own address rather than a hard-coded host.
+  const host = window.location.host
   return (
     <div className="flex items-start justify-center h-full p-8 overflow-y-auto">
       <div className="max-w-3xl w-full font-mono">
@@ -26,7 +28,7 @@ export default function APIDocs({ onBack }: { onBack: () => void }) {
           <section>
             <h2 className="text-amber-400 text-lg font-bold mb-2">1. Getting an API Key</h2>
             <ol className="text-gray-300 space-y-2 ml-4 list-decimal">
-              <li>Log in at <a href="https://lofp.metavert.io" className="text-amber-400 hover:underline">lofp.metavert.io</a></li>
+              <li>Log in at <a href={`https://${host}`} className="text-amber-400 hover:underline">{host}</a></li>
               <li>On the main menu, click <span className="text-amber-300">&#9881; Bot</span> next to your character</li>
               <li>Click <span className="text-amber-300">Generate Key</span> (optionally check &ldquo;Allow GM commands&rdquo; for GM characters)</li>
               <li><strong>Copy the key immediately</strong> &mdash; it&rsquo;s only shown once (SHA-256 hashed in storage)</li>
@@ -37,7 +39,7 @@ export default function APIDocs({ onBack }: { onBack: () => void }) {
           <section>
             <h2 className="text-amber-400 text-lg font-bold mb-2">2. Connection Flow</h2>
             <ol className="text-gray-300 space-y-2 ml-4 list-decimal">
-              <li>Connect to <code className="text-green-400 bg-[#0a0a0a] px-1 rounded">wss://lofp.metavert.io/ws/game</code></li>
+              <li>Connect to <code className="text-green-400 bg-[#0a0a0a] px-1 rounded">wss://{host}/ws/game</code></li>
               <li>You&rsquo;ll receive a welcome message</li>
               <li>Send an <code className="text-green-400 bg-[#0a0a0a] px-1 rounded">auth_apikey</code> message with your key</li>
               <li>On success, your character logs in and you receive the room description</li>
@@ -107,7 +109,7 @@ import json, os, websocket
 
 API_KEY = os.environ["LOFP_API_KEY"]
 ws = websocket.WebSocket()
-ws.connect("wss://lofp.metavert.io/ws/game")
+ws.connect("wss://${host}/ws/game")
 
 # Skip welcome message
 ws.recv()
@@ -126,7 +128,7 @@ for line in result.get("data", {}).get("messages", []):
             <h3 className="text-green-400 font-bold mb-1">Node.js</h3>
             <pre className="bg-[#0a0a0a] border border-[#333] rounded p-3 text-xs text-gray-300 overflow-x-auto mb-4">{`// npm install ws
 const WebSocket = require("ws");
-const ws = new WebSocket("wss://lofp.metavert.io/ws/game");
+const ws = new WebSocket("wss://${host}/ws/game");
 
 ws.on("open", () => {
   ws.send(JSON.stringify({
@@ -162,7 +164,7 @@ interface GameMessage {
   };
 }
 
-const ws = new WebSocket("wss://lofp.metavert.io/ws/game");
+const ws = new WebSocket("wss://${host}/ws/game");
 
 ws.on("open", () => {
   ws.send(JSON.stringify({

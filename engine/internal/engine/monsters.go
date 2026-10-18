@@ -508,6 +508,34 @@ func (mm *monsterManager) ClearRoom(roomNum int) {
 	delete(mm.monstersByRoom, roomNum)
 }
 
+// RemoveByDef removes every instance of one monster definition from the world
+// (used when the GM script that defined it is disabled or deleted, so no creature
+// is left pointing at a definition that no longer exists). Returns how many.
+func (mm *monsterManager) RemoveByDef(defNum int) int {
+	mm.mu.Lock()
+	defer mm.mu.Unlock()
+	removed := 0
+	for roomNum, idxs := range mm.monstersByRoom {
+		kept := make([]int, 0, len(idxs))
+		for _, idx := range idxs {
+			if idx < len(mm.instances) && mm.instances[idx].DefNumber == defNum {
+				if mm.instances[idx].Alive {
+					removed++
+				}
+				mm.instances[idx].Alive = false
+				continue
+			}
+			kept = append(kept, idx)
+		}
+		if len(kept) == 0 {
+			delete(mm.monstersByRoom, roomNum)
+		} else {
+			mm.monstersByRoom[roomNum] = kept
+		}
+	}
+	return removed
+}
+
 // MonstersInRoom returns alive monster instances in a given room.
 func (mm *monsterManager) MonstersInRoom(roomNum int) []MonsterInstance {
 	mm.mu.RLock()
@@ -651,6 +679,7 @@ func (e *GameEngine) StartMonsterLoop() {
 func (e *GameEngine) monsterLoopStep(tick int) {
 	defer recoverBackground("monster tick")
 	e.monsterTick(tick)
+	e.ephemeralFadeTick()
 	// Corpse decay: remove dead monsters after 60 seconds
 	if tick%20 == 0 {
 		e.cleanupCorpses()
