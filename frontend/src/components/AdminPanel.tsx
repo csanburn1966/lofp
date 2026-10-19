@@ -326,6 +326,13 @@ export default function AdminPanel() {
   const [reassignAccountId, setReassignAccountId] = useState('')
   const [reassignError, setReassignError] = useState('')
   const [showDeleted, setShowDeleted] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importAccountId, setImportAccountId] = useState('')
+  const [importName, setImportName] = useState('')
+  const [importError, setImportError] = useState('')
+  const [importBusy, setImportBusy] = useState(false)
+  const [exportError, setExportError] = useState('')
   // Items
   const [items, setItems] = useState<ItemSummary[]>([])
   const [itemSearch, setItemSearch] = useState('')
@@ -494,6 +501,7 @@ export default function AdminPanel() {
     setSidebarOpen(false)
     setReassignAccountId('')
     setReassignError('')
+    setExportError('')
     fetch(`/api/admin/characters/${firstName}`, { headers: authHeaders() })
       .then(r => r.json())
       .then(setSelectedPlayer)
@@ -557,6 +565,52 @@ export default function AdminPanel() {
         ))
         setReassignAccountId('')
       })
+  }
+
+  // Download a character as a player export file, for loading into another
+  // server (e.g. a GM's local copy) with importCharacter.
+  const exportCharacter = async (firstName: string) => {
+    setExportError('')
+    const r = await fetch(`/api/admin/characters/${firstName}/export`, { headers: authHeaders() })
+    if (!r.ok) { setExportError(await r.text()); return }
+    const url = URL.createObjectURL(await r.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${firstName}.lofp-player.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importCharacter = async () => {
+    if (!importFile || !importAccountId) return
+    setImportError('')
+    let file: unknown
+    try {
+      file = JSON.parse(await importFile.text())
+    } catch {
+      setImportError('That file is not a player export (not valid JSON).')
+      return
+    }
+    setImportBusy(true)
+    try {
+      const r = await fetch('/api/admin/characters/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ accountId: importAccountId, newFirstName: importName.trim(), file }),
+      })
+      if (!r.ok) { setImportError(await r.text()); return }
+      const created: PlayerDetail = await r.json()
+      setShowImport(false)
+      setImportFile(null)
+      setImportName('')
+      setShowDeleted(false)
+      fetch('/api/admin/characters', { headers: authHeaders() })
+        .then(res => res.json())
+        .then((data: PlayerSummary[]) => setPlayers(data || []))
+      selectPlayer(created.firstName)
+    } finally {
+      setImportBusy(false)
+    }
   }
 
   const recoverCharacter = (firstName: string) => {
@@ -1090,6 +1144,49 @@ export default function AdminPanel() {
                   <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} className="accent-amber-500" />
                   Show deleted characters
                 </label>
+                <button
+                  onClick={() => { setShowImport(v => !v); setImportError('') }}
+                  className="w-full mt-2 px-2 py-1 bg-[#222] border border-[#444] rounded text-xs text-gray-300 hover:border-amber-500"
+                >
+                  {showImport ? 'Cancel Import' : 'Import Character…'}
+                </button>
+                {showImport && (
+                  <div className="mt-2 space-y-1.5">
+                    <input
+                      type="file"
+                      accept=".json,application/json"
+                      onChange={e => { setImportFile(e.target.files?.[0] || null); setImportError('') }}
+                      className="w-full text-gray-400 text-xs file:mr-2 file:px-2 file:py-0.5 file:rounded file:border file:border-[#444] file:bg-[#222] file:text-gray-300"
+                    />
+                    <select
+                      value={importAccountId}
+                      onChange={e => { setImportAccountId(e.target.value); setImportError('') }}
+                      className="w-full bg-[#0a0a0a] border border-[#444] rounded px-2 py-1 text-gray-200 focus:border-amber-500 focus:outline-none text-xs"
+                    >
+                      <option value="">— import into account —</option>
+                      {accounts.map(a => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.email})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="text"
+                      value={importName}
+                      onChange={e => { setImportName(e.target.value); setImportError('') }}
+                      placeholder="New first name (only if the name is taken)"
+                      className="w-full bg-[#0a0a0a] border border-[#444] rounded px-2 py-1 text-gray-200 focus:border-amber-500 focus:outline-none text-xs"
+                    />
+                    <button
+                      onClick={importCharacter}
+                      disabled={!importFile || !importAccountId || importBusy}
+                      className="w-full px-2 py-1 bg-amber-700 rounded text-xs font-bold text-white hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {importBusy ? 'Importing…' : 'Import'}
+                    </button>
+                    {importError && <div className="text-red-400 text-xs">{importError}</div>}
+                  </div>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto">
                 {filteredPlayers.map(p => (
@@ -1144,17 +1241,29 @@ export default function AdminPanel() {
                         </div>
                       )}
                     </div>
-                    <button
-                      onClick={() => toggleGM(selectedPlayer.firstName, selectedPlayer.isGM)}
-                      className={`px-3 py-1.5 rounded text-xs font-bold ${
-                        selectedPlayer.isGM
-                          ? 'bg-amber-700 text-white hover:bg-amber-600'
-                          : 'bg-[#222] text-gray-400 border border-[#444] hover:border-amber-500'
-                      }`}
-                    >
-                      {selectedPlayer.isGM ? 'Revoke GM' : 'Grant GM'}
-                    </button>
+                    <div className="flex gap-2">
+                      {!showDeleted && (
+                        <button
+                          onClick={() => exportCharacter(selectedPlayer.firstName)}
+                          title="Download this character to load into another server"
+                          className="px-3 py-1.5 rounded text-xs font-bold bg-[#222] text-gray-300 border border-[#444] hover:border-amber-500"
+                        >
+                          Export
+                        </button>
+                      )}
+                      <button
+                        onClick={() => toggleGM(selectedPlayer.firstName, selectedPlayer.isGM)}
+                        className={`px-3 py-1.5 rounded text-xs font-bold ${
+                          selectedPlayer.isGM
+                            ? 'bg-amber-700 text-white hover:bg-amber-600'
+                            : 'bg-[#222] text-gray-400 border border-[#444] hover:border-amber-500'
+                        }`}
+                      >
+                        {selectedPlayer.isGM ? 'Revoke GM' : 'Grant GM'}
+                      </button>
+                    </div>
                   </div>
+                  {exportError && <div className="text-red-400 text-xs">{exportError}</div>}
 
                   {showDeleted && (
                     <button

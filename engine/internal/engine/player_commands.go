@@ -864,23 +864,18 @@ func (e *GameEngine) doRoomRecall(player *Player) *CommandResult {
 
 // doGuard handles the GUARD command — protect players, portals, or items.
 // Requires Combat Maneuvering (skill 10): level 2+ for players, level 3+ for portals, any level for items.
-// GUARD with no args clears all guard targets.
-// GUARD <target> toggles guarding that target on/off.
+// GUARD with no args lists what you are guarding. GUARD <target> only ever adds
+// a guard — guarding something you already guard just says so; UNGUARD (doUnguard)
+// is the only way to stop.
 func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 	cmSkill := player.Skills[10]
 
 	if len(args) == 0 {
-		hasGuards := len(player.GuardTargets) > 0 || len(player.GuardPortals) > 0 || len(player.GuardItems) > 0
-		if !hasGuards {
+		names := e.guardedNames(player)
+		if len(names) == 0 {
 			return &CommandResult{Messages: []string{"You are not guarding anyone or anything."}}
 		}
-		player.GuardTargets = nil
-		player.GuardPortals = nil
-		player.GuardItems = nil
-		return &CommandResult{
-			Messages:      []string{"You relax your guard."},
-			RoomBroadcast: []string{fmt.Sprintf("%s relaxes their guard.", player.FirstName)},
-		}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You are guarding %s. (UNGUARD <target> to stop.)", joinList(names))}}
 	}
 
 	if !player.IsGM && cmSkill < 1 {
@@ -893,22 +888,15 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 	// Try player target first
 	found := e.findPlayerInRoom(player, target)
 	if found != nil {
+		if containsString(player.GuardTargets, found.FirstName) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You are already guarding %s.", found.FirstName)}}
+		}
 		if !player.IsGM && cmSkill < 2 {
 			return &CommandResult{Messages: []string{"You need Combat Maneuvering rank 2 to guard another player."}}
 		}
 		// Can't guard someone who is themselves on guard duty
 		if len(found.GuardTargets) > 0 || len(found.GuardPortals) > 0 || len(found.GuardItems) > 0 {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s is on guard duty and cannot be guarded.", found.FirstName)}}
-		}
-		// Toggle: remove if already guarding this player
-		for i, t := range player.GuardTargets {
-			if t == found.FirstName {
-				player.GuardTargets = append(player.GuardTargets[:i], player.GuardTargets[i+1:]...)
-				return &CommandResult{
-					Messages:      []string{fmt.Sprintf("You stop guarding %s.", found.FirstName)},
-					RoomBroadcast: []string{fmt.Sprintf("%s stops guarding %s.", player.FirstName, found.FirstName)},
-				}
-			}
 		}
 		player.GuardTargets = append(player.GuardTargets, found.FirstName)
 		return &CommandResult{
@@ -933,19 +921,13 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 		}
 
 		if isPortal(itemDef.Type) {
-			if !player.IsGM && cmSkill < 3 {
-				return &CommandResult{Messages: []string{"You need Combat Maneuvering rank 3 to guard a portal."}}
-			}
 			portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 			arch := ri.Archetype
-			for i, a := range player.GuardPortals {
-				if a == arch {
-					player.GuardPortals = append(player.GuardPortals[:i], player.GuardPortals[i+1:]...)
-					return &CommandResult{
-						Messages:      []string{fmt.Sprintf("You step away from %s.", portalName)},
-						RoomBroadcast: []string{fmt.Sprintf("%s stops guarding %s.", player.FirstName, portalName)},
-					}
-				}
+			if containsInt(player.GuardPortals, arch) {
+				return &CommandResult{Messages: []string{fmt.Sprintf("You are already guarding %s.", portalName)}}
+			}
+			if !player.IsGM && cmSkill < 3 {
+				return &CommandResult{Messages: []string{"You need Combat Maneuvering rank 3 to guard a portal."}}
 			}
 			player.GuardPortals = append(player.GuardPortals, arch)
 			return &CommandResult{
@@ -960,14 +942,8 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 		}
 		itemName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 		arch := ri.Archetype
-		for i, a := range player.GuardItems {
-			if a == arch {
-				player.GuardItems = append(player.GuardItems[:i], player.GuardItems[i+1:]...)
-				return &CommandResult{
-					Messages:      []string{fmt.Sprintf("You stop watching over %s.", itemName)},
-					RoomBroadcast: []string{fmt.Sprintf("%s stops watching over %s.", player.FirstName, itemName)},
-				}
-			}
+		if containsInt(player.GuardItems, arch) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You are already guarding %s.", itemName)}}
 		}
 		player.GuardItems = append(player.GuardItems, arch)
 		return &CommandResult{
@@ -977,6 +953,121 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 	}
 
 	return &CommandResult{Messages: []string{"You don't see that here."}}
+}
+
+// doUnguard handles UNGUARD — the only way to stop guarding. UNGUARD <target>
+// drops one guarded player, portal or item; bare UNGUARD drops them all.
+func (e *GameEngine) doUnguard(player *Player, args []string) *CommandResult {
+	hasGuards := len(player.GuardTargets) > 0 || len(player.GuardPortals) > 0 || len(player.GuardItems) > 0
+	if !hasGuards {
+		return &CommandResult{Messages: []string{"You are not guarding anyone or anything."}}
+	}
+	if len(args) == 0 {
+		player.GuardTargets = nil
+		player.GuardPortals = nil
+		player.GuardItems = nil
+		return &CommandResult{
+			Messages:      []string{"You relax your guard."},
+			RoomBroadcast: []string{fmt.Sprintf("%s relaxes their guard.", player.FirstName)},
+		}
+	}
+
+	target := strings.ToLower(strings.Join(args, " "))
+
+	// Guarded players: resolve through the room first (abbreviations, apparent
+	// names), then fall back to the stored names for a target who has left.
+	guardedName := ""
+	if found := e.findPlayerInRoom(player, target); found != nil {
+		if !containsString(player.GuardTargets, found.FirstName) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You are not guarding %s.", found.FirstName)}}
+		}
+		guardedName = found.FirstName
+	} else {
+		for _, n := range player.GuardTargets {
+			if strings.HasPrefix(strings.ToLower(n), target) {
+				guardedName = n
+				break
+			}
+		}
+	}
+	if guardedName != "" {
+		var next []string
+		for _, n := range player.GuardTargets {
+			if n != guardedName {
+				next = append(next, n)
+			}
+		}
+		player.GuardTargets = next
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You stop guarding %s.", guardedName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s stops guarding %s.", player.FirstName, guardedName)},
+		}
+	}
+
+	if room := e.rooms[player.RoomNumber]; room != nil {
+		for _, ri := range room.Items {
+			itemDef := e.items[ri.Archetype]
+			if itemDef == nil {
+				continue
+			}
+			if !matchesTarget(e.getItemNounName(itemDef), target, e.getAdjName(ri.Adj1), e.getAdjName(ri.Adj2), e.getAdjName(ri.Adj3)) {
+				continue
+			}
+			itemName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+			if containsInt(player.GuardPortals, ri.Archetype) {
+				player.GuardPortals = removeIntValue(player.GuardPortals, ri.Archetype)
+				return &CommandResult{
+					Messages:      []string{fmt.Sprintf("You step away from %s.", itemName)},
+					RoomBroadcast: []string{fmt.Sprintf("%s stops guarding %s.", player.FirstName, itemName)},
+				}
+			}
+			if containsInt(player.GuardItems, ri.Archetype) {
+				player.GuardItems = removeIntValue(player.GuardItems, ri.Archetype)
+				return &CommandResult{
+					Messages:      []string{fmt.Sprintf("You stop watching over %s.", itemName)},
+					RoomBroadcast: []string{fmt.Sprintf("%s stops watching over %s.", player.FirstName, itemName)},
+				}
+			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("You are not guarding %s.", itemName)}}
+		}
+	}
+
+	return &CommandResult{Messages: []string{"You are not guarding that."}}
+}
+
+// guardedNames lists everything player is guarding, for bare GUARD.
+func (e *GameEngine) guardedNames(player *Player) []string {
+	names := append([]string{}, player.GuardTargets...)
+	room := e.rooms[player.RoomNumber]
+	for _, archs := range [][]int{player.GuardPortals, player.GuardItems} {
+		for _, arch := range archs {
+			itemDef := e.items[arch]
+			if itemDef == nil {
+				continue
+			}
+			name := e.formatItemName(itemDef, 0, 0, 0, "")
+			if room != nil {
+				for _, ri := range room.Items {
+					if ri.Archetype == arch {
+						name = e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+						break
+					}
+				}
+			}
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// removeIntValue returns list without the first occurrence of v.
+func removeIntValue(list []int, v int) []int {
+	for i, x := range list {
+		if x == v {
+			return append(list[:i:i], list[i+1:]...)
+		}
+	}
+	return list
 }
 
 // doChant handles the CHANT command — activate a scroll.

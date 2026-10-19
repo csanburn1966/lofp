@@ -177,7 +177,7 @@ func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamili
 		}
 	}
 	return &CommandResult{
-		Messages:      []string{summoned, fmt.Sprintf("You have summoned %s%s. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", carticle, cname)},
+		Messages:      []string{summoned, fmt.Sprintf("You have summoned %s%s. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND UNGUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", carticle, cname)},
 		RoomBroadcast: []string{fmt.Sprintf("%s%s appears in a burst of magical energy.", capArticle(carticle), cname)},
 	}
 }
@@ -254,7 +254,7 @@ func (e *GameEngine) castControlUndead(player *Player, spell *SpellDef, args []s
 	return &CommandResult{
 		Messages: []string{
 			fmt.Sprintf("You fix your gaze on %s%s and speak words of dark binding!", carticle, cname),
-			fmt.Sprintf("%s%s falls under your control for 40 minutes. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", capArticle(carticle), cname),
+			fmt.Sprintf("%s%s falls under your control for 40 minutes. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND UNGUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", capArticle(carticle), cname),
 		},
 		RoomBroadcast: []string{fmt.Sprintf("%s fixes %s gaze on %s%s, who suddenly goes still and obedient.", player.DisplayName(), player.Possessive(), carticle, cname)},
 	}
@@ -341,7 +341,7 @@ func (e *GameEngine) castCommandSpell(player *Player, spell *SpellDef, args []st
 	return &CommandResult{
 		Messages: []string{
 			fmt.Sprintf("You fix your gaze on %s%s and speak words of dark binding!", carticle, cname),
-			fmt.Sprintf("%s%s falls under your control for %s. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", capArticle(carticle), cname, durLabel),
+			fmt.Sprintf("%s%s falls under your control for %s. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND UNGUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", capArticle(carticle), cname, durLabel),
 		},
 		RoomBroadcast: []string{fmt.Sprintf("%s fixes %s gaze on %s%s, who suddenly goes still and obedient.", player.DisplayName(), player.Possessive(), carticle, cname)},
 	}
@@ -380,7 +380,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		return &CommandResult{Messages: []string{"You have no summoned creature to command."}}
 	}
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Command it to do what? (FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, ATTACK <name>, LOOK, SAY <message>)"}}
+		return &CommandResult{Messages: []string{"Command it to do what? (FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>)"}}
 	}
 
 	// Locate the summoned creature in the manager
@@ -618,14 +618,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 			if e.monsterMgr.instances[i].ID == instID {
 				cur := e.monsterMgr.instances[i].GuardingPlayers
 				if containsString(cur, guardTarget) {
-					// Toggle off — remove from list
-					var next []string
-					for _, n := range cur {
-						if n != guardTarget {
-							next = append(next, n)
-						}
-					}
-					e.monsterMgr.instances[i].GuardingPlayers = next
+					// Not a toggle — COMMAND UNGUARD is the only way to stop.
 					alreadyGuarding = true
 				} else {
 					// Guarding is purely additive — it adds guardTarget to the guard
@@ -641,23 +634,10 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		e.monsterMgr.mu.Unlock()
 
 		if alreadyGuarding {
-			guardLabel := "stop guarding " + guardTarget
 			if guardTarget == player.FirstName {
-				guardLabel = "stop guarding me"
+				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already guarding you.", capCname)}}
 			}
-			rb := commandBroadcast(guardLabel)
-			if sameRoom {
-				rb = append(rb, fmt.Sprintf("%s stops guarding %s.", capCname, guardTarget))
-			} else if e.localRoomBroadcast != nil {
-				e.localRoomBroadcast(instRoom, []string{fmt.Sprintf("%s stops guarding %s.", capCname, guardTarget)})
-			}
-			if guardTarget != player.FirstName && e.sendToPlayer != nil {
-				e.sendToPlayer(guardTarget, []string{fmt.Sprintf("%s is no longer guarding you.", capCname)})
-			}
-			return &CommandResult{
-				Messages:      []string{fmt.Sprintf("%s acknowledges your command.", capCname)},
-				RoomBroadcast: rb,
-			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s is already guarding %s.", capCname, guardTarget)}}
 		}
 
 		guardLabel := "guard " + guardTarget
@@ -672,6 +652,80 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		}
 		if guardTarget != player.FirstName && e.sendToPlayer != nil {
 			e.sendToPlayer(guardTarget, []string{fmt.Sprintf("%s is now guarding you.", capCname)})
+		}
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("%s acknowledges your command.", capCname)},
+			RoomBroadcast: rb,
+		}
+
+	case "unguard":
+		// COMMAND UNGUARD ME / COMMAND UNGUARD <name> — the only way to stop a guard.
+		if isFamiliar {
+			return &CommandResult{Messages: []string{"Familiars cannot guard."}}
+		}
+		var cur []string
+		e.monsterMgr.mu.Lock()
+		for i := range e.monsterMgr.instances {
+			if e.monsterMgr.instances[i].ID == instID {
+				cur = append([]string{}, e.monsterMgr.instances[i].GuardingPlayers...)
+				break
+			}
+		}
+		e.monsterMgr.mu.Unlock()
+		guardTarget := ""
+		if rest == "" || rest == "me" {
+			guardTarget = player.FirstName
+		} else {
+			if e.sessions != nil {
+				for _, p := range e.sessions.OnlinePlayers() {
+					if p.NameMatches(rest) && containsString(cur, p.FirstName) {
+						guardTarget = p.FirstName
+						break
+					}
+				}
+			}
+			if guardTarget == "" {
+				for _, n := range cur {
+					if strings.HasPrefix(strings.ToLower(n), strings.ToLower(rest)) {
+						guardTarget = n
+						break
+					}
+				}
+			}
+			if guardTarget == "" {
+				return &CommandResult{Messages: []string{fmt.Sprintf("Your %s is not guarding '%s'.", cname, rest)}}
+			}
+		}
+		if !containsString(cur, guardTarget) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s is not guarding you.", capCname)}}
+		}
+		e.monsterMgr.mu.Lock()
+		for i := range e.monsterMgr.instances {
+			if e.monsterMgr.instances[i].ID == instID {
+				var next []string
+				for _, n := range e.monsterMgr.instances[i].GuardingPlayers {
+					if n != guardTarget {
+						next = append(next, n)
+					}
+				}
+				e.monsterMgr.instances[i].GuardingPlayers = next
+				break
+			}
+		}
+		e.monsterMgr.mu.Unlock()
+
+		guardLabel := "unguard " + guardTarget
+		if guardTarget == player.FirstName {
+			guardLabel = "unguard me"
+		}
+		rb := commandBroadcast(guardLabel)
+		if sameRoom {
+			rb = append(rb, fmt.Sprintf("%s stops guarding %s.", capCname, guardTarget))
+		} else if e.localRoomBroadcast != nil {
+			e.localRoomBroadcast(instRoom, []string{fmt.Sprintf("%s stops guarding %s.", capCname, guardTarget)})
+		}
+		if guardTarget != player.FirstName && e.sendToPlayer != nil {
+			e.sendToPlayer(guardTarget, []string{fmt.Sprintf("%s is no longer guarding you.", capCname)})
 		}
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("%s acknowledges your command.", capCname)},
@@ -828,7 +882,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		}
 
 	default:
-		return &CommandResult{Messages: []string{"Unknown command. Options: FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, ATTACK <name>, LOOK, SAY <message>"}}
+		return &CommandResult{Messages: []string{"Unknown command. Options: FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>"}}
 	}
 }
 

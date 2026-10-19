@@ -1782,6 +1782,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		return e.doRetreat(ctx, player)
 	case "GUARD":
 		return e.doGuard(player, args)
+	case "UNGUARD":
+		return e.doUnguard(player, args)
 	case "BACKSTAB":
 		if !player.Hidden {
 			return &CommandResult{Messages: []string{"You must be hidden to backstab!"}}
@@ -2079,7 +2081,7 @@ var allVerbs = []string{
 	// Communication
 	"THINK", "CANT",
 	// Combat (TODO: implement)
-	"ATTACK", "KILL", "SLAY", "SMITE", "ADVANCE", "RETREAT", "GUARD", "TARGET",
+	"ATTACK", "KILL", "SLAY", "SMITE", "ADVANCE", "RETREAT", "GUARD", "UNGUARD", "TARGET",
 	"BACKSTAB", "BITE", "AVOID", "UNAVOID", "ALLOW", "UNALLOW", "BERSERK", "FRENZY",
 	"DEFENSIVE", "OFFENSIVE", "WARY", "NORMAL",
 	"INVOKE", "PREPARE", "CHANT", "COMMAND", "MASTER", "APPEARANCE",

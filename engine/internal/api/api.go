@@ -408,6 +408,8 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/admin/characters", s.handleAdminListCharacters).Methods("GET")
 	api.HandleFunc("/admin/characters/{firstName}", s.handleAdminGetCharacter).Methods("GET")
 	api.HandleFunc("/admin/characters/{firstName}/reassign", s.handleAdminReassignCharacter).Methods("PUT")
+	api.HandleFunc("/admin/characters/{firstName}/export", s.handleAdminExportCharacter).Methods("GET")
+	api.HandleFunc("/admin/characters/import", s.handleAdminImportCharacter).Methods("POST")
 	api.HandleFunc("/admin/logs", s.handleAdminLogs).Methods("GET")
 	api.HandleFunc("/admin/logs/{id}/resolve", s.handleAdminResolveLog).Methods("PUT")
 	api.HandleFunc("/admin/logs/{id}/reply", s.handleAdminReplyLog).Methods("PUT")
@@ -2885,6 +2887,59 @@ func (s *Server) handleAdminReassignCharacter(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), 404)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(player)
+}
+
+// handleAdminExportCharacter downloads a character as a player export file
+// (see engine.ExportPlayer) for loading into another server.
+func (s *Server) handleAdminExportCharacter(w http.ResponseWriter, r *http.Request) {
+	admin := s.requireAdmin(w, r)
+	if admin == nil {
+		return
+	}
+	data, firstName, err := s.engine.ExportPlayer(r.Context(), mux.Vars(r)["firstName"])
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, firstName, admin.ID.Hex(), "admin exported character", 0, "")
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", firstName+".lofp-player.json"))
+	w.Write(data)
+}
+
+// handleAdminImportCharacter creates a character on an account from a player
+// export file. Body: {"accountId", "newFirstName" (optional), "file" (the export)}.
+func (s *Server) handleAdminImportCharacter(w http.ResponseWriter, r *http.Request) {
+	admin := s.requireAdmin(w, r)
+	if admin == nil {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	var req struct {
+		AccountID    string          `json:"accountId"`
+		NewFirstName string          `json:"newFirstName"`
+		File         json.RawMessage `json:"file"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request (is the file too large or not JSON?)", 400)
+		return
+	}
+	if req.AccountID == "" || len(req.File) == 0 {
+		http.Error(w, "accountId and file are required", 400)
+		return
+	}
+	if acct, err := s.auth.GetAccount(r.Context(), req.AccountID); err != nil || acct == nil {
+		http.Error(w, "account not found", 404)
+		return
+	}
+	player, err := s.engine.ImportPlayer(r.Context(), req.File, req.AccountID, req.NewFirstName)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, player.FullName(), req.AccountID, "admin imported character (by account "+admin.ID.Hex()+")", 0, "")
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(player)
 }

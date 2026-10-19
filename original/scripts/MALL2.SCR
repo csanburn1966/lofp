@@ -16,17 +16,17 @@ ADJDEF 513 mechanical
 ;-----------------------------------------------------------------------------
 ; Monster Group Definitions
 ;
-MLIST 35 217 40 5
-MLIST 35 218 10 1
-MLIST 35 219 40 7
+MLIST 124 217 40 5
+MLIST 124 218 10 1
+MLIST 124 219 40 7
 ;
 MLIST 60 112 20 5
 MLIST 60 118 10 4
 MLIST 60 106 20 4
 MLIST 60 218 15 1
 ;
-MLIST 36 220 10 4
-MLIST 36 214 40 10
+MLIST 125 220 10 4
+MLIST 125 214 40 10
 ;
 ;-----------------------------------------------------------------------------
 ; Room Descriptions
@@ -43,7 +43,7 @@ an open storefront and a twisted and gaping security gate.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NE 1101
 EXIT SW 1110
 ;
@@ -62,7 +62,7 @@ To the northeast is a smashed display window.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NE 1106
 EXIT SW 1100
 EXIT SE 1105
@@ -85,10 +85,10 @@ mirror are scattered on the floor. Old red paint scrawls on the
 counter tops and the ragged and stained carpet are covered with
 a thick layer of dust.
 *DESCRIPTION_END
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT O 1100
 ;
 NUMBER 1103
@@ -102,7 +102,7 @@ with their tops facing the furniture pile. The tables have a
 number of holes in them. There is a giant slogan written in red
 across the back wall in a language you cannot read.
 *DESCRIPTION_END
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 INDOOR_FLOOR
 DARKNESS
 EXIT O 1100
@@ -118,7 +118,7 @@ is completely covered with red paint scrawls.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT O 1101
 ;
 ; chair
@@ -139,7 +139,7 @@ painted arrows chase each other around the console.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NW 1101
 ;
 ; panel
@@ -165,7 +165,7 @@ mostly undamaged.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT O 1101
 EXIT N 1107
 EXIT E 1108
@@ -181,7 +181,7 @@ graphic signs hang beside the demolished wall.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT S 1106
 EXIT SE 1108
 ;
@@ -212,7 +212,7 @@ The ceiling far above is sooty and black.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NW 1107
 EXIT W 1106
 EXIT S 1109
@@ -235,7 +235,7 @@ the door to each compartment.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NW 1106
 EXIT N 1108
 ;
@@ -257,7 +257,7 @@ sculpture winds its way to a broken skylight above. Directly
 to the east is an anteroom of some kind.
 *DESCRIPTION_END
 INDOOR_FLOOR
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 OBSCURED_DAY_LIGHT
 EXIT NE 1100
 EXIT SE 1111
@@ -297,7 +297,7 @@ with the occasional storefront still mostly intact on either side.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NW 1110
 EXIT SE 1112
 ;
@@ -312,7 +312,7 @@ through a hole where a door panel was torn off.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT NW 1111
 ;
 ; burnt store
@@ -333,7 +333,7 @@ is piled up like a barricade in the rear of the store.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT O 1111
 ;
 NUMBER 1114
@@ -358,7 +358,7 @@ thick dust. The store across the hall looks like it was burned out.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT O 1112
 ;
 NUMBER 1116
@@ -371,7 +371,7 @@ metal desk in the back of the room.
 INDOOR_FLOOR
 DARKNESS
 EXIT O 1112
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 ;
 ; desk
 ITEM 0 201
@@ -407,7 +407,7 @@ any further progress to the southwest. Large slabs of concrete which once
 formed the structure of the building now lie in a jumbled heap, with
 broken bits and pieces facing every which way.
 *DESCRIPTION_END
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 INDOOR_FLOOR
 DARKNESS
 EXIT NE 1110
@@ -439,7 +439,7 @@ northwest and knocking loose much more of the infrastructure that has
 fallen and piled up on the floor below. Whatever was here in the past
 is now lost to the broken and twisted debris.
 *DESCRIPTION_END
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 INDOOR_FLOOR
 DARKNESS
 EXIT SE 1110
@@ -921,7 +921,7 @@ ceiling and walls which dimly lights the way.
 *DESCRIPTION_END
 INDOOR_FLOOR
 FIXED_LIGHT
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT N 1175
 EXIT S 1167
 ;
@@ -936,7 +936,7 @@ northeast, southeast and north
 EXIT SE 1168
 EXIT N 1166
 EXIT NE 1169
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 ;
@@ -959,7 +959,7 @@ The walls are made of some matte black substance that seems to
 absorb all light except the faint red glow from tubes in the ceiling
 and walls which dimly lights the way.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 EXIT SE 1170
@@ -973,7 +973,7 @@ The walls are made of some matte black substance that seems to
 absorb all light except the faint red glow from tubes in the ceiling
 and walls which dimly lights the way.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 EXIT NE 1171
@@ -987,7 +987,7 @@ and give off a low buzzing sound. The floor is covered with a soft mat
 with a squishy feel to it. Numerous wires join together at a primary
 terminal in the center of the room.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 EXIT NW 1168
@@ -1019,7 +1019,7 @@ small window to the north.
 *DESCRIPTION_END
 EXIT SW 1169
 EXIT SE 1173
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 ;
@@ -1054,7 +1054,7 @@ and walls which dimly lights the way.
 INDOOR_FLOOR
 FIXED_LIGHT
 EXIT SW 1170
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT NE 1174
 ;
 NUMBER 1173
@@ -1066,7 +1066,7 @@ absorb all light except the faint red glow from tubes in the ceiling
 and walls which dimly lights the way.
 *DESCRIPTION_END
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 FIXED_LIGHT
 EXIT SE 1174
 EXIT NW 1171
@@ -1081,7 +1081,7 @@ and soldering irons.
 *DESCRIPTION_END
 INDOOR_FLOOR
 FIXED_LIGHT
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT NW 1173
 EXIT SW 1172
 ;
@@ -1158,7 +1158,7 @@ could use some new paint: only a few strips of the original paint still
 adhere to the walls. There is a door in this end of the corridor.
 *DESCRIPTION_END
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 DARKNESS
 EXIT SW 1148
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1146 CLOSED LOCKED
@@ -1173,7 +1173,7 @@ mound in the otherwise smooth surface of the floor.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT SW 1149
 EXIT NE 1147
 ;
@@ -1187,7 +1187,7 @@ ages.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT SW 1150
 EXIT NE 1148
 ITEM 0 66 ADJ1=310  VAL1=51 VAL2=1151 CLOSED LOCKED
@@ -1203,7 +1203,7 @@ of construction engineers to remove. The corridor is clear to the northeast.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT NE 1149
 ;
 NUMBER 1151
@@ -1214,7 +1214,7 @@ small room, although most are now mangled or corroded beyond repair. A
 dubious-looking steel ladder leads down through a hole in the floor to
 the cable trunk beneath.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1149 CLOSED LOCKED
 ITEM 1 1108 ADJ1=272 ADJ2=310 VAL2=1153
 ;
@@ -1243,7 +1243,7 @@ room with abandon. Little else remains, save a bright yellow plastic
 bucket on wheels with a curious lever mechanism attached to the top. A door
 leads out to the corridor.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1149 CLOSED LOCKED
 ;
 ;
@@ -1257,7 +1257,7 @@ the cable trunk above.
 *DESCRIPTION_END
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1154 CLOSED LOCKED
 ITEM 1 1108 ADJ1=272 ADJ2=310 VAL2=1151
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 ;
 IFPREVERB go 1
    IFVAR RAC ! 8
@@ -1283,7 +1283,7 @@ painted recently. A steel door is firmly set into one wall here.
 *DESCRIPTION_END
 FIXED_LIGHT
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT S 1155
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1153 CLOSED LOCKED
 ;
@@ -1296,7 +1296,7 @@ recently cleaned and painted. The corridor is lit by a rectangular panel
 in the ceiling overhead.
 *DESCRIPTION_END
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 FIXED_LIGHT
 EXIT S 1183
 EXIT N 1154
@@ -1311,7 +1311,7 @@ to one wall of this spartan chamber. Opposite the meters, a piping
 system that looks more like a bundle of snakes than an engineered structure
 directs the flow of something to the various rooms in the mall above.
 *DESCRIPTION_END
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 FIXED_LIGHT
 ITEM 0 66 ADJ1=310  VAL1=37 VAL2=1155 CLOSED LOCKED
@@ -1325,7 +1325,7 @@ shiny and the paint of the sign has not faded like those elsewhere in the
 structure. The corridor continues to the north and south from here.
 *DESCRIPTION_END
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 FIXED_LIGHT
 EXIT N 1155
 EXIT S 1176
@@ -1351,7 +1351,7 @@ to the north from here.
 *DESCRIPTION_END
 FIXED_LIGHT
 INDOOR_FLOOR
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 EXIT N 1183
 ;
 ; script for four-button lock
@@ -1464,7 +1464,7 @@ uniform, diffuse illumination throughout the room. The corridor extends
 to the south from here.
 *DESCRIPTION_END
 FIXED_LIGHT
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 EXIT S 1166
 ;
@@ -1578,7 +1578,7 @@ Substantial amounts of heat are radiating from the machine and its associated
 ductwork.
 *DESCRIPTION_END
 FIXED_LIGHT
-MONSTER_GROUP 36
+MONSTER_GROUP 125
 INDOOR_FLOOR
 ;
 ITEM 0 853 ADJ1=163 ADJ2=192
@@ -2307,7 +2307,7 @@ door is a small panel with a round plastic button set into it.
 *DESCRIPTION_END
 INDOOR_FLOOR
 DARKNESS
-MONSTER_GROUP 35
+MONSTER_GROUP 124
 EXIT W 1110
 ;
 ITEM 0 247 ADJ1=265 ADJ2=587

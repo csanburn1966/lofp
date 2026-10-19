@@ -1309,7 +1309,7 @@ Obvious exits: north, south, east.
               <CommandEntry cmd="CHANT <scroll>" desc="Cast the spell on a scroll." />
               <CommandEntry cmd="CLIMB <object>" desc="Negotiate an obstacle by climbing." />
               <CommandEntry cmd="CLOSE <object>" desc="Shut a door, close a container." />
-              <CommandEntry cmd="COMMAND <instructions>" desc="Instruct a conjured/dominated creature: BEGONE, direction, FOLLOW, GUARD, KILL, LOOK, WATCH, ECHO." />
+              <CommandEntry cmd="COMMAND <instructions>" desc="Instruct a conjured/dominated creature: BEGONE, direction, FOLLOW, GUARD, UNGUARD, KILL, LOOK, WATCH, ECHO." />
               <CommandEntry cmd="CRAFT <item name>" desc="List craftable items or begin constructing one." />
               <CommandEntry cmd="DEFENSIVE" desc="More defensive combat strategy." />
               <CommandEntry cmd="DEPOSIT <amount|item>" desc="Store cash/valuables in the bank (amounts in copper)." />
@@ -1332,7 +1332,8 @@ Obvious exits: north, south, east.
               <CommandEntry cmd="FULL" desc="Full room descriptions. Reversed by BRIEF." />
               <CommandEntry cmd="GET <object>" desc="Pick up an object or unconscious/dead person. Synonym: TAKE." />
               <CommandEntry cmd="GO <object>" desc="Move through a portal, down a trail, etc." />
-              <CommandEntry cmd="GUARD <target>" desc="Guard someone from melee engagement." />
+              <CommandEntry cmd="GUARD <target>" desc="Guard someone (or a portal or item) from melee engagement. GUARD alone lists what you're guarding." />
+              <CommandEntry cmd="UNGUARD <target>" desc="Stop guarding someone or something. UNGUARD alone stops guarding everything." />
               <CommandEntry cmd="HEALTH" desc="Show health status. Synonym: DIAGNOSE." />
               <CommandEntry cmd="HELP" desc="Access the help system." />
               <CommandEntry cmd="HIDE" desc="Attempt to conceal yourself." />
