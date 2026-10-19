@@ -17,25 +17,25 @@ const scriptEventCycleSeconds = 5
 // ScriptSegment is a time-delayed group of script steps created by a SETEVENT/CONTEVENT
 // or PLREVENT/CONTPLREVENT pair.
 type ScriptSegment struct {
-	RelativeSeconds int                     // seconds to wait after previous segment fires
-	Steps           []gameworld.ScriptStep  // remaining actions/nested blocks to run when segment fires, in original order
-	RoomNumber      int                     // sc.Room.Number at time of scheduling
+	RelativeSeconds int                    // seconds to wait after previous segment fires
+	Steps           []gameworld.ScriptStep // remaining actions/nested blocks to run when segment fires, in original order
+	RoomNumber      int                    // sc.Room.Number at time of scheduling
 }
 
 // ScriptContext holds state for script execution within a single trigger.
 type ScriptContext struct {
-	Player   *Player
-	Room     *gameworld.Room
-	Engine   *GameEngine
-	Messages []string // ECHO PLAYER messages to send to the player
-	RoomMsgs []string // ECHO ALL / ECHO OTHERS messages for the room
-	GMMsgs   []string // GMMSG messages for gamemasters
-	Blocked      bool // CLEARVERB: block the triggering action
-	MoveTo       int  // MOVE: destination room (0 = no move)
-	MoveGroupTo  int  // MOVEGROUP: move all players in room to destination
-	PreMoveMsgs  []string // RoomMsgs captured at the moment MOVE first fires (for old room)
+	Player      *Player
+	Room        *gameworld.Room
+	Engine      *GameEngine
+	Messages    []string // ECHO PLAYER messages to send to the player
+	RoomMsgs    []string // ECHO ALL / ECHO OTHERS messages for the room
+	GMMsgs      []string // GMMSG messages for gamemasters
+	Blocked     bool     // CLEARVERB: block the triggering action
+	MoveTo      int      // MOVE: destination room (0 = no move)
+	MoveGroupTo int      // MOVEGROUP: move all players in room to destination
+	PreMoveMsgs []string // RoomMsgs captured at the moment MOVE first fires (for old room)
 
-	StrVars  map[int]string // %0-%9 from STRCVT
+	StrVars  map[int]string  // %0-%9 from STRCVT
 	OrigRoom *gameworld.Room // saved room for AFFECT
 
 	// OrigRoomNum is the player's room number before any MOVE fires during this script.
@@ -45,6 +45,20 @@ type ScriptContext struct {
 	// Item interaction context (set when running IFPREVERB/IFVERB on a room item)
 	ItemRef *gameworld.RoomItem // the room item being interacted with
 	ItemDef *gameworld.ItemDef  // its archetype definition
+
+	// SecondItemName is the formatted name (with article) of the other item in a
+	// two-item IFPREVERB2 interaction, expanded by %b/%B. In every original script
+	// that uses it, %a is the item being acted with (e.g. what's being PUT) and %b is
+	// the item that owns the script (the PUT target) — e.g. ITEMNWPN.SCR's mortar:
+	// "You place %a into %b and begin crushing it." Set by runPutIntoTargetScripts.
+	SecondItemName string
+
+	// MonsterInst is set by RunMonsterPreverbScript when executing a monster's own
+	// SCRIPTMACRO-attached IFVERB/IFPREVERB block, so DEAD/SLEEPING in getVar
+	// resolve against this specific monster instance rather than the player —
+	// per GMSCRIPT.DOC's monster-scripting section ("DEAD: equals one if the
+	// monster is dead"). nil outside that context.
+	MonsterInst *MonsterInstance
 
 	DummyVars      map[int]int // DUMMY1-5 temporary variables
 	lastOrgChecked int         // last org number evaluated in IFVAR ORG, used to resolve ORGRANK
@@ -60,10 +74,24 @@ type ScriptContext struct {
 	// multi-stage conversation — rather than only at the room's top level.
 	sayText string
 
+	// firedSayPatterns records the normalized pattern (see matchesSayText) of every
+	// IFSAY block that has already fired during this RunSayScripts walk. Scripts
+	// commonly define several IFSAY blocks for the same phrase to tolerate different
+	// trailing punctuation or a misspelling (e.g. ISLAND.SCR's volcano sacrifice ritual:
+	// "...sacrifice!", "...sacrifice", "...sacrifice.", plus a "sacrafice" typo, each
+	// with its own copy of the response) — but matchesSayText trims trailing punctuation
+	// from both sides, so "sacrifice!"/"sacrifice"/"sacrifice." all normalize to the same
+	// pattern and, without this guard, a single utterance fires all three copies of the
+	// response instead of one. Only blocks whose normalized pattern is identical are
+	// deduplicated; two genuinely different phrases that both happen to match (via the
+	// Contains fallback) still both fire.
+	firedSayPatterns map[string]bool
+
 	KillPlayer        bool // KILL PLAYER: set when script kills the player
 	NeedsSave         bool // set by ROUTINE and similar actions that modify player state
 	routineChargePaid bool // true after first charge decrement this interaction (prevents double-spend across script phases)
 	preverbOnly       bool // set by RunPreverbScripts; causes execBlock to skip IFVERB blocks
+	verbOnly          bool // set by runNestedItemVerbScripts; causes execBlock to skip IFPREVERB blocks (mirror of preverbOnly)
 
 	// moveGroupFired is set by doMoveGroup so that subsequent ECHO PLAYER/OTHERS in the same
 	// script block are suppressed — the group has conceptually already left the source room.
@@ -73,8 +101,8 @@ type ScriptContext struct {
 	RoundTimeSet int
 
 	// SETEVENT/CONTEVENT and PLREVENT/CONTPLREVENT deferred execution
-	pendingEventDelay int  // delay set by SETEVENT (in cycles) or PLREVENT (in raw seconds)
-	pendingEventIsRaw bool // true when PLREVENT set the delay (seconds); false for SETEVENT (multiply by cycle)
+	pendingEventDelay int             // delay set by SETEVENT (in cycles) or PLREVENT (in raw seconds)
+	pendingEventIsRaw bool            // true when PLREVENT set the delay (seconds); false for SETEVENT (multiply by cycle)
 	DeferredSegments  []ScriptSegment // segments to run after their respective delays
 }
 
@@ -111,7 +139,82 @@ func (e *GameEngine) RunSayScripts(player *Player, room *gameworld.Room, text st
 			sc.execBlock(block)
 		}
 	}
+	e.runItemSayScripts(sc)
 	return sc
+}
+
+// runItemSayScripts fires top-level IFSAY blocks on the items the speaker is wielding,
+// wearing, or carrying (e.g. heel-clicking slippers answering "There's no place like
+// home", or DRUID.SCR item 1173's toasts) — previously only the room's IFSAY blocks
+// ever ran, so any item-level IFSAY was silently dead. Each item runs with itself as
+// the script's item (Ref=-1), same as doItemInteraction, so ITEMVAL/ITEMBIT reads and
+// writes and IFITEM -1 WORN apply to that item. Only top-level IFSAY is walked, not
+// IFVAR trees as for rooms, so an item's unrelated IFVAR logic can't fire on speech.
+func (e *GameEngine) runItemSayScripts(sc *ScriptContext) {
+	player := sc.Player
+	type carried struct {
+		item  InventoryItem
+		state string
+	}
+	var items []carried
+	if player.Wielded != nil {
+		items = append(items, carried{*player.Wielded, "WIELDED"})
+	}
+	if player.OffHand != nil {
+		items = append(items, carried{*player.OffHand, "WIELDED"})
+	}
+	for _, w := range player.Worn {
+		items = append(items, carried{w, "WORN"})
+	}
+	for _, ii := range player.Inventory {
+		items = append(items, carried{ii, ii.State})
+	}
+	for _, c := range items {
+		// A room script (or an earlier item) already moved the player — stop, the
+		// rest would evaluate against the wrong room.
+		if sc.MoveTo > 0 || sc.MoveGroupTo > 0 {
+			return
+		}
+		def := e.items[c.item.Archetype]
+		if def == nil {
+			continue
+		}
+		hasSay := false
+		for _, block := range def.Scripts {
+			if block.Type == "IFSAY" {
+				hasSay = true
+				break
+			}
+		}
+		if !hasSay {
+			continue
+		}
+		ii := c.item
+		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
+			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
+			ItemBits: ii.ItemBits, State: c.state}
+		sc.ItemRef, sc.ItemDef = &tempRI, def
+		sc.firedSayPatterns = nil // dedupe is per item — two items may answer the same phrase
+		// Start in the speaker's own room even if a room script (or an earlier item)
+		// switched context with AFFECT.
+		if r := e.rooms[player.RoomNumber]; r != nil {
+			sc.Room = r
+		}
+		for _, block := range def.Scripts {
+			if block.Type == "IFSAY" {
+				sc.execBlock(block)
+			}
+		}
+	}
+	sc.ItemRef, sc.ItemDef = nil, nil
+}
+
+// sayPattern normalizes an IFSAY block's raw arg into the form it's matched against:
+// underscores become spaces, uppercased, trailing punctuation trimmed.
+func sayPattern(arg string) string {
+	pattern := strings.ToUpper(strings.ReplaceAll(arg, "_", " "))
+	return strings.TrimRight(pattern, ".?!")
 }
 
 // matchesSayText reports whether sc.sayText matches an IFSAY block's pattern.
@@ -121,8 +224,7 @@ func (sc *ScriptContext) matchesSayText(args []string) bool {
 	if sc.sayText == "" || len(args) < 1 {
 		return false
 	}
-	pattern := strings.ToUpper(strings.ReplaceAll(args[0], "_", " "))
-	pattern = strings.TrimRight(pattern, ".?!")
+	pattern := sayPattern(args[0])
 	return sc.sayText == pattern || strings.Contains(sc.sayText, pattern)
 }
 
@@ -145,6 +247,19 @@ func (e *GameEngine) RunPreverbScripts(player *Player, room *gameworld.Room, ver
 
 	// Check room-level scripts (only for room items; inventory items have Ref=-1)
 	if ri.Ref >= 0 {
+		// Run bare top-level room actions (e.g. "EQUAL abflag 0") unconditionally, before
+		// any IFVERB/IFPREVERB check. In the original scripts these reset a flag that a
+		// later IFVERB block in the same room re-checks (see OUTDOOR.SCR room 706's
+		// "jump boulder" flag abflag) — without re-running them on every interaction, a
+		// flag set to 1 by one successful action would stay 1 forever and permanently
+		// block the IFVERB branch that requires it to be 0.
+		for _, block := range room.Scripts {
+			if block.Type == "ACTION" {
+				for _, action := range block.Actions {
+					sc.execAction(action)
+				}
+			}
+		}
 		// Run scripts matching this specific item ref
 		for _, block := range room.Scripts {
 			if block.Type == "IFPREVERB" && len(block.Args) >= 2 {
@@ -167,6 +282,18 @@ func (e *GameEngine) RunPreverbScripts(player *Player, room *gameworld.Room, ver
 		for _, block := range room.Scripts {
 			if block.Type == "IFTOUCH" {
 				sc.execBlock(block)
+			}
+		}
+	}
+
+	// Run bare top-level item actions (e.g. item 747's dice: "RANDOM dieone 1 6 0"
+	// ahead of "IFPREVERB ROLL -1") unconditionally, before any IFVERB/IFPREVERB
+	// check — same rationale as the room-level ACTION loop above. Without this the
+	// values an IFVAR check downstream reads were never actually rolled/set.
+	for _, block := range def.Scripts {
+		if block.Type == "ACTION" {
+			for _, action := range block.Actions {
+				sc.execAction(action)
 			}
 		}
 	}
@@ -206,6 +333,15 @@ func verbsMatch(a, b string) bool {
 // def.Scripts, so a script like item 1669's "IFVAR ... IFVERB EXAMINE -1 ... ENDIF"
 // relies on this walk to fire correctly (and only for that verb). Used for items
 // that set values based on adjective checks, e.g., thesnia leaf sets ITEMVAL3=403.
+//
+// Deliberately scoped to IFVAR only — NOT IFITEM/IFNOITEM. Those wrappers are
+// already reached by RunPreverbScripts (which includes them in its own item-level
+// switch), and ~60 real scripts nest an IFPREVERB (not IFVERB) directly inside an
+// IFITEM/IFNOITEM — e.g. SHANTA.SCR's own PUSH/PULL/TURN/THUMP siblings right next
+// to the bedroll's GO block below. Since preverbOnly only skips IFVERB, not
+// IFPREVERB, having this walk also enter IFITEM/IFNOITEM would double-fire every
+// one of those. See runNestedGoVerbScripts for the narrower, verb-scoped fix that
+// covers IFVERB nested under IFITEM/IFNOITEM instead (item 1290's bedroll).
 func (e *GameEngine) RunItemScripts(player *Player, room *gameworld.Room, verb string, ri *gameworld.RoomItem, def *gameworld.ItemDef) *ScriptContext {
 	sc := &ScriptContext{
 		Player:     player,
@@ -218,6 +354,34 @@ func (e *GameEngine) RunItemScripts(player *Player, room *gameworld.Room, verb s
 	}
 	for _, block := range def.Scripts {
 		if block.Type == "IFVAR" {
+			sc.execBlock(block)
+		}
+	}
+	return sc
+}
+
+// runNestedItemVerbScripts walks an item's top-level IFITEM/IFNOITEM blocks and
+// executes any nested IFVERB/IFVERB2 block matching verb — the counterpart to
+// RunItemScripts' IFVAR-nesting support, but specifically for IFVERB nested inside
+// an item-state gate (e.g. item 1290's bedroll: "IFITEM -1 OPEN ... IFVERB GO -1
+// ... ENDIF", see SHANTA.SCR). Uses verbOnly (the mirror of RunPreverbScripts'
+// preverbOnly) so a nested IFPREVERB is skipped here — RunPreverbScripts already
+// fires those correctly on its own separate walk, and firing them again here
+// would double them, exactly the risk that keeps this logic out of the shared
+// RunItemScripts (see its doc comment).
+func (e *GameEngine) runNestedItemVerbScripts(player *Player, room *gameworld.Room, verb string, ri *gameworld.RoomItem, def *gameworld.ItemDef) *ScriptContext {
+	sc := &ScriptContext{
+		Player:     player,
+		Room:       room,
+		Engine:     e,
+		ItemRef:    ri,
+		ItemDef:    def,
+		activeVerb: strings.ToUpper(verb),
+		activeRef:  fmt.Sprintf("%d", ri.Ref),
+		verbOnly:   true,
+	}
+	for _, block := range def.Scripts {
+		if block.Type == "IFITEM" || block.Type == "IFNOITEM" {
 			sc.execBlock(block)
 		}
 	}
@@ -276,13 +440,17 @@ func (e *GameEngine) RunVerbScripts(player *Player, room *gameworld.Room, verb s
 // GIVE directed at the monster. item/itemDef may be nil for verbs with no associated item
 // (e.g. EXAMINE); when present, the item is exposed as the "current item" (Ref -1) so
 // %a and ITEMADJ/ITEMVAL checks resolve, and a script's REMOVEITEM -1 removes it from the
-// player's inventory (see doRemoveItem's Ref==-1 handling).
-func (e *GameEngine) RunMonsterPreverbScript(player *Player, room *gameworld.Room, monDef *gameworld.MonsterDef, verb string, item *InventoryItem, itemDef *gameworld.ItemDef) *ScriptContext {
+// player's inventory (see doRemoveItem's Ref==-1 handling). inst may be nil for verbs that
+// don't care about the monster's own state; when given, it's exposed as sc.MonsterInst so
+// DEAD/SLEEPING checks resolve against this specific instance — e.g. the sheep's
+// IFPREVERB GET wool-clipping script (MONSTERS.SCR MNUMBER 200 SCRIPTMACRO 99).
+func (e *GameEngine) RunMonsterPreverbScript(player *Player, room *gameworld.Room, monDef *gameworld.MonsterDef, inst *MonsterInstance, verb string, item *InventoryItem, itemDef *gameworld.ItemDef) *ScriptContext {
 	verb = strings.ToUpper(verb)
 	sc := &ScriptContext{
 		Player:      player,
 		Room:        room,
 		Engine:      e,
+		MonsterInst: inst,
 		activeVerb:  verb,
 		activeRef:   "-1",
 		preverbOnly: true,
@@ -291,9 +459,9 @@ func (e *GameEngine) RunMonsterPreverbScript(player *Player, room *gameworld.Roo
 		sc.ItemRef = &gameworld.RoomItem{
 			Ref: -1, Archetype: item.Archetype,
 			Adj1: item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
-			Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5,
+			Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5, CraftedValue: item.CraftedValue,
 			ItemBits: item.ItemBits,
-			State: item.State,
+			State:    item.State,
 		}
 		sc.ItemDef = itemDef
 	}
@@ -339,6 +507,11 @@ func (sc *ScriptContext) execBlock(block gameworld.ScriptBlock) {
 	case "IFPREVERB", "IFVERB", "IFPREVERB2", "IFVERB2":
 		// In preverb mode, skip IFVERB blocks entirely — they are handled by RunVerbScripts.
 		if sc.preverbOnly && (block.Type == "IFVERB" || block.Type == "IFVERB2") {
+			return
+		}
+		// Mirror of the above for runNestedItemVerbScripts: skip IFPREVERB blocks,
+		// since RunPreverbScripts already fires those on its own separate walk.
+		if sc.verbOnly && (block.Type == "IFPREVERB" || block.Type == "IFPREVERB2") {
 			return
 		}
 		// These blocks only make sense within a verb-triggered context (activeVerb set by
@@ -393,6 +566,14 @@ func (sc *ScriptContext) execBlock(block gameworld.ScriptBlock) {
 
 	case "IFSAY":
 		if sc.matchesSayText(block.Args) {
+			pattern := sayPattern(block.Args[0])
+			if sc.firedSayPatterns[pattern] {
+				return
+			}
+			if sc.firedSayPatterns == nil {
+				sc.firedSayPatterns = make(map[string]bool)
+			}
+			sc.firedSayPatterns[pattern] = true
 			sc.execChildren(block)
 		}
 
@@ -557,8 +738,12 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 		sc.doRandom(action.Args)
 	case "DAMAGEPLR":
 		sc.doDamagePlr(action.Args)
+	case "AWARD":
+		sc.doAward(action.Args)
 	case "STRCVT":
 		sc.doStrCvt(action.Args)
+	case "ADJCVT":
+		sc.doAdjCvt(action.Args)
 	case "STRCPY":
 		sc.doStrCpy(action.Args)
 	case "STRCAT":
@@ -573,6 +758,8 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 		sc.doSetItemVal(action.Args)
 	case "SETITEMADJ":
 		sc.doSetItemAdj(action.Args)
+	case "EXTEND":
+		sc.doExtend(action.Args)
 	case "APPLYROLL":
 		sc.doApplyRoll()
 	case "REMOVEITEM":
@@ -631,6 +818,9 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 		if len(action.Args) >= 1 && strings.ToUpper(action.Args[0]) == "PLAYER" {
 			sc.Player.BodyPoints = 0
 			sc.Player.Dead = true
+			sc.Player.Hidden = false
+			sc.Player.Invisible = false
+			sc.Player.PhantomForm = false
 			sc.KillPlayer = true
 		}
 	case "ROUTINE":
@@ -640,9 +830,14 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 	case "SKILLCHECK":
 		sc.doSkillCheck(action.Args)
 	case "APPEAR":
+		// Sets the player's custom appearance line (same slot as the player-facing
+		// APPEARANCE command / GM @linex), shown to others on EXAMINE — not a room
+		// broadcast. Scripts already ECHO the moment-of-change message separately;
+		// APPEAR records the resulting persistent visual state (e.g. "pants are
+		// down around your ankles") until the script sets it again.
 		if len(action.Args) >= 1 {
 			text := sc.expandScriptText(strings.Join(action.Args, " "))
-			sc.RoomMsgs = append(sc.RoomMsgs, text)
+			sc.Player.Appearance = text
 		}
 	}
 }
@@ -744,7 +939,7 @@ func (sc *ScriptContext) doSub(args []string) {
 	sc.setVar(varName, sc.getVar(varName)-sc.resolveScriptArg(args[1]))
 }
 
-// doNewItem handles NEWITEM ref archetype [ADJ1=n] [ADJ2=n] [VAL1=n] ...
+// doNewItem handles NEWITEM ref archetype [ADJ1=n] [ADJ2=n] [VAL1=n] [CRAFTEDVALUE=n] ...
 // ref -1 means add to player inventory.
 func (sc *ScriptContext) doNewItem(args []string) {
 	if len(args) < 2 {
@@ -784,23 +979,45 @@ func (sc *ScriptContext) doNewItem(args []string) {
 			item.Val4 = val
 		case "VAL5":
 			item.Val5 = val
+		case "CRAFTEDVALUE":
+			item.CraftedValue = val
 		}
 	}
 
 	if ref == -1 {
 		sc.Player.Inventory = append(sc.Player.Inventory, item)
+		sc.NeedsSave = true
 	} else if sc.Room != nil {
 		ri := gameworld.RoomItem{
 			Ref:       ref,
 			Archetype: archetype,
-			Adj1: item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
-			Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5,
+			Adj1:      item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
+			Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5, CraftedValue: item.CraftedValue,
 			ItemBits: item.ItemBits,
 		}
-		sc.Room.Items = append(sc.Room.Items, ri)
+		// A NEWITEM ref can collide with an item already occupying that ref slot
+		// (e.g. FULLMENE.SCR's cottage reuses ref 8, which WINOUT.SCR's base room
+		// definition already uses for ground snow) — replace in place rather than
+		// appending a duplicate, or a later REMOVEITEM <ref> only removes the first
+		// match and strands the other (reported as a stray cottage/duplicate door
+		// left behind by the Menelian's-cottage CEVENT).
+		changeType := "item_add"
+		replaced := false
+		for i := range sc.Room.Items {
+			if sc.Room.Items[i].Ref == ref && !sc.Room.Items[i].IsPut {
+				sc.Room.Items[i] = ri
+				changeType = "item_update"
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			sc.Room.Items = append(sc.Room.Items, ri)
+		}
 		sc.Engine.notifyRoomChange(RoomChange{
 			RoomNumber: sc.Room.Number,
-			Type:       "item_add",
+			Type:       changeType,
+			ItemRef:    ref,
 			Item:       &ri,
 		})
 	}
@@ -832,6 +1049,12 @@ func (sc *ScriptContext) doMove(args []string) {
 		return
 	}
 	dest := sc.resolveNumericArg(args[0])
+	// Ignore a destination that isn't a real room (e.g. a GM typo in an ITEMVAL used as
+	// MOVE ITEMVAL3) — setting Player.RoomNumber to it would strand the player in a
+	// room that doesn't exist, since callers bail out when the destination is missing.
+	if dest > 0 && sc.Engine != nil && sc.Engine.rooms[dest] == nil {
+		return
+	}
 	if dest > 0 {
 		if sc.OrigRoomNum == 0 {
 			sc.OrigRoomNum = sc.Player.RoomNumber
@@ -867,13 +1090,19 @@ func (sc *ScriptContext) doShowRoom(args []string) {
 		return
 	}
 	roomNum := sc.resolveNumericArg(args[0])
-	if roomNum > 0 {
-		if room := sc.Engine.rooms[roomNum]; room != nil {
-			sc.Messages = append(sc.Messages, fmt.Sprintf("[%s]", room.Name))
-			if room.Description != "" {
-				sc.Messages = append(sc.Messages, descriptionToMessages(room.Description)...)
-			}
-		}
+	if roomNum > 0 && sc.Engine.rooms[roomNum] != nil {
+		// GMSCRIPT.DOC: "as if they had typed look in that room" — so occupants,
+		// monsters, items, weather and exits too, not just name + description
+		// (e.g. FAYD.SCR's cafe fence, LOOK FENCE → SHOWROOM 3524, must show who's
+		// out on the street). Same swap-and-restore as LOOK <direction> in doLookAt;
+		// only Messages are used, so the client isn't told the player moved.
+		// BriefMode is lifted too: SHOWROOM always shows the description, and
+		// doLookFull only restores it in RoomDesc, not in Messages.
+		originalRoom, originalBrief := sc.Player.RoomNumber, sc.Player.BriefMode
+		sc.Player.RoomNumber, sc.Player.BriefMode = roomNum, false
+		lookResult := sc.Engine.doLookFull(sc.Player)
+		sc.Player.RoomNumber, sc.Player.BriefMode = originalRoom, originalBrief
+		sc.Messages = append(sc.Messages, lookResult.Messages...)
 	}
 }
 
@@ -1002,6 +1231,37 @@ func (sc *ScriptContext) doSetItemVal(args []string) {
 	}
 }
 
+// doExtend handles the runtime EXTEND ref <text...> action — sets a room item's
+// Extend (the descriptive suffix shown after its name, e.g. "a window in the
+// ground (with a large hole broken in it)"). Distinct from the static top-level
+// EXTEND directive parsed at room-load time (see the room parser's "EXTEND" case);
+// this one runs inside a conditional block (typically IFPREVERB BREAK) to update
+// the item's look after something happens to it — see MALL2.SCR rooms with a
+// breakable door/window for an example.
+func (sc *ScriptContext) doExtend(args []string) {
+	if len(args) < 2 || sc.Room == nil {
+		return
+	}
+	ref, err := strconv.Atoi(args[0])
+	if err != nil {
+		return
+	}
+	text := strings.Join(args[1:], " ")
+	for i := range sc.Room.Items {
+		if sc.Room.Items[i].Ref == ref {
+			sc.Room.Items[i].Extend = text
+			itemCopy := sc.Room.Items[i]
+			sc.Engine.notifyRoomChange(RoomChange{
+				RoomNumber: sc.Room.Number,
+				Type:       "item_update",
+				ItemRef:    ref,
+				Item:       &itemCopy,
+			})
+			return
+		}
+	}
+}
+
 // doSetItemAdj handles SETITEMADJ ref adjIndex value — sets an adjective on a room item.
 // The value arg can be a variable name (e.g., ITEMADJ1) or a literal integer.
 func (sc *ScriptContext) doSetItemAdj(args []string) {
@@ -1102,18 +1362,31 @@ func (sc *ScriptContext) doRemoveItem(args []string) {
 		// their own slice (see doWear) and must be checked too, or REMOVEITEM -1 silently
 		// no-ops after an IFCARRY match on something the player has equipped rather than
 		// merely carried.
-		for i, ii := range sc.Player.Inventory {
-			if ii.Archetype == sc.ItemRef.Archetype {
-				sc.Player.Inventory = append(sc.Player.Inventory[:i], sc.Player.Inventory[i+1:]...)
-				sc.NeedsSave = true
-				return
-			}
+		//
+		// Prefer the copy whose adjectives/vals match the script's own item, so that
+		// popping a "treasure balloon" (FALLFEST.SCR) removes that balloon and not a
+		// plain one carried ahead of it — which would leave the treasure balloon behind
+		// to be popped for a second prize. Falls back to the first archetype match.
+		ref := sc.ItemRef
+		exact := func(ii InventoryItem) bool {
+			return ii.Archetype == ref.Archetype && ii.Adj1 == ref.Adj1 && ii.Adj2 == ref.Adj2 && ii.Adj3 == ref.Adj3 &&
+				ii.Val1 == ref.Val1 && ii.Val2 == ref.Val2 && ii.Val3 == ref.Val3 && ii.Val4 == ref.Val4 && ii.Val5 == ref.Val5
 		}
-		for i, ii := range sc.Player.Worn {
-			if ii.Archetype == sc.ItemRef.Archetype {
-				sc.Player.Worn = append(sc.Player.Worn[:i], sc.Player.Worn[i+1:]...)
-				sc.NeedsSave = true
-				return
+		loose := func(ii InventoryItem) bool { return ii.Archetype == ref.Archetype }
+		for _, match := range []func(InventoryItem) bool{exact, loose} {
+			for i, ii := range sc.Player.Inventory {
+				if match(ii) {
+					sc.Player.Inventory = append(sc.Player.Inventory[:i], sc.Player.Inventory[i+1:]...)
+					sc.NeedsSave = true
+					return
+				}
+			}
+			for i, ii := range sc.Player.Worn {
+				if match(ii) {
+					sc.Player.Worn = append(sc.Player.Worn[:i], sc.Player.Worn[i+1:]...)
+					sc.NeedsSave = true
+					return
+				}
 			}
 		}
 	}
@@ -1130,6 +1403,24 @@ func (sc *ScriptContext) doItemState(args []string, state string) {
 	}
 	for i := range sc.Room.Items {
 		if sc.Room.Items[i].Ref == ref && !sc.Room.Items[i].IsPut {
+			// State is a single field but scripts treat open/closed and locked/
+			// unlocked as independent (CLOSE 4 then LOCK 4; UNLOCK 4 then OPEN 4).
+			// Map onto the engine's OPEN / CLOSED (closed, unlocked) / LOCKED
+			// convention, same as the player UNLOCK command: CLOSE doesn't unlock
+			// a locked item, and UNLOCK leaves the item closed rather than writing
+			// "UNLOCKED" (which movement treats as passable).
+			cur := strings.ToUpper(sc.Room.Items[i].State)
+			switch state {
+			case "CLOSED":
+				if cur == "LOCKED" {
+					return
+				}
+			case "UNLOCKED":
+				if cur != "LOCKED" {
+					return
+				}
+				state = "CLOSED"
+			}
 			sc.Room.Items[i].State = state
 			sc.Engine.notifyRoomChange(RoomChange{RoomNumber: sc.Room.Number, Type: "item_state", ItemRef: ref, NewState: state})
 			break
@@ -1230,12 +1521,15 @@ func (sc *ScriptContext) evalIfItem(args []string) bool {
 	switch stateStr {
 	case "OPEN":
 		return state == "OPEN"
+	// A LOCKED item is also closed, and CLOSED/OPEN items are unlocked — scripts
+	// test these independently (NEWCITY.SCR nests IFITEM 0 CLOSED around IFITEM 0
+	// LOCKED; RIDDLE.SCR's KNOCK checks CLOSED on a door DEEP2's CEVENT re-locked).
 	case "CLOSED":
-		return state == "CLOSED" || state == ""
+		return state == "CLOSED" || state == "LOCKED" || state == "UNLOCKED" || state == ""
 	case "LOCKED":
 		return state == "LOCKED"
 	case "UNLOCKED":
-		return state == "UNLOCKED" || state == "OPEN"
+		return state == "UNLOCKED" || state == "OPEN" || state == "CLOSED" || state == ""
 	case "WORN":
 		return state == "WORN"
 	case "WIELDED":
@@ -1295,6 +1589,26 @@ func (sc *ScriptContext) getVar(name string) int {
 		}
 		return 0
 	}
+	// ITEMCRAFTEDVALUE is the current item's CraftedValue — the copper sell value
+	// crafting and foraging stamp instead of Val1 (see InventoryItem.CraftedValue).
+	// ITEMWORTH is the value SELL actually starts from: CraftedValue if set, else
+	// Val1 — so a GM buy-back script (e.g. a guild cabinet's IFPREVERB2 PUT) can
+	// price crafted/foraged and plain items alike. Not original variables.
+	if name == "ITEMCRAFTEDVALUE" {
+		if sc.ItemRef == nil {
+			return 0
+		}
+		return sc.ItemRef.CraftedValue
+	}
+	if name == "ITEMWORTH" {
+		if sc.ItemRef == nil {
+			return 0
+		}
+		if sc.ItemRef.CraftedValue > 0 {
+			return sc.ItemRef.CraftedValue
+		}
+		return sc.ItemRef.Val1
+	}
 	if strings.HasPrefix(name, "ITEMADJ") {
 		idx, err := strconv.Atoi(name[7:])
 		if err != nil || sc.ItemRef == nil {
@@ -1307,6 +1621,43 @@ func (sc *ScriptContext) getVar(name string) int {
 			return sc.ItemRef.Adj2
 		case 3:
 			return sc.ItemRef.Adj3
+		}
+		return 0
+	}
+	// ITEMPARAM1-3 read the current item archetype's PARAMETER1-3 fields (an
+	// ore's metal, a weapon's skill requirement, etc. — see GMSCRIPT.DOC). Not an
+	// original variable; added so GM scripts can inspect them. Read-only: the
+	// parameters live on the shared item definition, not the instance.
+	if strings.HasPrefix(name, "ITEMPARAM") {
+		if sc.ItemDef == nil {
+			return 0
+		}
+		switch name[9:] {
+		case "1":
+			return sc.ItemDef.Parameter1
+		case "2":
+			return sc.ItemDef.Parameter2
+		case "3":
+			return sc.ItemDef.Parameter3
+		}
+		return 0
+	}
+	// ITEMFLAG<name> checks whether the current item's archetype (sc.ItemDef) carries
+	// a given static Flag from its .SCR definition — e.g. "IFVAR ITEMFLAGDYE = 1" is
+	// true for any dye reagent (the DYE flag), "IFVAR ITEMFLAGSKIN = 1" for any pelt/
+	// hide (the SKIN flag). Unlike ITEMBIT#, this reads the archetype's fixed Flags
+	// list, not a per-instance runtime bit. Most useful inside a container's own
+	// IFPREVERB2 PUT -1 script (see runPutIntoTargetScripts in containers.go), where
+	// sc.ItemDef is already the definition of whatever item is currently being put in
+	// — e.g. a cabinet script routing dye reagents one way and skins another instead
+	// of hard-coding every possible archetype number.
+	if strings.HasPrefix(name, "ITEMFLAG") {
+		flagName := name[8:]
+		if flagName == "" || sc.ItemDef == nil {
+			return 0
+		}
+		if containsFlag(sc.ItemDef.Flags, flagName) {
+			return 1
 		}
 		return 0
 	}
@@ -1338,10 +1689,14 @@ func (sc *ScriptContext) getVar(name string) int {
 			return 0
 		}
 		switch idx {
-		case 1: return sc.Player.Flag1
-		case 2: return sc.Player.Flag2
-		case 3: return sc.Player.Flag3
-		case 4: return sc.Player.Flag4
+		case 1:
+			return sc.Player.Flag1
+		case 2:
+			return sc.Player.Flag2
+		case 3:
+			return sc.Player.Flag3
+		case 4:
+			return sc.Player.Flag4
 		}
 		return 0
 	}
@@ -1394,7 +1749,9 @@ func (sc *ScriptContext) getVar(name string) int {
 	case "RAC":
 		return sc.Player.Race
 	case "MISTFORM":
-		if sc.Player.Race == 8 { return 1 }
+		if sc.Player.Race == 8 {
+			return 1
+		}
 		return 0
 	// Player stats
 	case "STR", "STRT":
@@ -1430,25 +1787,51 @@ func (sc *ScriptContext) getVar(name string) int {
 		return sc.Player.MaxPsi
 	// Player state
 	case "DEAD":
-		if sc.Player.Dead { return 1 }
+		// Inside a monster's own SCRIPTMACRO-attached script (RunMonsterPreverbScript
+		// sets MonsterInst), DEAD means "is THIS monster dead" per GMSCRIPT.DOC's
+		// monster-scripting section — e.g. the sheep's IFPREVERB GET wool-clipping
+		// script (MONSTERS.SCR MNUMBER 200 SCRIPTMACRO 99) checks DEAD to tell a
+		// live sheep from a corpse. Falls back to the player's own Dead outside
+		// that context, matching the general player-variable table.
+		if sc.MonsterInst != nil {
+			if !sc.MonsterInst.Alive {
+				return 1
+			}
+			return 0
+		}
+		if sc.Player.Dead {
+			return 1
+		}
 		return 0
 	case "FLYING":
-		if sc.Player.Position == 4 { return 1 }
+		if sc.Player.Position == 4 {
+			return 1
+		}
 		return 0
 	case "KNEELING":
-		if sc.Player.Position == 3 { return 1 }
+		if sc.Player.Position == 3 {
+			return 1
+		}
 		return 0
 	case "LAYING":
-		if sc.Player.Position == 2 { return 1 }
+		if sc.Player.Position == 2 {
+			return 1
+		}
 		return 0
 	case "SITTING":
-		if sc.Player.Position == 1 { return 1 }
+		if sc.Player.Position == 1 {
+			return 1
+		}
 		return 0
 	case "STANDING":
-		if sc.Player.Position == 0 { return 1 }
+		if sc.Player.Position == 0 {
+			return 1
+		}
 		return 0
 	case "HIDDEN":
-		if sc.Player.Hidden { return 1 }
+		if sc.Player.Hidden {
+			return 1
+		}
 		return 0
 	// Organization
 	case "ORG":
@@ -1467,32 +1850,46 @@ func (sc *ScriptContext) getVar(name string) int {
 		return sc.Player.BuildPoints
 	// Wielded
 	case "WIELDED":
-		if sc.Player.Wielded != nil { return 1 }
+		if sc.Player.Wielded != nil {
+			return 1
+		}
 		return 0
 	case "ARCHNUM":
-		if sc.ItemRef != nil { return sc.ItemRef.Archetype }
-		if sc.Player.Wielded != nil { return sc.Player.Wielded.Archetype }
+		if sc.ItemRef != nil {
+			return sc.ItemRef.Archetype
+		}
+		if sc.Player.Wielded != nil {
+			return sc.Player.Wielded.Archetype
+		}
 		return 0
 	// Room info
 	case "RNUM":
 		return sc.Player.RoomNumber
 	case "OUTDOOR":
-		if sc.Room != nil && isOutdoorTerrain(sc.Room.Terrain) { return 1 }
+		if sc.Room != nil && isOutdoorTerrain(sc.Room.Terrain) {
+			return 1
+		}
 		return 0
 	case "PLRSINROOM":
 		roomNum := sc.Player.RoomNumber
-		if sc.Room != nil { roomNum = sc.Room.Number }
+		if sc.Room != nil {
+			roomNum = sc.Room.Number
+		}
 		if sc.Engine.sessions != nil {
 			count := 0
 			for _, p := range sc.Engine.sessions.OnlinePlayers() {
-				if p.RoomNumber == roomNum { count++ }
+				if p.RoomNumber == roomNum {
+					count++
+				}
 			}
 			return count
 		}
 		return 1
 	case "MONINROOM":
 		roomNum := sc.Player.RoomNumber
-		if sc.Room != nil { roomNum = sc.Room.Number }
+		if sc.Room != nil {
+			roomNum = sc.Room.Number
+		}
 		if sc.Engine.monsterMgr != nil {
 			return len(sc.Engine.monsterMgr.MonstersInRoom(roomNum))
 		}
@@ -1501,13 +1898,17 @@ func (sc *ScriptContext) getVar(name string) int {
 	case "TIM":
 		return GameHour()
 	case "DAY":
-		if IsDay() { return 1 }
+		if IsDay() {
+			return 1
+		}
 		return 0
 	case "NIGHT":
-		if IsNight() { return 1 }
+		if IsNight() {
+			return 1
+		}
 		return 0
-	case "DATE":
-		return GameDay()
+	case "DATE": // day of month (GMSCRIPT.DOC); 1-7 during the Feast, when MONTH is 13
+		return GameDayOfMonth()
 	case "MONTH":
 		return GameMonth()
 	case "YEAR":
@@ -1544,25 +1945,47 @@ func (sc *ScriptContext) getVar(name string) int {
 		return sc.Player.AgeTrue
 	// Form states
 	case "WOLFFORM":
-		if sc.Player.WolfForm { return 1 }
+		if sc.Player.WolfForm {
+			return 1
+		}
 		return 0
 	case "SLIMEFORM":
-		if sc.Player.SlimeForm { return 1 }
+		if sc.Player.SlimeForm {
+			return 1
+		}
 		return 0
 	case "OTHERFORM":
-		if sc.Player.WolfForm || sc.Player.SlimeForm || (sc.Player.Race == 8 && sc.Player.Hidden) { return 1 }
+		if sc.Player.WolfForm || sc.Player.SlimeForm || (sc.Player.Race == 8 && sc.Player.Hidden) {
+			return 1
+		}
 		return 0
 	case "UNDEAD":
-		if sc.Player.Undead { return 1 }
+		if sc.Player.IsUndead() {
+			return 1
+		}
 		return 0
 	case "DISGUISED":
-		if sc.Player.Disguised { return 1 }
+		if sc.Player.Disguised {
+			return 1
+		}
 		return 0
 	case "SLEEPING":
-		if sc.Player.Sleeping { return 1 }
+		// Same monster-context override as DEAD above — the sheep script's
+		// guaranteed-clip "sneak up on the sleeping sheep" branch checks this.
+		if sc.MonsterInst != nil {
+			if sc.MonsterInst.Sleeping {
+				return 1
+			}
+			return 0
+		}
+		if sc.Player.Sleeping {
+			return 1
+		}
 		return 0
 	case "SUBMITTING":
-		if sc.Player.Submitting { return 1 }
+		if sc.Player.Submitting {
+			return 1
+		}
 		return 0
 	case "ROUNDTIME":
 		if sc.Player.RoundTimeExpiry.After(time.Now()) {
@@ -1586,7 +2009,9 @@ func (sc *ScriptContext) getVar(name string) int {
 		}
 		return 0
 	case "ASTRAL":
-		if sc.Room != nil && sc.Room.Terrain == "ASTRAL" { return 1 }
+		if sc.Room != nil && sc.Room.Terrain == "ASTRAL" {
+			return 1
+		}
 		return 0
 	case "TERRAIN":
 		if sc.Room != nil {
@@ -1612,10 +2037,11 @@ func (sc *ScriptContext) getVar(name string) int {
 		return 0
 	case "DEPARTROOM":
 		return 0 // TODO: track last departure room
-	case "WEALTH1":
-		return sc.Player.Gold*100 + sc.Player.Silver*10 + sc.Player.Copper
-	case "WEALTH2", "WEALTH3", "WEALTH4", "WEALTH5", "WEALTH6", "WEALTH7", "WEALTH8", "WEALTH9":
-		return 0 // TODO: multi-currency per region
+	case "WEALTH1", "WEALTH2", "WEALTH3", "WEALTH4", "WEALTH5", "WEALTH6", "WEALTH7", "WEALTH8", "WEALTH9":
+		// GMSCRIPT.DOC: "WEALTH1..WEALTH9 — the amount of wealth they have of a
+		// particular type" — money type n, i.e. MONEYDEF n (currency.go). Plain
+		// WEALTH above is the base gold/silver/copper value in copper.
+		return sc.Player.Currencies[int(name[6]-'0')]
 	case "OBJWEIGHT":
 		if sc.ItemDef != nil {
 			w := sc.ItemDef.Weight
@@ -1719,6 +2145,19 @@ func (sc *ScriptContext) setVar(name string, val int) {
 			sc.NeedsSave = true
 			return
 		}
+		// ITEMBIT19 marks this room item as a durable container (see
+		// persistent_containers.go) — register/drop it in MongoDB the moment
+		// the bit is toggled, not just when its contents next change, so a
+		// chest flagged persistent but still empty isn't forgotten on restart.
+		// Synchronous, not "go" — a background write isn't guaranteed to finish
+		// before the process exits.
+		if idx == persistentContainerBit {
+			if val != 0 {
+				sc.Engine.savePersistentContainer(sc.Room.Number, sc.ItemRef.Ref, sc.Engine.roomContainerGet(sc.Room.Number, sc.ItemRef.Ref))
+			} else {
+				sc.Engine.deletePersistentContainer(sc.Room.Number, sc.ItemRef.Ref)
+			}
+		}
 		itemCopy := *sc.ItemRef
 		sc.Engine.notifyRoomChange(RoomChange{
 			RoomNumber: sc.Room.Number, Type: "item_update",
@@ -1726,12 +2165,20 @@ func (sc *ScriptContext) setVar(name string, val int) {
 		})
 		return
 	}
-	if strings.HasPrefix(name, "ITEMVAL") {
-		idx, err := strconv.Atoi(name[7:])
-		if err != nil || sc.ItemRef == nil {
+	if strings.HasPrefix(name, "ITEMVAL") || name == "ITEMCRAFTEDVALUE" {
+		if sc.ItemRef == nil {
 			return
 		}
+		idx := 0 // ITEMCRAFTEDVALUE
+		if name != "ITEMCRAFTEDVALUE" {
+			var err error
+			if idx, err = strconv.Atoi(name[7:]); err != nil {
+				return
+			}
+		}
 		switch idx {
+		case 0:
+			sc.ItemRef.CraftedValue = val
 		case 1:
 			sc.ItemRef.Val1 = val
 		case 2:
@@ -1753,6 +2200,7 @@ func (sc *ScriptContext) setVar(name string, val int) {
 				item.Val3 = sc.ItemRef.Val3
 				item.Val4 = sc.ItemRef.Val4
 				item.Val5 = sc.ItemRef.Val5
+				item.CraftedValue = sc.ItemRef.CraftedValue
 			}
 			for i := range sc.Player.Worn {
 				if sc.Player.Worn[i].Archetype == arch {
@@ -1809,10 +2257,14 @@ func (sc *ScriptContext) setVar(name string, val int) {
 	if strings.HasPrefix(name, "FLAG") {
 		idx, _ := strconv.Atoi(name[4:])
 		switch idx {
-		case 1: sc.Player.Flag1 = val
-		case 2: sc.Player.Flag2 = val
-		case 3: sc.Player.Flag3 = val
-		case 4: sc.Player.Flag4 = val
+		case 1:
+			sc.Player.Flag1 = val
+		case 2:
+			sc.Player.Flag2 = val
+		case 3:
+			sc.Player.Flag3 = val
+		case 4:
+			sc.Player.Flag4 = val
 		}
 		sc.NeedsSave = true
 		return
@@ -1866,6 +2318,13 @@ func (sc *ScriptContext) setVar(name string, val int) {
 		sc.Player.Silver = (val % 100) / 10
 		sc.Player.Copper = val % 10
 		sc.NeedsSave = true
+	case "WEALTH1", "WEALTH2", "WEALTH3", "WEALTH4", "WEALTH5", "WEALTH6", "WEALTH7", "WEALTH8", "WEALTH9":
+		// Money type n (currency.go) — see getVar.
+		if sc.Player.Currencies == nil {
+			sc.Player.Currencies = map[int]int{}
+		}
+		sc.Player.Currencies[int(name[6]-'0')] = max(val, 0)
+		sc.NeedsSave = true
 	default:
 		// Check named global variables (DANWATER, TECHSWITCH, etc.)
 		if sc.Engine.namedVarNames[name] {
@@ -1880,7 +2339,6 @@ func (sc *ScriptContext) setVar(name string, val int) {
 		}
 	}
 }
-
 
 // resolveNumericArg resolves a script argument that can be a literal number
 // or any variable reference (ITEMVAL2, CARRIAGEROOM, DUMMY1, etc.).
@@ -1923,18 +2381,19 @@ func (sc *ScriptContext) evalIfCarry(args []string) bool {
 			return false
 		}
 		sc.ItemRef = &gameworld.RoomItem{
-			Ref:       -1,
-			Archetype: w.Archetype,
-			Adj1:      w.Adj1,
-			Adj2:      w.Adj2,
-			Adj3:      w.Adj3,
-			Val1:      w.Val1,
-			Val2:      w.Val2,
-			Val3:      w.Val3,
-			Val4:      w.Val4,
-			Val5:      w.Val5,
-			ItemBits:  w.ItemBits,
-			State:     w.State,
+			Ref:          -1,
+			Archetype:    w.Archetype,
+			Adj1:         w.Adj1,
+			Adj2:         w.Adj2,
+			Adj3:         w.Adj3,
+			Val1:         w.Val1,
+			Val2:         w.Val2,
+			Val3:         w.Val3,
+			Val4:         w.Val4,
+			Val5:         w.Val5,
+			CraftedValue: w.CraftedValue,
+			ItemBits:     w.ItemBits,
+			State:        w.State,
 		}
 		return true
 	}
@@ -1958,9 +2417,9 @@ func (sc *ScriptContext) evalIfCarry(args []string) bool {
 					sc.ItemRef = &gameworld.RoomItem{
 						Ref: -1, Archetype: ii.Archetype,
 						Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-						Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+						Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 						ItemBits: ii.ItemBits,
-						State: ii.State,
+						State:    ii.State,
 					}
 					if sc.Engine != nil {
 						sc.ItemDef = sc.Engine.items[ii.Archetype]
@@ -2037,8 +2496,15 @@ func (sc *ScriptContext) doAffect(args []string) {
 }
 
 // doRandom sets a variable to a random value.
-// Syntax: RANDOM <var> <min> <max> [seed]
-// Produces a uniformly random integer in [min, max] inclusive.
+// Syntax: RANDOM <var> <min> <max> [base]
+// Produces a uniformly random integer in [min, max] inclusive, plus an optional
+// base offset added to the result. The 4th arg is NOT a PRNG seed — scripts use
+// it to shift the roll into an absolute range, e.g. EVILFAYD.SCR's
+// "RANDOM ICDUMMY2 1 24 1069" picks a Fayd-region room number in [1070, 1093]
+// for AFFECT, and DNAB2.SCR's "RANDOM DUMMY1 1 15 14" (offset 15-29) is a
+// flattened stand-in for the sibling branch's rand(1,15)+rand(1,14) sum. It may
+// itself be a variable reference (e.g. "RANDOM hurtme 1 30 ifailed"), so it's
+// resolved the same way other numeric args are.
 func (sc *ScriptContext) doRandom(args []string) {
 	if len(args) < 3 {
 		return
@@ -2052,7 +2518,11 @@ func (sc *ScriptContext) doRandom(args []string) {
 	if err != nil || max < min {
 		return
 	}
-	sc.setVar(varName, min+rand.Intn(max-min+1))
+	base := 0
+	if len(args) >= 4 {
+		base = sc.resolveNumericArg(args[3])
+	}
+	sc.setVar(varName, base+min+rand.Intn(max-min+1))
 }
 
 // doSkillCheck performs a skill-based check and stores the result in a variable.
@@ -2076,7 +2546,7 @@ func (sc *ScriptContext) doSkillCheck(args []string) {
 
 	// Base 50% success; each skill rank adds 5%; modifier subtracts from target.
 	// Clamped to [5%, 95%] so there is always some uncertainty.
-	target := 50 + skillLevel*5 - modifier
+	target := 50 + skillLevel*5 - modifier + unemoteSkillBonus(sc.Player)
 	if target > 95 {
 		target = 95
 	} else if target < 5 {
@@ -2115,6 +2585,35 @@ func (sc *ScriptContext) doDamagePlr(args []string) {
 	}
 }
 
+// doAward handles AWARD <id> <xp> — a one-time experience award (e.g. DEEP1.SCR room
+// 1772's IFENTRY: "AWARD 57 2500" on first entering the natural bridge). <id> is a
+// globally unique award identifier (not an INTNUM/FLAG variable — see AwardFlags on
+// Player) that gates the grant to once ever per player, no matter how many times the
+// triggering room/event is re-entered. The same id is reused across seasonal or
+// indoor/outdoor script variants of the same physical place/event (e.g. AWARD 13 10000
+// appears identically in AUTOUT/OUTDOOR/SPRIOUT/SUMOUT/WINOUT.SCR, and AWARD 4 100 in
+// both FAYDINDR.SCR and NEWBIE.SCR's Adventurers' Guild), so completing it once through
+// any variant correctly prevents re-earning it through another.
+func (sc *ScriptContext) doAward(args []string) {
+	if len(args) < 2 {
+		return
+	}
+	id, err := strconv.Atoi(args[0])
+	if err != nil {
+		return
+	}
+	amount := sc.resolveScriptArg(args[1])
+	if sc.Player.AwardFlags == nil {
+		sc.Player.AwardFlags = make(map[int]bool)
+	}
+	if sc.Player.AwardFlags[id] {
+		return
+	}
+	sc.Player.AwardFlags[id] = true
+	sc.Player.Experience += amount
+	sc.Messages = append(sc.Messages, fmt.Sprintf("You have been awarded %d experience points.", amount))
+}
+
 // doStrCvt converts a variable to a string for %0-%9 substitution.
 func (sc *ScriptContext) doStrCvt(args []string) {
 	if len(args) < 2 {
@@ -2130,6 +2629,25 @@ func (sc *ScriptContext) doStrCvt(args []string) {
 		sc.StrVars = make(map[int]string)
 	}
 	sc.StrVars[digit] = strconv.Itoa(val)
+}
+
+// doAdjCvt stores an adjective's text in a string variable: ADJCVT <digit> <adj>,
+// where <adj> is an adjective number or any numeric variable holding one (e.g.
+// ITEMADJ3, ITEMVAL4, DUMMY1). "ADJCVT 0 ITEMADJ1" then "ECHO PLAYER It is %0."
+// prints the word ("crimson") where STRCVT would print the number. An empty or
+// unknown adjective number stores an empty string.
+func (sc *ScriptContext) doAdjCvt(args []string) {
+	if len(args) < 2 {
+		return
+	}
+	digit, err := strconv.Atoi(args[0])
+	if err != nil || digit < 0 || digit > 9 {
+		return
+	}
+	if sc.StrVars == nil {
+		sc.StrVars = make(map[int]string)
+	}
+	sc.StrVars[digit] = sc.Engine.getAdjName(sc.resolveScriptArg(args[1]))
 }
 
 // doStrCpy sets a string variable directly: STRCPY <digit> "<text>"
@@ -2262,13 +2780,30 @@ func (sc *ScriptContext) doGenMon(args []string) {
 		return
 	}
 	if sc.Engine.monsterMgr != nil {
-		sc.Engine.monsterMgr.SpawnOne(monNum, sc.Room.Number, def.Body, def.Mana)
+		sc.Engine.monsterMgr.SpawnOne(monNum, sc.Room.Number, def.Body, def.Mana, def.Psi)
 		name := FormatMonsterName(def, sc.Engine.monAdjs)
 		genText := def.TextOverrides["TEXG"]
 		if genText == "" {
 			genText = fmt.Sprintf("A %s appears!", name)
 		}
-		sc.RoomMsgs = append(sc.RoomMsgs, genText)
+		// A monster appearing is always announced to everyone in its room. The spawn
+		// line used to go only into RoomMsgs — everyone *except* the triggering player,
+		// so they never saw it appear — and after an AFFECT (or from a CEVENT, whose
+		// placeholder Player is in no room) it went to the wrong room entirely.
+		switch {
+		case sc.Player.RoomNumber != sc.Room.Number:
+			sc.Engine.roomNotice(sc.Room.Number, "", []string{genText})
+		case sc.Player.IsConcealed():
+			// A hidden/invisible player's RoomMsgs are dropped at the api concealment
+			// choke point, but the monster's arrival reveals nothing about them, so the
+			// room still hears it — directly, minus the player, who gets it in order below.
+			sc.Messages = append(sc.Messages, genText)
+			sc.Engine.roomNotice(sc.Room.Number, sc.Player.FirstName, []string{genText})
+		default:
+			// Same routing as ECHO ALL, so it stays in order with the script's own echoes.
+			sc.Messages = append(sc.Messages, genText)
+			sc.RoomMsgs = append(sc.RoomMsgs, genText)
+		}
 		sc.Engine.Events.Publish("monster", fmt.Sprintf("GENMON: %s spawned in room %d", name, sc.Room.Number))
 	}
 }
@@ -2281,12 +2816,23 @@ func (sc *ScriptContext) doCallPack() {
 }
 
 // doNewPut handles NEWPUT ref archetype [key=value...] — places item inside a container in the room.
+// The archetype and every key value may be a number or any numeric variable
+// (ARCHNUM, ITEMADJ1, ITEMVAL1, DUMMY3...), so a container's IFPREVERB2 PUT
+// script can store a copy of whatever was put in:
+//
+//	NEWPUT 0 ARCHNUM ADJ1=ITEMADJ1 ADJ2=ITEMADJ2 ADJ3=ITEMADJ3 VAL1=ITEMVAL1
+//
+// CRAFTEDVALUE=n sets the copy's CraftedValue (see ITEMCRAFTEDVALUE); it starts at 0.
+// Variable support is our addition; the original scripts only use numbers.
 func (sc *ScriptContext) doNewPut(args []string) {
 	if len(args) < 2 {
 		return
 	}
 	ref, _ := strconv.Atoi(args[0])
-	archetype, _ := strconv.Atoi(args[1])
+	archetype := sc.resolveScriptArg(args[1])
+	if archetype <= 0 {
+		return
+	}
 	item := gameworld.RoomItem{Ref: ref, Archetype: archetype, IsPut: true}
 	for _, arg := range args[2:] {
 		parts := strings.SplitN(arg, "=", 2)
@@ -2294,7 +2840,7 @@ func (sc *ScriptContext) doNewPut(args []string) {
 			continue
 		}
 		key := strings.ToUpper(parts[0])
-		val, _ := strconv.Atoi(parts[1])
+		val := sc.resolveScriptArg(parts[1])
 		switch key {
 		case "ADJ1":
 			item.Adj1 = val
@@ -2312,6 +2858,8 @@ func (sc *ScriptContext) doNewPut(args []string) {
 			item.Val4 = val
 		case "VAL5":
 			item.Val5 = val
+		case "CRAFTEDVALUE":
+			item.CraftedValue = val
 		}
 	}
 	// Find the PutIn target ref
@@ -2319,6 +2867,25 @@ func (sc *ScriptContext) doNewPut(args []string) {
 		for i := range sc.Room.Items {
 			if sc.Room.Items[i].Ref == ref && !sc.Room.Items[i].IsPut {
 				item.PutIn = ref
+				// A real container: store the item in the runtime contents map, the
+				// same place a player's PUT goes, rather than as an IsPut room item.
+				// Only roomContainerSet writes through to a persistent (ITEMBIT19)
+				// container's MongoDB record, so IsPut items vanished on reboot —
+				// e.g. room 9006's cabinet and cooler (witchystuff.scr), which take
+				// the player's item and NEWPUT a copy, lost everything, while the
+				// rack, filled by plain PUT, kept its pelts. LOOK IN, GET, IFIN and
+				// the dye search all read this store already.
+				if sc.Engine != nil && sc.Engine.items[sc.Room.Items[i].Archetype] != nil && isContainerDef(sc.Engine.items[sc.Room.Items[i].Archetype]) {
+					contents := sc.Engine.roomContainerGet(sc.Room.Number, ref)
+					contents = append(contents, InventoryItem{
+						Archetype: item.Archetype,
+						Adj1:      item.Adj1, Adj2: item.Adj2, Adj3: item.Adj3,
+						Val1: item.Val1, Val2: item.Val2, Val3: item.Val3, Val4: item.Val4, Val5: item.Val5,
+						CraftedValue: item.CraftedValue,
+					})
+					sc.Engine.roomContainerSet(sc.Room.Number, ref, contents)
+					return
+				}
 				break
 			}
 		}
@@ -2327,6 +2894,11 @@ func (sc *ScriptContext) doNewPut(args []string) {
 }
 
 // evalIfIn checks if a container in the room holds an item of the given archetype.
+// Checks both script-authored starting contents (RoomItem.IsPut/PutIn) and
+// anything a player has PUT into the container at runtime, which lives instead
+// in the engine's dynamic roomContainerContents map (see the room-container PUT
+// path in doPut, containers.go) — without the second check, IFIN would only ever
+// see contents the script started with, never anything a player actually put there.
 func (sc *ScriptContext) evalIfIn(args []string) bool {
 	if len(args) < 2 || sc.Room == nil {
 		return false
@@ -2340,6 +2912,13 @@ func (sc *ScriptContext) evalIfIn(args []string) bool {
 	for _, ri := range sc.Room.Items {
 		if ri.IsPut && ri.PutIn == containerRef && ri.Archetype == archNum {
 			return true
+		}
+	}
+	if sc.Engine != nil {
+		for _, ci := range sc.Engine.roomContainerGet(sc.Room.Number, containerRef) {
+			if ci.Archetype == archNum {
+				return true
+			}
 		}
 	}
 	return false
@@ -2418,6 +2997,9 @@ func (sc *ScriptContext) doRoutine(args []string) {
 		sc.applyItemSpellOnPlayer(spell)
 	case 2:
 		sc.Player.PreparedSpell = spellID
+		sc.Player.PreparedSpellReagentArch = 0
+		sc.Player.PreparedMoonstoneBonus = false
+		sc.Player.PreparedWormScaleBonus = false
 		sc.Messages = append(sc.Messages, fmt.Sprintf("The %s glows briefly. %s is prepared for casting. (CAST to release it.)", itemNoun, spell.Name))
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("The %s in %s's hands glows briefly.", itemNoun, sc.Player.FirstName))
 	}
@@ -2461,6 +3043,35 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			healMax = healMin + 1
 		}
 		amount := healMin + rand.Intn(healMax-healMin+1)
+		// Reconstruction (337) only heals the undead; it fizzles on the living.
+		if spell.ID == 337 {
+			if !player.IsUndead() {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item channels %s, but the spell fizzles — you are not undead.", spell.Name))
+				return
+			}
+			player.BodyPoints += amount
+			if player.BodyPoints > player.MaxBodyPoints {
+				player.BodyPoints = player.MaxBodyPoints
+			}
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item channels %s, knitting your undead flesh back together, healing %d points. [BP: %d/%d]", spell.Name, amount, player.BodyPoints, player.MaxBodyPoints))
+			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s is bathed in dark energy.", player.FirstName))
+			return
+		}
+		// Body Restoration I/II/III (316/317/318) sear the undead with holy energy instead of healing them.
+		if (spell.ID == 316 || spell.ID == 317 || spell.ID == 318) && player.IsUndead() {
+			player.BodyPoints -= amount
+			rawBP := player.BodyPoints
+			if player.BodyPoints < 0 {
+				player.BodyPoints = 0
+			}
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item channels %s, but your undead flesh sears with holy energy! [-%d BP]", spell.Name, amount))
+			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s cries out in pain!", player.FirstName))
+			if rawBP <= 0 {
+				outcomeMsgs, _ := sc.Engine.resolveDirectHitOutcome(player, rawBP, "the necromantic backlash")
+				sc.Messages = append(sc.Messages, outcomeMsgs...)
+			}
+			return
+		}
 		// Invigoration spells restore fatigue
 		if spell.ID == 334 || spell.ID == 335 {
 			player.Fatigue += amount
@@ -2479,7 +3090,16 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 
 	case "defense":
 		mins, _ := applyTimedDefenseBuff(player, spell)
-		sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d defense, %d minutes)", spell.Name, spell.DefBonus, mins))
+		switch spell.ID {
+		case 229: // Wizard's Armor — wards a prepared spell, no defense bonus
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! Your concentration is warded against disruption. (%d minutes)", spell.Name, mins))
+		case 234: // Spell Shield — magic resistance, no defense bonus
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! An antimagical field emanates from you. (%d minutes)", spell.Name, mins))
+		case 235: // Cloak Mind — psi resistance, no defense bonus
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You seem changed. (%d minutes)", spell.Name, mins))
+		default:
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d defense, %d minutes)", spell.Name, spell.DefBonus, mins))
+		}
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A shimmer of protective energy surrounds %s.", player.FirstName))
 
 	case "damage":
@@ -2530,7 +3150,8 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You fade from sight.", spell.Name))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s fades from sight.", player.FirstName))
 		case 347: // Divine Blessing
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You feel divinely blessed.", spell.Name))
+			applyDivineBlessingBuff(player)
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, 1 minute)", spell.Name))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A warm golden light briefly surrounds %s.", player.FirstName))
 		case 506: // Resist Weather
 			mins, applied := applyElementalShield(&player.ResistWeatherExpiry)
@@ -2645,23 +3266,47 @@ func (sc *ScriptContext) expandScriptText(text string) string {
 		text = strings.ReplaceAll(text, "%A", capitalize(itemName))
 		text = strings.ReplaceAll(text, "%a", itemName)
 	}
+	// Second item in a two-item IFPREVERB2 interaction (see SecondItemName)
+	if sc.SecondItemName != "" {
+		text = strings.ReplaceAll(text, "%B", capitalize(sc.SecondItemName))
+		text = strings.ReplaceAll(text, "%b", sc.SecondItemName)
+	}
 	// Monster name (empty for now)
 	text = strings.ReplaceAll(text, "%m", "")
 	// Newline
 	text = strings.ReplaceAll(text, "%c", "\n")
-	// Gender-based pronouns (canonical from manual)
+	// Gender-based pronouns (canonical from manual). Uppercase variants (%H/%S/%I)
+	// are the same pronouns capitalized for sentence-initial use, e.g. item 905's
+	// "APPEAR %H pants cling snugly to %h fanny." (ITEM2.SCR) — previously left as
+	// a literal "%H" in the text since only the lowercase forms were replaced.
 	if sc.Player.Gender == 0 {
 		text = strings.ReplaceAll(text, "%h", "his")
 		text = strings.ReplaceAll(text, "%s", "he")
 		text = strings.ReplaceAll(text, "%i", "him")
+		text = strings.ReplaceAll(text, "%H", "His")
+		text = strings.ReplaceAll(text, "%S", "He")
+		text = strings.ReplaceAll(text, "%I", "Him")
 	} else {
 		text = strings.ReplaceAll(text, "%h", "her")
 		text = strings.ReplaceAll(text, "%s", "she")
 		text = strings.ReplaceAll(text, "%i", "her")
+		text = strings.ReplaceAll(text, "%H", "Her")
+		text = strings.ReplaceAll(text, "%S", "She")
+		text = strings.ReplaceAll(text, "%I", "Her")
 	}
 	// Legacy aliases
-	text = strings.ReplaceAll(text, "%e", func() string { if sc.Player.Gender == 0 { return "he" }; return "she" }())
-	text = strings.ReplaceAll(text, "%o", func() string { if sc.Player.Gender == 0 { return "him" }; return "her" }())
+	text = strings.ReplaceAll(text, "%e", func() string {
+		if sc.Player.Gender == 0 {
+			return "he"
+		}
+		return "she"
+	}())
+	text = strings.ReplaceAll(text, "%o", func() string {
+		if sc.Player.Gender == 0 {
+			return "him"
+		}
+		return "her"
+	}())
 	// STRCVT %0-%9
 	if sc.StrVars != nil {
 		for i := 0; i <= 9; i++ {

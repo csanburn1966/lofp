@@ -51,6 +51,9 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	// Normal movement reveals hidden players (but not Ethereal Projection — that's psi-maintained)
 	if player.Hidden && !player.EtherealActive {
 		player.Hidden = false
@@ -93,7 +96,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 
 	player.RoomNumber = destNum
 	player.Submitting = false // moving clears submit state
-	e.disengageCombat(player) // moving clears combat
+	e.disengageCombat(player) // moving clears any non-melee combat lock
 	player.GuardTargets = nil // guard is room-specific
 	player.GuardPortals = nil
 	player.GuardItems = nil
@@ -119,21 +122,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// If this happened after doLook (as it used to), the leader's own room
 	// render would list who's present in destNum before the group/summons had
 	// actually been moved there, making it look like they didn't follow.
-	var movedFollowers []*Player
-	if player.IsGroupLeader && len(player.GroupMembers) > 0 && e.sessions != nil {
-		for _, memberName := range player.GroupMembers {
-			for _, p := range e.sessions.OnlinePlayers() {
-				if p.FirstName == memberName && p.RoomNumber == originalRoom && !p.Dead {
-					p.RoomNumber = destNum
-					p.Submitting = false
-					e.disengageCombat(p)
-					e.SavePlayer(ctx, p)
-					movedFollowers = append(movedFollowers, p)
-					break
-				}
-			}
-		}
-	}
+	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
 		e.monsterMgr.mu.Lock()
@@ -231,15 +220,17 @@ func (e *GameEngine) EnterRoom(ctx context.Context, player *Player) *CommandResu
 	weather := strings.ToLower(e.GetRoomWeather(player.RoomNumber))
 	var timeMsg string
 	if weather != "" {
-		timeMsg = fmt.Sprintf("It is %s %d, %d. It is %s. %s",
-			GameMonthName(), GameDay()%28+1, GameYear(), period, weather)
+		timeMsg = fmt.Sprintf("It is %s. It is %s. %s", GameDateText(), period, weather)
 	} else {
-		timeMsg = fmt.Sprintf("It is %s %d, %d. It is %s.",
-			GameMonthName(), GameDay()%28+1, GameYear(), period)
+		timeMsg = fmt.Sprintf("It is %s. It is %s.", GameDateText(), period)
 	}
 
 	result := e.doLook(player)
 	result.Messages = append([]string{timeMsg}, result.Messages...)
+	if len(player.LoginNotices) > 0 {
+		result.Messages = append(append([]string{}, player.LoginNotices...), result.Messages...)
+		player.LoginNotices = nil
+	}
 	room := e.rooms[player.RoomNumber]
 	if room != nil {
 		e.applyEntryScripts(ctx, player, room, result)
@@ -301,24 +292,13 @@ func (e *GameEngine) applySeasonalRooms() {
 	for i := range rooms {
 		r := &rooms[i]
 		if existing := e.rooms[r.Number]; existing != nil {
-			// Override description and terrain but preserve dynamic state
-			existing.Name = r.Name
-			existing.Description = r.Description
-			existing.Terrain = r.Terrain
-			existing.Exits = r.Exits
-			existing.MonsterGroup = r.MonsterGroup
-			if len(r.Items) > 0 {
-				existing.Items = r.Items
+			// A room a live GM script has replaced (e.g. HALLOWEEN2026.SCR's cemetery)
+			// keeps the script's version; withdrawing the script restores the base room
+			// with the then-current season (see revertScriptEntities).
+			if base, ok := e.baseRooms[r.Number]; ok && base != existing {
+				continue
 			}
-			if len(r.Modifiers) > 0 {
-				existing.Modifiers = r.Modifiers
-			}
-			if len(r.ItemDescriptions) > 0 {
-				existing.ItemDescriptions = r.ItemDescriptions
-			}
-			if len(r.Scripts) > 0 {
-				existing.Scripts = r.Scripts
-			}
+			applySeasonalRoomOverride(existing, r)
 			count++
 		} else {
 			// New room from seasonal script
@@ -328,6 +308,28 @@ func (e *GameEngine) applySeasonalRooms() {
 	}
 	if count > 0 {
 		log.Printf("Applied %d seasonal room overrides for %s", count, SeasonName())
+	}
+}
+
+// applySeasonalRoomOverride copies one seasonal room definition onto a live room:
+// description and terrain change, dynamic state is preserved.
+func applySeasonalRoomOverride(existing, r *gameworld.Room) {
+	existing.Name = r.Name
+	existing.Description = r.Description
+	existing.Terrain = r.Terrain
+	existing.Exits = r.Exits
+	existing.MonsterGroup = r.MonsterGroup
+	if len(r.Items) > 0 {
+		existing.Items = r.Items
+	}
+	if len(r.Modifiers) > 0 {
+		existing.Modifiers = r.Modifiers
+	}
+	if len(r.ItemDescriptions) > 0 {
+		existing.ItemDescriptions = r.ItemDescriptions
+	}
+	if len(r.Scripts) > 0 {
+		existing.Scripts = r.Scripts
 	}
 }
 
@@ -371,7 +373,8 @@ func (e *GameEngine) applyEntryScripts(ctx context.Context, player *Player, room
 	e.spawnForRoom(room.Number)
 
 	// Check if hostile monsters should aggro on the player entering the room
-	go e.monsterCheckAggro(player, room.Number)
+	// (after an aggroDelay (3s) wait — see scheduleEntryAggro)
+	e.scheduleEntryAggro(player, room.Number)
 }
 
 // scheduleScriptSegments fires SETEVENT/CONTEVENT-deferred script segments in background goroutines.
@@ -428,9 +431,13 @@ func (e *GameEngine) scheduleScriptSegments(player *Player, segments []ScriptSeg
 	}
 }
 
+// doSteal handles STEAL/FILCH. An item's own IFPREVERB STEAL script wins first
+// (some alley portals use STEAL as a sneak-through verb); otherwise STEAL <floor
+// item> is a FILCH, STEAL <player|creature> picks a pocket, and a bare STEAL
+// robs the store — see legerdemain.go.
 func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Steal what?"}}
+		return e.doRob(ctx, player, nil)
 	}
 	target := strings.ToLower(strings.Join(args, " "))
 	room := e.rooms[player.RoomNumber]
@@ -455,37 +462,10 @@ func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string)
 			skip--
 			continue
 		}
-		sc := e.RunPreverbScripts(player, room, "STEAL", &room.Items[i], itemDef)
-		// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
-		// after the delay is lost.
-		if len(sc.DeferredSegments) > 0 {
-			e.scheduleScriptSegments(player, sc.DeferredSegments)
-		}
-		result := &CommandResult{}
-		result.Messages = append(result.Messages, sc.Messages...)
-		result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
-		result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
-		if sc.MoveGroupTo > 0 {
-			e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
-			return result
-		}
-		if sc.MoveTo > 0 {
-			dest := e.rooms[sc.MoveTo]
-			if dest != nil {
-				originalRoom := player.RoomNumber
-				player.RoomNumber = sc.MoveTo
-				e.SavePlayer(ctx, player)
-				lookResult := e.doLook(player)
-				result.Messages = append(result.Messages, lookResult.Messages...)
-				result.RoomName = lookResult.RoomName
-				result.RoomDesc = lookResult.RoomDesc
-				result.Exits = lookResult.Exits
-				result.Items = lookResult.Items
-				result.OldRoom = originalRoom
-				result.OldRoomMsg = []string{fmt.Sprintf("%s slips away.", player.DisplayNameCap())}
-				result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s slips in from somewhere.", player.DisplayNameCap()))
-				e.applyEntryScripts(ctx, player, dest, result)
-			}
+		result, reacted := e.runStealItemScripts(ctx, player, room, &room.Items[i], itemDef)
+		if !reacted {
+			// No STEAL script reacted — it's an ordinary item on the floor.
+			return e.doFilch(ctx, player, args)
 		}
 		if len(result.Messages) == 0 {
 			result.Messages = []string{"You can't steal that."}
@@ -493,8 +473,82 @@ func (e *GameEngine) doSteal(ctx context.Context, player *Player, args []string)
 		return result
 	}
 
-	// No scripted item matched — pick-pockets / creature steal (TODO)
-	return &CommandResult{Messages: []string{"[Stealing from creatures coming soon.]"}}
+	// Coin piles (State MONEY) have no item definition, so the loop above never
+	// sees them.
+	switch target {
+	case "coins", "coin", "money", "gold", "silver", "copper":
+		for _, ri := range room.Items {
+			if ri.State == "MONEY" {
+				return e.doFilch(ctx, player, args)
+			}
+		}
+	}
+
+	// Not a floor item — pick a player's or creature's pocket.
+	return e.doRob(ctx, player, args)
+}
+
+// runStealItemScripts runs a room item's IFPREVERB STEAL scripts — the verb the
+// original alley items (ITEM6.SCR 692, JANUS1.SCR) use for sneaking in, as opposed
+// to GO, which walks in openly. reacted is false when no script produced output,
+// blocked, or moved the player, i.e. the item has no STEAL behavior. Shared by
+// STEAL <item> and SNEAK <item>.
+func (e *GameEngine) runStealItemScripts(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef) (result *CommandResult, reacted bool) {
+	// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
+	// immediately, so reading it after script execution would give the new room).
+	originalRoom := player.RoomNumber
+	sc := e.RunPreverbScripts(player, room, "STEAL", ri, itemDef)
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+	// after the delay is lost.
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
+	result = &CommandResult{}
+	result.Messages = append(result.Messages, sc.Messages...)
+	result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
+	result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+	if sc.MoveGroupTo > 0 {
+		e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
+		return result, true
+	}
+	if sc.MoveTo > 0 {
+		dest := e.rooms[sc.MoveTo]
+		if dest != nil {
+			player.RoomNumber = sc.MoveTo
+			e.SavePlayer(ctx, player)
+			lookResult := e.doLook(player)
+			result.Messages = append(result.Messages, lookResult.Messages...)
+			result.RoomName = lookResult.RoomName
+			result.RoomDesc = lookResult.RoomDesc
+			result.Exits = lookResult.Exits
+			result.Items = lookResult.Items
+			result.OldRoom = originalRoom
+			result.OldRoomMsg = []string{fmt.Sprintf("%s slips away.", player.DisplayNameCap())}
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s slips in from somewhere.", player.DisplayNameCap()))
+			e.applyEntryScripts(ctx, player, dest, result)
+		}
+	}
+	reacted = len(result.Messages) > 0 || len(result.RoomBroadcast) > 0 || sc.Blocked
+	return result, reacted
+}
+
+// revealForOpenMove un-hides a hidden player who is about to walk through a
+// portal or scripted item with GO — the open way in, which reveals you just like
+// a compass move does (doMove); SNEAK is the stealthy way. It's done before the
+// item's scripts run so their ECHO OTHERS lines (e.g. the alley's "%N ducks into
+// an opening") aren't suppressed as a concealed player's. The returned func, to be
+// deferred, re-hides them if they never actually left originalRoom (blocked, closed,
+// guarded...). Ethereal Projection is psi-maintained and unaffected, as in doMove.
+func revealForOpenMove(player *Player, originalRoom int) func() {
+	if !player.Hidden || player.EtherealActive {
+		return func() {}
+	}
+	player.Hidden = false
+	return func() {
+		if player.RoomNumber == originalRoom {
+			player.Hidden = true
+		}
+	}
 }
 
 func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -559,77 +613,142 @@ func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *C
 		// would report the destination instead of the room being left.
 		originalRoom := player.RoomNumber
 		riCopy := ri
-		sc := e.RunPreverbScripts(player, room, "GO", &riCopy, itemDef)
-		sc2 := e.RunVerbScripts(player, room, "GO", &riCopy, itemDef)
-		// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
-		// after the delay is lost — regardless of which branch below is taken.
-		for _, segs := range [][]ScriptSegment{sc.DeferredSegments, sc2.DeferredSegments} {
-			if len(segs) > 0 {
-				e.scheduleScriptSegments(player, segs)
-			}
+		return e.runGoItemScripts(ctx, player, room, &riCopy, itemDef, originalRoom)
+	}
+
+	// Not on the floor — check inventory, worn, wielded, and off-hand items. Some
+	// portable items script their own "enter" behavior on GO rather than being a
+	// PORTAL-type item (e.g. item 1290's bedroll: "IFVERB GO -1" unzips it, crawls
+	// inside, and MOVEs the player to a pocket room) — without this, "GO bedroll"
+	// always fell through to "You don't see that here." since only room.Items was
+	// ever checked. Portal-type items are never carried, so there's no isPortal
+	// branch here like the room-item loop above.
+	allPlayerItems := make([]InventoryItem, 0, len(player.Inventory)+len(player.Worn)+2)
+	allPlayerItems = append(allPlayerItems, player.Inventory...)
+	allPlayerItems = append(allPlayerItems, player.Worn...)
+	if player.Wielded != nil {
+		allPlayerItems = append(allPlayerItems, *player.Wielded)
+	}
+	if player.OffHand != nil {
+		allPlayerItems = append(allPlayerItems, *player.OffHand)
+	}
+	for _, ii := range allPlayerItems {
+		itemDef := e.items[ii.Archetype]
+		if itemDef == nil {
+			continue
 		}
-		result := &CommandResult{}
-		result.Messages = append(result.Messages, sc.Messages...)
-		result.Messages = append(result.Messages, sc2.Messages...)
-		result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
-		result.RoomBroadcast = append(result.RoomBroadcast, sc2.RoomMsgs...)
-		result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
-		result.GMBroadcast = append(result.GMBroadcast, sc2.GMMsgs...)
-		if sc.NeedsSave || sc2.NeedsSave {
-			e.SavePlayer(ctx, player)
+		name := e.getItemNounName(itemDef)
+		if !matchesTarget(name, target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			continue
 		}
-		moveTo := sc.MoveTo
-		if sc2.MoveTo > 0 {
-			moveTo = sc2.MoveTo
+		if skip > 0 {
+			skip--
+			continue
 		}
-		blocked := (sc.Blocked || sc2.Blocked)
-		moveGroupTo := sc.MoveGroupTo
-		if sc2.MoveGroupTo > 0 {
-			moveGroupTo = sc2.MoveGroupTo
+		originalRoom := player.RoomNumber
+		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
+			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
+			ItemBits: ii.ItemBits, State: ii.State, Extend: ii.Tail}
+		return e.runGoItemScripts(ctx, player, room, &tempRI, itemDef, originalRoom)
+	}
+
+	return &CommandResult{Messages: []string{"You don't see that here."}}
+}
+
+// runGoItemScripts runs a targeted (non-portal) item's IFPREVERB/IFVERB GO scripts
+// — ri may be a real room item or a temporary Ref=-1 stand-in for an inventory/
+// worn/wielded/off-hand item — and turns the result into a CommandResult, handling
+// MOVE/MOVEGROUP/CLEARVERB the same way regardless of where the item was found.
+func (e *GameEngine) runGoItemScripts(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef, originalRoom int) *CommandResult {
+	defer revealForOpenMove(player, originalRoom)()
+	// runNestedItemVerbScripts is the only walk that reaches an IFVERB nested
+	// inside a top-level IFITEM/IFNOITEM wrapper (e.g. item 1290's bedroll:
+	// "IFITEM -1 OPEN ... IFVERB GO -1 ... ENDIF", see SHANTA.SCR) — RunPreverbScripts
+	// finds the same wrapper but its preverb-mode guard skips re-firing the nested
+	// IFVERB, and RunVerbScripts never descends into wrappers at all. See its doc
+	// comment for why this isn't just folded into the shared RunItemScripts.
+	sc0 := e.runNestedItemVerbScripts(player, room, "GO", ri, itemDef)
+	sc := e.RunPreverbScripts(player, room, "GO", ri, itemDef)
+	sc2 := e.RunVerbScripts(player, room, "GO", ri, itemDef)
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+	// after the delay is lost — regardless of which branch below is taken.
+	for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, sc.DeferredSegments, sc2.DeferredSegments} {
+		if len(segs) > 0 {
+			e.scheduleScriptSegments(player, segs)
 		}
-		if moveGroupTo > 0 {
-			e.moveGroupToRoom(ctx, player.RoomNumber, moveGroupTo)
-			return result
+	}
+	result := &CommandResult{}
+	result.Messages = append(result.Messages, sc0.Messages...)
+	result.Messages = append(result.Messages, sc.Messages...)
+	result.Messages = append(result.Messages, sc2.Messages...)
+	result.RoomBroadcast = append(result.RoomBroadcast, sc0.RoomMsgs...)
+	result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
+	result.RoomBroadcast = append(result.RoomBroadcast, sc2.RoomMsgs...)
+	result.GMBroadcast = append(result.GMBroadcast, sc0.GMMsgs...)
+	result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+	result.GMBroadcast = append(result.GMBroadcast, sc2.GMMsgs...)
+	if sc0.NeedsSave || sc.NeedsSave || sc2.NeedsSave {
+		e.SavePlayer(ctx, player)
+	}
+	moveTo := sc0.MoveTo
+	if sc.MoveTo > 0 {
+		moveTo = sc.MoveTo
+	}
+	if sc2.MoveTo > 0 {
+		moveTo = sc2.MoveTo
+	}
+	blocked := (sc0.Blocked || sc.Blocked || sc2.Blocked)
+	moveGroupTo := sc0.MoveGroupTo
+	if sc.MoveGroupTo > 0 {
+		moveGroupTo = sc.MoveGroupTo
+	}
+	if sc2.MoveGroupTo > 0 {
+		moveGroupTo = sc2.MoveGroupTo
+	}
+	if moveGroupTo > 0 {
+		e.moveGroupToRoom(ctx, player.RoomNumber, moveGroupTo)
+		return result
+	}
+	if blocked && moveTo == 0 {
+		// CLEARVERB without MOVE or MOVEGROUP — block the normal action (deferred
+		// segments were already scheduled above, regardless of branch).
+		roundTimeSet := sc0.RoundTimeSet
+		if sc.RoundTimeSet > 0 {
+			roundTimeSet = sc.RoundTimeSet
 		}
-		if blocked && moveTo == 0 {
-			// CLEARVERB without MOVE or MOVEGROUP — block the normal action (deferred
-			// segments were already scheduled above, regardless of branch).
-			roundTimeSet := sc.RoundTimeSet
-			if sc2.RoundTimeSet > 0 {
-				roundTimeSet = sc2.RoundTimeSet
-			}
-			if roundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
-				result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", roundTimeSet))
-			}
-			if len(result.Messages) == 0 {
-				result.Messages = []string{"You can't go that way."}
-			}
-			return result
+		if sc2.RoundTimeSet > 0 {
+			roundTimeSet = sc2.RoundTimeSet
 		}
-		if moveTo > 0 {
-			dest := e.rooms[moveTo]
-			if dest != nil {
-				player.RoomNumber = moveTo
-				e.SavePlayer(ctx, player)
-				lookResult := e.doLook(player)
-				result.Messages = append(result.Messages, lookResult.Messages...)
-				result.RoomName = lookResult.RoomName
-				result.RoomDesc = lookResult.RoomDesc
-				result.Exits = lookResult.Exits
-				result.Items = lookResult.Items
-				result.OldRoom = originalRoom
-				result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
-				result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
-				e.applyEntryScripts(ctx, player, dest, result)
-			}
+		if roundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
+			result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", roundTimeSet))
 		}
 		if len(result.Messages) == 0 {
 			result.Messages = []string{"You can't go that way."}
 		}
 		return result
 	}
-
-	return &CommandResult{Messages: []string{"You don't see that here."}}
+	if moveTo > 0 {
+		dest := e.rooms[moveTo]
+		if dest != nil {
+			player.RoomNumber = moveTo
+			e.SavePlayer(ctx, player)
+			lookResult := e.doLook(player)
+			result.Messages = append(result.Messages, lookResult.Messages...)
+			result.RoomName = lookResult.RoomName
+			result.RoomDesc = lookResult.RoomDesc
+			result.Exits = lookResult.Exits
+			result.Items = lookResult.Items
+			result.OldRoom = originalRoom
+			result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+			e.applyEntryScripts(ctx, player, dest, result)
+		}
+	}
+	if len(result.Messages) == 0 {
+		result.Messages = []string{"You can't go that way."}
+	}
+	return result
 }
 
 func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef) *CommandResult {
@@ -637,15 +756,27 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
-	// Check if portal is closed
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	// Check if portal is closed — Mist Form and Slime Form seep through the cracks
+	// of a closed door/gate/etc. without opening it, unless the portal is SEALED
+	// (GMSCRIPT.DOC: "may not be seeped through if a player is in mist form").
 	state := strings.ToUpper(ri.State)
-	if state == "CLOSED" || state == "LOCKED" {
+	seepsThrough := (player.MistForm || player.SlimeForm) && !containsFlag(itemDef.Flags, "SEALED")
+	if (state == "CLOSED" || state == "LOCKED") && !seepsThrough {
 		portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 		return &CommandResult{Messages: []string{fmt.Sprintf("The %s is closed.", e.getItemNounName(itemDef))}, RoomBroadcast: []string{fmt.Sprintf("%s bumps into %s.", player.DisplayName(), portalName)}}
+	}
+	seepMsg := ""
+	if (state == "CLOSED" || state == "LOCKED") && seepsThrough {
+		portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+		seepMsg = fmt.Sprintf("You seep through the cracks around %s.", portalName)
 	}
 
 	// Capture room before running scripts — MOVE in scripts can change player.RoomNumber directly.
 	originalRoom := player.RoomNumber
+	defer revealForOpenMove(player, originalRoom)()
 
 	// Run IFPREVERB GO scripts (can CLEARVERB to block)
 	sc := e.RunPreverbScripts(player, room, "GO", ri, itemDef)
@@ -655,6 +786,9 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		e.scheduleScriptSegments(player, sc.DeferredSegments)
 	}
 	result := &CommandResult{}
+	if seepMsg != "" {
+		result.Messages = append(result.Messages, seepMsg)
+	}
 	if len(sc.Messages) > 0 {
 		result.Messages = append(result.Messages, sc.Messages...)
 	}
@@ -727,23 +861,25 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	player.RoomNumber = destNum
 	e.SavePlayer(ctx, player)
 
-	// Relocate followers and summoned creatures BEFORE rendering any room look
-	// (see doMove for why — otherwise the group looks like it didn't follow).
-	var movedFollowers []*Player
-	if player.IsGroupLeader && len(player.GroupMembers) > 0 && e.sessions != nil {
-		for _, memberName := range player.GroupMembers {
+	// Moving away from leader breaks follow (see doMove — same separation check).
+	if player.Following != "" {
+		leaderHere := false
+		if e.sessions != nil {
 			for _, p := range e.sessions.OnlinePlayers() {
-				if p.FirstName == memberName && p.RoomNumber == originalRoom && !p.Dead {
-					p.RoomNumber = destNum
-					p.Submitting = false
-					e.disengageCombat(p)
-					e.SavePlayer(ctx, p)
-					movedFollowers = append(movedFollowers, p)
+				if p.FirstName == player.Following && p.RoomNumber == destNum {
+					leaderHere = true
 					break
 				}
 			}
 		}
+		if !leaderHere {
+			e.removeFromGroup(player)
+		}
 	}
+
+	// Relocate followers and summoned creatures BEFORE rendering any room look
+	// (see doMove for why — otherwise the group looks like it didn't follow).
+	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
 		e.monsterMgr.mu.Lock()
@@ -835,6 +971,9 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
 	}
+	if msg := e.meleeBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	target := strings.ToLower(strings.Join(args, " "))
 	target, ordSkip := parseOrdinal(target)
 	skip := ordSkip
@@ -855,6 +994,9 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 				continue
 			}
 
+			// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
+			// immediately, so reading it after script execution would give the new room).
+			origRoom := player.RoomNumber
 			// Run IFVERB CLIMB scripts first (some rooms use IFVERB instead of IFPREVERB)
 			sc := e.RunVerbScripts(player, room, "CLIMB", &room.Items[i], itemDef)
 			// If IFVERB CLIMB produced nothing, try IFPREVERB CLIMB
@@ -888,7 +1030,6 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 				if sc.MoveTo > 0 {
 					dest := e.rooms[sc.MoveTo]
 					if dest != nil {
-						originalRoom := player.RoomNumber
 						player.RoomNumber = sc.MoveTo
 						e.SavePlayer(ctx, player)
 						lookResult := e.doLook(player)
@@ -897,8 +1038,12 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 						result.RoomDesc = lookResult.RoomDesc
 						result.Exits = lookResult.Exits
 						result.Items = lookResult.Items
-						result.OldRoom = originalRoom
-						result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+						result.OldRoom = origRoom
+						if len(sc.PreMoveMsgs) > 0 {
+							result.OldRoomMsg = sc.PreMoveMsgs
+						} else {
+							result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+						}
 						result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 						e.applyEntryScripts(ctx, player, dest, result)
 					}

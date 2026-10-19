@@ -231,6 +231,23 @@ func NewServer(ge *engine.GameEngine, parsed *gameworld.ParsedData, authSvc *aut
 		s.mu.RUnlock()
 	})
 
+	// Monster presence changes (spawn / wander in / wander out) — same as above but
+	// NOT suppressed by BattleBrief, which only hides monster RP actions and combat
+	// scroll. See engine.SetLocalRoomNotice.
+	ge.SetLocalRoomNotice(func(roomNumber int, excludeName string, messages []string) {
+		s.mu.RLock()
+		for _, sess := range s.sessions {
+			if sess.Player == nil || sess.Player.RoomNumber != roomNumber || (excludeName != "" && sess.Player.FirstName == excludeName) {
+				continue
+			}
+			filtered := filterBroadcastForPlayer(sess.Player, messages)
+			if len(filtered) > 0 {
+				s.sendBroadcast(sess, filtered)
+			}
+		}
+		s.mu.RUnlock()
+	})
+
 	// Same as above, but skips one named player — used for monster combat's public
 	// room line when that player already received their own private detail message
 	// (e.g. the [ToHit/Roll] breakdown), so they don't see the same hit described twice.
@@ -254,6 +271,11 @@ func NewServer(ge *engine.GameEngine, parsed *gameworld.ParsedData, authSvc *aut
 	// Set up player-targeted messages for background tasks (combat, etc.)
 	ge.SetSendToPlayer(func(playerName string, messages []string) {
 		s.sendToPlayer(playerName, messages)
+	})
+
+	// Set up GM-wide notifications for background tasks (e.g. a queued treasure drop)
+	ge.SetGMBroadcast(func(messages []string) {
+		s.broadcastToGMs(messages)
 	})
 
 	return s
@@ -369,6 +391,12 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/gm/scripts/{filename}", s.handleSaveGMScript).Methods("POST")
 	api.HandleFunc("/gm/scripts/{filename}", s.handleDeleteGMScript).Methods("DELETE")
 	api.HandleFunc("/gm/scripts/{filename}/restore/{index}", s.handleRestoreGMScript).Methods("POST")
+	api.HandleFunc("/gm/scripts/{filename}/draft", s.handleSetGMScriptDraft).Methods("POST")
+	api.HandleFunc("/gm/ranges", s.handleGMNumberRanges).Methods("GET")
+	api.HandleFunc("/gm/reservations", s.handleListNumberReservations).Methods("GET")
+	api.HandleFunc("/gm/reservations", s.handleSaveNumberReservation).Methods("POST")
+	api.HandleFunc("/gm/reservations/{id}", s.handleSaveNumberReservation).Methods("PUT")
+	api.HandleFunc("/gm/reservations/{id}", s.handleDeleteNumberReservation).Methods("DELETE")
 
 	// Admin bootstrap (only works if no admins exist yet)
 	api.HandleFunc("/admin/bootstrap", s.handleBootstrapAdmin).Methods("POST")
@@ -381,6 +409,8 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/admin/characters/{firstName}", s.handleAdminGetCharacter).Methods("GET")
 	api.HandleFunc("/admin/characters/{firstName}/reassign", s.handleAdminReassignCharacter).Methods("PUT")
 	api.HandleFunc("/admin/logs", s.handleAdminLogs).Methods("GET")
+	api.HandleFunc("/admin/logs/{id}/resolve", s.handleAdminResolveLog).Methods("PUT")
+	api.HandleFunc("/admin/logs/{id}/reply", s.handleAdminReplyLog).Methods("PUT")
 	api.HandleFunc("/admin/characters/deleted", s.handleAdminListDeletedCharacters).Methods("GET")
 	api.HandleFunc("/admin/characters/{firstName}/recover", s.handleAdminRecoverCharacter).Methods("PUT")
 
@@ -536,7 +566,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		"data": engine.EngineEvent{
 			Time:     time.Now(),
 			Category: "system",
-			Message:  fmt.Sprintf("Event monitor connected. Game time: Hour %d, Day %d of %s, Year %d", engine.GameHour(), engine.GameDay(), engine.GameMonthName(), engine.GameYear()),
+			Message:  fmt.Sprintf("Event monitor connected. Game time: Hour %d, %s", engine.GameHour(), engine.GameDateText()),
 		},
 	})
 
@@ -713,13 +743,16 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 				player.IsGM, player.GMHat, player.GMHidden, player.GMInvis, player.Hidden)
 			s.gamelog.Log(gamelog.EventGameEnter, player.FullName(), player.AccountID,
 				"bot login via API key", player.RoomNumber, "")
-			if !player.GMInvis && !player.GMHidden && !player.IsBot {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of concealment state.
+			if !player.IsConcealed() && !player.IsBot && !player.IsGM {
 				s.broadcastGlobal(player.FirstName,
 					[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 				s.broadcastToRoom(player.RoomNumber, player.FirstName, []string{fmt.Sprintf("%s arrives.", player.DisplayNameCap())})
 			}
 			result := s.engine.EnterRoom(ctx, player)
 			s.sendResult(session, result)
+			s.deliverReportReplies(ctx, session)
 			session.Conn.SendTypedMessage("auth_result", map[string]interface{}{
 				"success":   true,
 				"character": player.FirstName,
@@ -809,7 +842,9 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			// Log character entering the game world
 			s.gamelog.Log(gamelog.EventGameEnter, player.FullName(), accountID,
 				fmt.Sprintf("%s (%s)", authName, authEmail), player.RoomNumber, "")
-			if !player.GMInvis && !player.GMHidden {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of concealment state.
+			if !player.IsConcealed() && !player.IsGM {
 				s.broadcastGlobal(player.FirstName,
 					[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 				s.broadcastToRoom(player.RoomNumber, player.FirstName, []string{fmt.Sprintf("%s arrives.", player.DisplayNameCap())})
@@ -820,6 +855,7 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			if len(result.GMBroadcast) > 0 {
 				s.broadcastToGMs(result.GMBroadcast)
 			}
+			s.deliverReportReplies(ctx, session)
 			// Reset capture status so frontend UI is in sync
 			session.Conn.SendTypedMessage("capture_status", map[string]interface{}{"recording": false})
 
@@ -861,83 +897,88 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			}
 			// Track activity for idle timeout
 			session.lastActivity = time.Now()
-			now := time.Now()
 
 			var cmd CommandMsg
 			json.Unmarshal(msg.Data, &cmd)
-			isGive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(cmd.Input)), "give ")
 
-			// Rate limit 1: max 8 commands per second (burst)
-			if now.Sub(session.lastCmdTime) > time.Second {
-				session.cmdCount = 0
-				session.lastCmdTime = now
-			}
-			session.cmdCount++
-			if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
-				s.sendResult(session, &engine.CommandResult{
-					Messages: []string{"[Slow down! Too many commands.]"},
-				})
-				continue
-			}
-			// Rate limit 2: max 20 commands per 10 seconds (sustained)
-			cutoff := now.Add(-10 * time.Second)
-			var recentCmds []time.Time
-			for _, t := range session.cmdTimes {
-				if t.After(cutoff) {
-					recentCmds = append(recentCmds, t)
-				}
-			}
-			session.cmdTimes = append(recentCmds, now)
-			if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
-				s.sendResult(session, &engine.CommandResult{
-					Messages: []string{"[Slow down! Too many commands.]"},
-				})
-				continue
-			}
-			ctx := context.Background()
-			playerRoom := session.Player.RoomNumber
-			result := s.engine.ProcessCommand(ctx, session.Player, cmd.Input)
-			result.PlayerState = session.Player
-			result.PromptIndicators = session.Player.PromptIndicators()
-			s.sendResult(session, result)
-
-			// Capture input and output
-			if session.CaptureID != "" {
-				var lines []capture.Line
-				lines = append(lines, capture.Line{Time: time.Now(), Type: "input", Text: cmd.Input})
-				for _, m := range result.Messages {
-					lines = append(lines, capture.Line{Time: time.Now(), Type: "output", Text: m})
-				}
-				log.Printf("capture: appending %d lines to %s", len(lines), session.CaptureID)
-				go func() {
-					if err := s.captures.AppendLines(context.Background(), session.CaptureID, lines); err != nil {
-						log.Printf("capture: append failed: %v", err)
-					}
-				}()
-			}
-
-			// Chat flood protection: 10 broadcast messages per 9 seconds
-			if len(result.RoomBroadcast) > 0 {
+			for _, subInput := range splitCommandChain(cmd.Input) {
 				now := time.Now()
-				cutoff := now.Add(-9 * time.Second)
-				var recent []time.Time
-				for _, t := range session.chatTimes {
+				isGive := strings.HasPrefix(strings.ToLower(subInput), "give ")
+
+				// Rate limit 1: max 8 commands per second (burst)
+				if now.Sub(session.lastCmdTime) > time.Second {
+					session.cmdCount = 0
+					session.lastCmdTime = now
+				}
+				session.cmdCount++
+				if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
+					s.sendResult(session, &engine.CommandResult{
+						Messages: []string{"[Slow down! Too many commands.]"},
+					})
+					break
+				}
+				// Rate limit 2: max 20 commands per 10 seconds (sustained)
+				cutoff := now.Add(-10 * time.Second)
+				var recentCmds []time.Time
+				for _, t := range session.cmdTimes {
 					if t.After(cutoff) {
-						recent = append(recent, t)
+						recentCmds = append(recentCmds, t)
 					}
 				}
-				session.chatTimes = recent
-				if len(session.chatTimes) >= 10 {
+				session.cmdTimes = append(recentCmds, now)
+				if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
 					s.sendResult(session, &engine.CommandResult{
-						Messages: []string{"[You are sending messages too quickly. Please wait.]"},
+						Messages: []string{"[Slow down! Too many commands.]"},
 					})
-					continue
+					break
 				}
-				session.chatTimes = append(session.chatTimes, now)
-			}
+				ctx := context.Background()
+				result := s.engine.ProcessCommand(ctx, session.Player, subInput)
+				result.PlayerState = session.Player
+				result.PromptIndicators = session.Player.PromptIndicators()
+				s.sendResult(session, result)
 
-			s.dispatchCommandResult(session, result)
-			_ = playerRoom
+				// Capture input and output
+				if session.CaptureID != "" {
+					var lines []capture.Line
+					lines = append(lines, capture.Line{Time: time.Now(), Type: "input", Text: subInput})
+					for _, m := range result.Messages {
+						lines = append(lines, capture.Line{Time: time.Now(), Type: "output", Text: m})
+					}
+					log.Printf("capture: appending %d lines to %s", len(lines), session.CaptureID)
+					go func() {
+						if err := s.captures.AppendLines(context.Background(), session.CaptureID, lines); err != nil {
+							log.Printf("capture: append failed: %v", err)
+						}
+					}()
+				}
+
+				// Chat flood protection: 10 broadcast messages per 9 seconds
+				if len(result.RoomBroadcast) > 0 {
+					floodNow := time.Now()
+					floodCutoff := floodNow.Add(-9 * time.Second)
+					var recent []time.Time
+					for _, t := range session.chatTimes {
+						if t.After(floodCutoff) {
+							recent = append(recent, t)
+						}
+					}
+					session.chatTimes = recent
+					if len(session.chatTimes) >= 10 {
+						s.sendResult(session, &engine.CommandResult{
+							Messages: []string{"[You are sending messages too quickly. Please wait.]"},
+						})
+						break
+					}
+					session.chatTimes = append(session.chatTimes, floodNow)
+				}
+
+				s.dispatchCommandResult(session, result)
+
+				if result.Quit {
+					break
+				}
+			}
 		}
 	}
 
@@ -957,13 +998,15 @@ func (s *Server) handleGameWS(w http.ResponseWriter, r *http.Request) {
 			s.engine.HandlePlayerDisconnect(session.Player)
 			s.gamelog.Log(gamelog.EventGameExit, session.Player.FullName(), session.Player.AccountID,
 				fmt.Sprintf("%s (%s)", authName, authEmail), session.Player.RoomNumber, "")
-			if !session.Player.GMInvis && !session.Player.GMHidden {
+			// GMs log in and out frequently for admin work — skip the announcement
+			// for them regardless of GMInvis/GMHidden, not just while actively concealed.
+			if !session.Player.GMInvis && !session.Player.GMHidden && !session.Player.IsGM {
 				if !session.quitSent {
 					s.broadcastGlobal(session.Player.FirstName,
-						[]string{fmt.Sprintf("** %s has just left the Realms.", session.Player.FirstName)})
+						[]string{fmt.Sprintf("** %s has just left the Realms.", session.Player.DisplayNameCap())})
 				}
 				s.broadcastToRoom(session.Player.RoomNumber, session.Player.FirstName,
-					[]string{fmt.Sprintf("%s fades from the Realms.", session.Player.FirstName)})
+					[]string{fmt.Sprintf("%s fades from the Realms.", session.Player.DisplayNameCap())})
 			}
 			s.hub.UnregisterPlayer(session.Player.FirstName)
 		}
@@ -988,8 +1031,19 @@ func (s *Server) dispatchCommandResult(session *Session, result *engine.CommandR
 	sanitizeMessages(result.GlobalBroadcast)
 	sanitizeMessages(result.GMBroadcast)
 
-	// Broadcast to others in the room (excluding emote target if they get a special message)
-	if len(result.RoomBroadcast) > 0 {
+	// Broadcast to others in the room (excluding emote target if they get a special message).
+	// A concealed actor (Hidden, Invisible spell, Phantom Form, or a GM with @hide/@invis
+	// set — see Player.IsConcealed) produces NO room-visible trace of their action at all
+	// by default: this is the single choke point every command's RoomBroadcast/OldRoomMsg
+	// passes through (shared by the WebSocket, telnet, and SSH paths), so gating it here
+	// covers every command handler uniformly instead of relying on each one to remember
+	// its own check. A command that has already built its own appropriately-anonymized
+	// text for a still-concealed actor (see ConcealedBroadcastOK) opts out of the
+	// suppression instead — e.g. GIVE reveals a Hidden giver outright but keeps an
+	// Invisible one unnamed ("Something gives a sword to Bob.") rather than silent.
+	concealed := session.Player.IsConcealed()
+	suppress := concealed && !result.ConcealedBroadcastOK
+	if len(result.RoomBroadcast) > 0 && !suppress {
 		if result.TargetName != "" {
 			s.broadcastToRoom(session.Player.RoomNumber, session.Player.FirstName, result.RoomBroadcast, result.TargetName)
 		} else {
@@ -1001,8 +1055,10 @@ func (s *Server) dispatchCommandResult(session *Session, result *engine.CommandR
 		s.sendToPlayer(result.TargetName, result.TargetMsg)
 	}
 	// Broadcast departure to old room (movement)
-	if result.OldRoom > 0 && len(result.OldRoomMsg) > 0 {
+	if result.OldRoom > 0 && len(result.OldRoomMsg) > 0 && !suppress {
 		s.broadcastToRoom(result.OldRoom, session.Player.FirstName, result.OldRoomMsg)
+	}
+	if result.OldRoom > 0 {
 		s.hub.UpdatePlayerRoom(session.Player.FirstName, session.Player.RoomNumber)
 	}
 	// Whisper to specific target
@@ -1033,6 +1089,15 @@ func (s *Server) dispatchCommandResult(session *Session, result *engine.CommandR
 			}
 			s.feedback.Submit(session.Player.FullName(), session.Player.RoomNumber, roomName, result.LogEventDetail)
 		}
+	}
+	// @GM channel — only GMs who have the channel on
+	if len(result.GMChannelMsg) > 0 {
+		s.broadcastGMChannel(result.GMChannelSender, result.GMChannelMsg)
+		s.hub.Publish(&hub.Event{
+			Type:           "gm_channel",
+			ExcludePlayers: []string{result.GMChannelSender},
+			Messages:       result.GMChannelMsg,
+		})
 	}
 	// Telepathy broadcast
 	if result.TelepathyMsg != "" {
@@ -1224,6 +1289,23 @@ func (s *Server) broadcastToGMs(messages []string) {
 	})
 }
 
+// broadcastGMChannel delivers to local GMs listening on the @GM channel, except
+// the sender. Caller must not hold s.mu.
+func (s *Server) broadcastGMChannel(sender string, messages []string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.deliverGMChannelLocked(sender, messages)
+}
+
+func (s *Server) deliverGMChannelLocked(sender string, messages []string) {
+	for _, sess := range s.sessions {
+		if sess.Player == nil || !sess.Player.IsGM || !sess.Player.GMChannel || sess.Player.FirstName == sender {
+			continue
+		}
+		s.sendBroadcast(sess, messages)
+	}
+}
+
 // deliverRemoteEvent handles events from other machines, delivering to local connections.
 func (s *Server) deliverRemoteEvent(event *hub.Event) {
 	s.mu.RLock()
@@ -1257,6 +1339,12 @@ func (s *Server) deliverRemoteEvent(event *hub.Event) {
 		if sess, ok := s.sessions[event.TargetPlayer]; ok {
 			s.sendBroadcast(sess, event.Messages)
 		}
+	case "gm_channel":
+		sender := ""
+		if len(event.ExcludePlayers) > 0 {
+			sender = event.ExcludePlayers[0]
+		}
+		s.deliverGMChannelLocked(sender, event.Messages)
 	case "gm_broadcast":
 		for _, sess := range s.sessions {
 			if sess.Player == nil || !sess.Player.IsGM {
@@ -1304,6 +1392,46 @@ func sanitizeMessages(msgs []string) {
 		msgs[i] = strings.ReplaceAll(msg, "<", "&lt;")
 		msgs[i] = strings.ReplaceAll(msgs[i], ">", "&gt;")
 	}
+}
+
+// maxChainedCommands caps how many ';'-separated commands one input line can
+// expand into, so stacking can't be used to blow past the per-line rate
+// limits each command loop already enforces (see cmdCount/cmdTimes below).
+const maxChainedCommands = 8
+
+// splitCommandChain splits a raw input line on ';' into individual commands,
+// the way MUD clients (Mudlet, TinTin++, zMUD) let players stack several
+// commands on one line — "retreat; go east" or "ret;e". Quoted speech and the
+// SAY verb are exempt (matches isQuoteSpeech/isSayVerb in ProcessCommand): a
+// semicolon there is ordinary sentence punctuation, not a command separator,
+// so "'well; that's odd" and "say well; that's odd, isn't it" are each kept
+// whole rather than being chopped at the ';'.
+func splitCommandChain(input string) []string {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return nil
+	}
+	isQuoteSpeech := strings.HasPrefix(trimmed, "'") || strings.HasPrefix(trimmed, "\"")
+	isSayVerb := len(trimmed) >= 3 && strings.EqualFold(trimmed[:3], "say") && (len(trimmed) == 3 || trimmed[3] == ' ')
+	if isQuoteSpeech || isSayVerb || !strings.Contains(trimmed, ";") {
+		return []string{trimmed}
+	}
+	parts := strings.Split(trimmed, ";")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		out = append(out, p)
+		if len(out) >= maxChainedCommands {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return []string{trimmed}
+	}
+	return out
 }
 
 func isExcluded(name string, excludes []string) bool {
@@ -1553,6 +1681,20 @@ func (s *Server) resolveAdj(id int) string {
 	return fmt.Sprintf("adj#%d", id)
 }
 
+// resolveMonAdj looks up a monster adjective (MADJDEF), which is a separate
+// table from item adjectives — resolveAdj would show the wrong word.
+func (s *Server) resolveMonAdj(id int) string {
+	for _, a := range s.parsed.MonsterAdjs {
+		if a.ID == id {
+			return a.Name
+		}
+	}
+	if id == 0 {
+		return ""
+	}
+	return fmt.Sprintf("madj#%d", id)
+}
+
 func (s *Server) handleGetItem(w http.ResponseWriter, r *http.Request) {
 	if s.requireAdmin(w, r) == nil {
 		return
@@ -1609,7 +1751,7 @@ func (s *Server) handleGetMonster(w http.ResponseWriter, r *http.Request) {
 				"number":      mon.Number,
 				"name":        mon.Name,
 				"adjective":   mon.Adjective,
-				"adjName":     s.resolveAdj(mon.Adjective),
+				"adjName":     s.resolveMonAdj(mon.Adjective),
 				"description": mon.Description,
 				"bodyType":    mon.BodyType,
 				"body":        mon.Body,
@@ -1906,17 +2048,24 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "auth not configured", 500)
 		return
 	}
-	if !s.checkRateLimit(getClientIP(r), "register", 5, time.Minute) {
+	if !s.checkRateLimit(getClientIP(r), "register", 3, time.Hour) {
 		http.Error(w, "too many registration attempts, try again later", 429)
 		return
 	}
 	var req struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Name     string `json:"name"`
+		Email        string `json:"email"`
+		Password     string `json:"password"`
+		Name         string `json:"name"`
+		CaptchaToken string `json:"captchaToken"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", 400)
+		return
+	}
+	if err := s.auth.VerifyCaptcha(r.Context(), req.CaptchaToken, getClientIP(r)); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(400)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	account, verifyToken, verifyCode, err := s.auth.RegisterWithPassword(r.Context(), req.Email, req.Password, req.Name)
@@ -2233,6 +2382,98 @@ func (s *Server) handleListGMScripts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(scripts)
 }
 
+// handleGMNumberRanges reports which room/item/monster numbers are used (live
+// world + draft GM scripts) and which contiguous blocks are free, for handing out
+// number blocks to GMs.
+func (s *Server) handleGMNumberRanges(w http.ResponseWriter, r *http.Request) {
+	if s.requireGM(w, r) == nil {
+		return
+	}
+	report, err := s.engine.NumberRanges(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(report)
+}
+
+// gmActorName is the name recorded for a GM's change: their character, or the
+// account name when an admin works without one.
+func gmActorName(r *http.Request, account *auth.Account) string {
+	if name := r.Header.Get("X-Character"); name != "" {
+		return name
+	}
+	return account.Name
+}
+
+// handleListNumberReservations lists the advisory number-block reservations.
+func (s *Server) handleListNumberReservations(w http.ResponseWriter, r *http.Request) {
+	if s.requireGM(w, r) == nil {
+		return
+	}
+	list, err := s.engine.ListNumberReservations(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+// handleSaveNumberReservation creates (POST) or updates (PUT /{id}) a reservation.
+// Any GM may manage reservations — they're a shared, non-enforced reference.
+func (s *Server) handleSaveNumberReservation(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	var res engine.NumberReservation
+	if err := json.NewDecoder(r.Body).Decode(&res); err != nil {
+		http.Error(w, "invalid request body", 400)
+		return
+	}
+	res.ID = bson.ObjectID{}
+	if idStr := mux.Vars(r)["id"]; idStr != "" {
+		id, err := bson.ObjectIDFromHex(idStr)
+		if err != nil {
+			http.Error(w, "invalid reservation id", 400)
+			return
+		}
+		res.ID = id
+	}
+	actor := gmActorName(r, account)
+	stored, err := s.engine.SaveNumberReservation(r.Context(), &res, actor)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, actor, account.ID.Hex(), "", 0,
+		fmt.Sprintf("number reservation %s %d-%d for %s", stored.Kind, stored.Start, stored.End, stored.GM))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stored)
+}
+
+// handleDeleteNumberReservation removes a reservation.
+func (s *Server) handleDeleteNumberReservation(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	id, err := bson.ObjectIDFromHex(mux.Vars(r)["id"])
+	if err != nil {
+		http.Error(w, "invalid reservation id", 400)
+		return
+	}
+	if err := s.engine.DeleteNumberReservation(r.Context(), id); err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	s.gamelog.Log(gamelog.EventGMCommand, gmActorName(r, account), account.ID.Hex(), "", 0,
+		fmt.Sprintf("deleted number reservation %s", id.Hex()))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleGetGMScript(w http.ResponseWriter, r *http.Request) {
 	if s.requireGM(w, r) == nil {
 		return
@@ -2257,6 +2498,9 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		Name     string `json:"name"`
 		Content  string `json:"content"`
 		Priority int    `json:"priority"`
+		// Draft saves the script without applying it to the running game (and it
+		// isn't loaded at startup). Saving a live script as a draft withdraws it.
+		Draft bool `json:"draft"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", 400)
@@ -2280,7 +2524,7 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		uploaderName = account.Name
 	}
 
-	// Parse and validate the script first
+	// Parse and validate the script first (drafts too, so errors show up early)
 	if engine.ScriptParser == nil {
 		http.Error(w, "script parser not available", 500)
 		return
@@ -2293,8 +2537,12 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply to running engine
-	stats := s.engine.ApplyParsedData(parsedData)
+	existing, _ := s.engine.GetGMScript(r.Context(), filename)
+	stats, withdrawn, err := s.stageGMScript(r.Context(), filename, existing, parsedData, req.Draft)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	// Save to MongoDB
 	script := &engine.GMScript{
@@ -2302,6 +2550,7 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		Name:                req.Name,
 		Content:             req.Content,
 		Priority:            req.Priority,
+		Draft:               req.Draft,
 		Size:                len(req.Content),
 		UploadedBy:          uploaderName,
 		UploadedByAccountID: account.ID.Hex(),
@@ -2313,15 +2562,115 @@ func (s *Server) handleSaveGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	verb := "Uploaded"
+	if req.Draft {
+		verb = "Saved draft"
+	}
 	s.gamelog.Log(gamelog.EventGMCommand, uploaderName, account.ID.Hex(), "",
-		0, fmt.Sprintf("Uploaded script %s: %d rooms, %d items, %d monsters", filename, stats.Rooms, stats.Items, stats.Monsters))
+		0, fmt.Sprintf("%s script %s: %d rooms, %d items, %d monsters", verb, filename, stats.Rooms, stats.Items, stats.Monsters))
 
+	msg := "Script saved and applied"
+	if req.Draft {
+		msg = "Script saved as draft (not applied)"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":  "Script saved and applied",
-		"filename": filename,
-		"stats":    stats,
+		"message":   msg,
+		"filename":  filename,
+		"draft":     req.Draft,
+		"stats":     stats,
+		"withdrawn": withdrawn,
 	})
+}
+
+// stageGMScript puts a new version of a GM script into effect (or not, for a
+// draft). If the previous version was live it is withdrawn first — entirely for a
+// draft, or just the entities the new version no longer defines. Returns the
+// apply stats (for a draft, what it defines) and what was withdrawn, if anything.
+func (s *Server) stageGMScript(ctx context.Context, filename string, existing *engine.GMScript, parsed *gameworld.ParsedData, draft bool) (engine.ScriptApplyStats, *engine.WithdrawStats, error) {
+	var withdrawn *engine.WithdrawStats
+	if existing != nil && !existing.Draft && existing.Content != "" {
+		var keep *gameworld.ParsedData
+		if !draft {
+			keep = parsed
+		}
+		ws, err := s.engine.WithdrawGMScript(ctx, filename, existing.Content, keep)
+		if err != nil {
+			return engine.ScriptApplyStats{}, nil, fmt.Errorf("could not withdraw the live version: %v", err)
+		}
+		withdrawn = &ws
+	}
+	if draft {
+		return engine.ParsedStats(parsed), withdrawn, nil
+	}
+	return s.engine.ApplyParsedData(parsed), withdrawn, nil
+}
+
+// handleSetGMScriptDraft switches a stored script between draft and live without
+// changing its content: going live applies it, going to draft withdraws it from
+// the running game.
+func (s *Server) handleSetGMScriptDraft(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	filename := mux.Vars(r)["filename"]
+	var req struct {
+		Draft bool `json:"draft"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", 400)
+		return
+	}
+	script, err := s.engine.GetGMScript(r.Context(), filename)
+	if err != nil {
+		http.Error(w, "script not found", 404)
+		return
+	}
+	uploaderName := r.Header.Get("X-Character")
+	if uploaderName == "" {
+		uploaderName = account.Name
+	}
+	resp := map[string]interface{}{"filename": filename, "draft": req.Draft}
+	switch {
+	case script.Draft == req.Draft:
+		resp["message"] = "No change"
+	case req.Draft:
+		ws, err := s.engine.WithdrawGMScript(r.Context(), filename, script.Content, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("withdraw failed: %v", err), 500)
+			return
+		}
+		resp["withdrawn"] = ws
+		resp["message"] = "Script disabled: now a draft and removed from the game"
+	default:
+		if engine.ScriptParser == nil {
+			http.Error(w, "script parser not available", 500)
+			return
+		}
+		parsed, err := engine.ScriptParser(script.Content, filename)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse error: %v", err)})
+			return
+		}
+		resp["stats"] = s.engine.ApplyParsedData(parsed)
+		resp["message"] = "Script activated and applied"
+	}
+	if script.Draft != req.Draft {
+		if err := s.engine.SetGMScriptDraft(r.Context(), filename, req.Draft); err != nil {
+			http.Error(w, fmt.Sprintf("save failed: %v", err), 500)
+			return
+		}
+		action := "Activated"
+		if req.Draft {
+			action = "Disabled (to draft)"
+		}
+		s.gamelog.Log(gamelog.EventGMCommand, uploaderName, account.ID.Hex(), "", 0, fmt.Sprintf("%s script %s", action, filename))
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
@@ -2330,6 +2679,17 @@ func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := mux.Vars(r)["filename"]
+	// A live script is withdrawn from the running game before it's deleted, so its
+	// rooms/items/monsters don't linger until the next restart.
+	var withdrawn *engine.WithdrawStats
+	if script, err := s.engine.GetGMScript(r.Context(), filename); err == nil && !script.Draft && script.Content != "" {
+		ws, err := s.engine.WithdrawGMScript(r.Context(), filename, script.Content, nil)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("withdraw failed: %v", err), 500)
+			return
+		}
+		withdrawn = &ws
+	}
 	if err := s.engine.DeleteGMScript(r.Context(), filename); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
@@ -2342,7 +2702,7 @@ func (s *Server) handleDeleteGMScript(w http.ResponseWriter, r *http.Request) {
 		0, fmt.Sprintf("Deleted script %s", filename))
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
+	json.NewEncoder(w).Encode(map[string]interface{}{"message": "deleted", "withdrawn": withdrawn})
 }
 
 func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
@@ -2374,7 +2734,7 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		uploaderName = account.Name
 	}
 
-	// Parse and apply
+	// Parse, then apply — unless the script is a draft, which stays a draft.
 	if engine.ScriptParser == nil {
 		http.Error(w, "script parser not available", 500)
 		return
@@ -2386,7 +2746,11 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("parse error on restore: %v", parseErr)})
 		return
 	}
-	stats := s.engine.ApplyParsedData(parsedData)
+	stats, withdrawn, err := s.stageGMScript(r.Context(), filename, script, parsedData, script.Draft)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
 
 	// Save as new version
 	updated := &engine.GMScript{
@@ -2394,6 +2758,7 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		Name:                script.Name,
 		Content:             restoredContent,
 		Priority:            script.Priority,
+		Draft:               script.Draft,
 		Size:                len(restoredContent),
 		UploadedBy:          uploaderName,
 		UploadedByAccountID: account.ID.Hex(),
@@ -2405,11 +2770,17 @@ func (s *Server) handleRestoreGMScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	msg := "Script restored and applied"
+	if script.Draft {
+		msg = "Script restored (still a draft, not applied)"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":  "Script restored and applied",
-		"filename": filename,
-		"stats":    stats,
+		"message":   msg,
+		"filename":  filename,
+		"draft":     script.Draft,
+		"stats":     stats,
+		"withdrawn": withdrawn,
 	})
 }
 
@@ -2609,17 +2980,127 @@ func (s *Server) handleAdminLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	event := r.URL.Query().Get("event")
 	player := r.URL.Query().Get("player")
+	resolved := r.URL.Query().Get("resolved")
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
 		fmt.Sscanf(l, "%d", &limit)
 	}
-	entries, err := s.gamelog.Query(r.Context(), event, player, limit)
+	entries, err := s.gamelog.Query(r.Context(), event, player, resolved, limit)
 	if err != nil {
 		http.Error(w, "failed to query logs", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(entries)
+}
+
+// handleAdminResolveLog marks (or unmarks) a log entry — chiefly a player REPORT
+// — as resolved, so the admin Logs UI can distinguish what still needs work.
+func (s *Server) handleAdminResolveLog(w http.ResponseWriter, r *http.Request) {
+	account := s.requireAdmin(w, r)
+	if account == nil {
+		return
+	}
+	vars := mux.Vars(r)
+	var req struct {
+		Resolved bool `json:"resolved"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	resolvedBy := account.Name
+	if resolvedBy == "" {
+		resolvedBy = account.Email
+	}
+	entry, err := s.gamelog.SetResolved(r.Context(), vars["id"], req.Resolved, resolvedBy)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entry)
+}
+
+// handleAdminReplyLog stores a staff reply on a player REPORT. The player sees it
+// the next time they enter the game; if they're online on this machine right
+// now, it's delivered immediately instead.
+func (s *Server) handleAdminReplyLog(w http.ResponseWriter, r *http.Request) {
+	account := s.requireAdmin(w, r)
+	if account == nil {
+		return
+	}
+	vars := mux.Vars(r)
+	var req struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	reply := strings.TrimSpace(req.Reply)
+	if len(reply) > 2000 {
+		http.Error(w, "reply too long (max 2000 characters)", 400)
+		return
+	}
+	repliedBy := account.Name
+	if repliedBy == "" {
+		repliedBy = account.Email
+	}
+	entry, err := s.gamelog.SetReply(r.Context(), vars["id"], reply, repliedBy)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	if reply != "" {
+		s.mu.RLock()
+		var session *Session
+		for _, sess := range s.sessions {
+			if sess.Player != nil && sess.Player.FullName() == entry.Player {
+				session = sess
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if session != nil {
+			s.deliverReportReplies(r.Context(), session)
+			// Re-read so the admin UI shows it as delivered.
+			if updated, err := s.gamelog.Get(r.Context(), vars["id"]); err == nil {
+				entry = updated
+			}
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entry)
+}
+
+// deliverReportReplies shows the player any staff replies to their REPORTs that
+// they haven't seen yet. Called on every game entry path (web, telnet, ssh).
+func (s *Server) deliverReportReplies(ctx context.Context, session *Session) {
+	if session == nil || session.Player == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	replies, err := s.gamelog.ClaimPendingReplies(ctx, session.Player.FullName())
+	if err != nil {
+		log.Printf("report replies: lookup failed for %s: %v", session.Player.FullName(), err)
+		return
+	}
+	if len(replies) == 0 {
+		return
+	}
+	var lines []string
+	for _, e := range replies {
+		lines = append(lines,
+			"",
+			fmt.Sprintf("*** The Game Masters have replied to your report of %s:", e.Timestamp.Format("Jan 2, 2006")),
+			fmt.Sprintf("    You wrote: %s", e.Details),
+			fmt.Sprintf("    Reply: %s", e.Reply),
+		)
+	}
+	lines = append(lines, "")
+	s.sendResult(session, &engine.CommandResult{Messages: lines})
 }
 
 func (s *Server) handleBootstrapAdmin(w http.ResponseWriter, r *http.Request) {

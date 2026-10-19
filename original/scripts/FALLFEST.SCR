@@ -1,0 +1,1091 @@
+; FALLFEST.SCR — Fayd Fall Festival (reusable, "Fayd-annual" seasonal event)
+; =============================================================================
+; NOT part of LEGENDS.CFG. Upload it in the GM panel (GM Scripts) as a draft,
+; Activate it for the festival days, and Disable it afterwards (disabling takes
+; it back out of the running game) — see original/HALLOWEEN_RUNBOOK.md.
+;
+; REQUIRES FESTITEMS.SCR (permanent, in LEGENDS.CFG): vocabulary and the
+; festival goods sold here (INUMBER 9350-9357) are defined there so purchases
+; outlive this file.
+;
+; Load order: FALLFEST.SCR first, then (optionally) a year's story file such as
+; HALLOWEEN2026.SCR. The story file redefines room 287 and must load AFTER this
+; one (give it a lower Admin-panel priority, or simply upload it second).
+;
+; What this file does:
+;   * Festival goods in existing, non-seasonal Fayd shops:
+;       199  Randolphs            spider rings, spiderweb earcuffs
+;       359  Tailor's Shop        festival shirts, festival masks
+;       398  Aunt Emma's Bakery   sugar skulls, caramel apples, pumpkin pie,
+;                                 pumpkin bread, spiced cider
+;   * Room 287 (Poor Quarter, outside the cemetery gate) becomes the festival
+;     lot: campfire, free refreshments, a balloon cart, a fortune-telling
+;     crystal ball. Treasure balloons pop open with a prize.
+;   * Nine Halloween monsters (MNUMBER 9350-9358) for GMs to @genmon, plus an
+;     opt-in cemetery spawner.
+;   * Ambient CEVENT echoes (revelers in the streets, chill winds at the gate).
+;
+; GM switches (named variables, all 0 when the file is first loaded):
+;   @set HWQUIET 1    silence the festival/cemetery ambience (0 = on, default)
+;   @set HWHAUNT 1    let Halloween monsters spawn in the cemetery (default off)
+;
+; ID ranges reserved for this file (the 93xx block is Halloween/Fall Festival;
+; HALLOWEEN2026.SCR uses 9300-9349, this file 9350-9399):
+;   NOUNDEF 9350-9351 + ADJDEF 9350-9356 + INUMBER 9350-9357 (in FESTITEMS.SCR)
+;   MADJDEF 9350-9357   INUMBER 9360-9365 (+739 override)   MNUMBER 9350-9358
+;   MACRO 9350-9353     CEVENT 9350-9352
+;
+; Note: the user's original balloon draft used ADJDEF 9108/9109 for
+; "treasure"/"spiderweb". Those are 9350/9351 (in FESTITEMS.SCR) because 91xx is the
+; ITEMSNEW.SCR armor/shield crafting range and will keep growing.
+; =============================================================================
+
+; ── Vocabulary ────────────────────────────────────────────────────────────────
+; Nouns/adjectives and the festival goods (INUMBER 9350-9357) live in the
+; permanent FESTITEMS.SCR, so purchases survive after this file is removed.
+
+MADJDEF	9350	cackling
+MADJDEF	9351	wailing
+MADJDEF	9352	stitched
+MADJDEF	9353	gill
+MADJDEF	9354	headless
+MADJDEF	9355	grinning
+MADJDEF	9356	pale
+MADJDEF	9357	shrieking
+
+VARIABLE HWQUIET
+VARIABLE HWHAUNT
+VARIABLE HWRND
+VARIABLE HWRND2
+
+; ── Macros ────────────────────────────────────────────────────────────────────
+; Each body is wrapped in an always-true IFVAR so every action parses as part of
+; a nested block (bare top-level macro lines only accept a whitelist of actions).
+
+; MACRO 9350: pop a balloon (shared by POKE/POP/RIP). A balloon is a treasure
+; balloon if it was bought as one (store adjective 9350 "treasure", which BUY
+; puts in ADJ3) or a GM made it one with VAL5 > 0.
+MACRO 9350
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY4 0
+  IFVAR ITEMVAL5 > 0
+    EQUAL DUMMY4 1
+  ENDIF
+  IFVAR ITEMADJ3 = 9350
+    EQUAL DUMMY4 1
+  ENDIF
+  IFVAR DUMMY4 = 1
+    RANDOM DUMMY5 1 15
+    IFVAR DUMMY5 <= 5
+      ECHO PLAYER The balloon goes 'pop'! THIS IS A TREASURE BALLOON! You won a black plastic spider ring!
+      ECHO OTHERS %N's balloon goes 'pop' and a plastic spider ring falls into %h hands.
+      NEWITEM -1 9355 ADJ1=25 ADJ2=587
+    ENDIF
+    IFVAR DUMMY5 > 5
+      IFVAR DUMMY5 <= 10
+        ECHO PLAYER The balloon goes 'pop'! THIS IS A TREASURE BALLOON! You won a glowing enamelled skull pin!
+        ECHO OTHERS %N's balloon goes 'pop' and a glowing enamelled skull pin drops into %h hands.
+        NEWITEM -1 318 ADJ1=145 ADJ2=448 ADJ3=714
+      ENDIF
+    ENDIF
+    IFVAR DUMMY5 > 10
+      ECHO PLAYER The balloon goes 'pop'! THIS IS A TREASURE BALLOON! You won a silver spiderweb earcuff!
+      ECHO OTHERS %N's balloon goes 'pop' and a silver spiderweb earcuff drops into %h hands.
+      NEWITEM -1 9356 ADJ1=292
+    ENDIF
+    REMOVEITEM -1
+  ELSE
+    ECHO PLAYER The balloon goes 'pop'! There was no treasure.
+    ECHO OTHERS %N's balloon goes 'pop'!
+    REMOVEITEM -1
+  ENDIF
+ENDIF
+
+; MACRO 9351: help yourself to pumpkin bread from the festival table.
+MACRO 9351
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY1 0
+  IFCARRY 9354
+    EQUAL DUMMY1 1
+  ENDIF
+  IFVAR DUMMY1 = 1
+    ECHO PLAYER You already have some pumpkin bread. Leave a slice for the others!
+  ELSE
+    ECHO PLAYER You help yourself to a thick slice of warm pumpkin bread.
+    ECHO OTHERS %N takes a slice of pumpkin bread from the table.
+    NEWITEM -1 9354
+  ENDIF
+ENDIF
+
+; MACRO 9352: ladle yourself some hot spiced cider from the festival table.
+MACRO 9352
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY1 0
+  IFCARRY 9353
+    EQUAL DUMMY1 1
+  ENDIF
+  IFVAR DUMMY1 = 1
+    ECHO PLAYER You already have some spiced cider. Drink up before you take more!
+  ELSE
+    ECHO PLAYER You ladle out a steaming portion of spiced cider. It smells of cinnamon, clove and apples.
+    ECHO OTHERS %N ladles out a steaming portion of spiced cider.
+    NEWITEM -1 9353
+  ENDIF
+ENDIF
+
+; MACRO 9353: the crystal ball's fortunes.
+MACRO 9353
+IFVAR DUMMY9 = 0
+  ECHO PLAYER You lay your hands upon the crystal ball. Mist swirls within it, coils, and forms words only you can read:
+  ECHO OTHERS %N lays %h hands upon the crystal ball. Mist swirls within it.
+  EQUAL ROUNDTIME 5
+  RANDOM DUMMY1 1 16
+  IFVAR DUMMY1 = 1
+    ECHO PLAYER "A light will be lit for you by one who is not living."
+    GMMSG %N's fortune: "A light will be lit for you by one who is not living."
+  ENDIF
+  IFVAR DUMMY1 = 2
+    ECHO PLAYER "What is buried is not always lost. What is lost is not always buried."
+    GMMSG %N's fortune: "What is buried is not always lost. What is lost is not always buried."
+  ENDIF
+  IFVAR DUMMY1 = 3
+    ECHO PLAYER "Beware the stranger who offers you candy... unless it is very good candy."
+    GMMSG %N's fortune: "Beware the stranger who offers you candy... unless it is very good candy."
+  ENDIF
+  IFVAR DUMMY1 = 4
+    ECHO PLAYER "Your shadow knows a secret. Do not turn around too quickly."
+    GMMSG %N's fortune: "Your shadow knows a secret. Do not turn around too quickly."
+  ENDIF
+  IFVAR DUMMY1 = 5
+    ECHO PLAYER "An old debt will be paid tonight, though not by you."
+    GMMSG %N's fortune: "An old debt will be paid tonight, though not by you."
+  ENDIF
+  IFVAR DUMMY1 = 6
+    ECHO PLAYER "The dead remember every name. Speak yours kindly."
+    GMMSG %N's fortune: "The dead remember every name. Speak yours kindly."
+  ENDIF
+  IFVAR DUMMY1 = 7
+    ECHO PLAYER "Something with too many legs admires your hat."
+    GMMSG %N's fortune: "Something with too many legs admires your hat."
+  ENDIF
+  IFVAR DUMMY1 = 8
+    ECHO PLAYER "Follow the light, but count your steps."
+    GMMSG %N's fortune: "Follow the light, but count your steps."
+  ENDIF
+  IFVAR DUMMY1 = 9
+    ECHO PLAYER "Great fortune lies beneath your feet. So does a great deal of mud."
+    GMMSG %N's fortune: "Great fortune lies beneath your feet. So does a great deal of mud."
+  ENDIF
+  IFVAR DUMMY1 = 10
+    ECHO PLAYER "A cold hand will grasp yours before the night is out. Try not to scream."
+    GMMSG %N's fortune: "A cold hand will grasp yours before the night is out. Try not to scream."
+  ENDIF
+  IFVAR DUMMY1 = 11
+    ECHO PLAYER "The pumpkin bread is safe. The cider... is also safe. Probably."
+    GMMSG %N's fortune: "The pumpkin bread is safe. The cider... is also safe. Probably."
+  ENDIF
+  IFVAR DUMMY1 = 12
+    ECHO PLAYER "Every stone in Fayd was laid over someone else's story."
+    GMMSG %N's fortune: "Every stone in Fayd was laid over someone else's story."
+  ENDIF
+  IFVAR DUMMY1 = 13
+    ECHO PLAYER "You will be offered a choice between gold and honor. Take the honor. Then ask about the gold."
+    GMMSG %N's fortune: "You will be offered a choice between gold and honor. Take the honor. Then ask about the gold."
+  ENDIF
+  IFVAR DUMMY1 = 14
+    ECHO PLAYER "A balloon will bring you joy. Another will bring you a spider."
+    GMMSG %N's fortune: "A balloon will bring you joy. Another will bring you a spider."
+  ENDIF
+  IFVAR DUMMY1 = 15
+    ECHO PLAYER "The gate is chained to keep something in. Not everything respects chains."
+    GMMSG %N's fortune: "The gate is chained to keep something in. Not everything respects chains."
+  ENDIF
+  IFVAR DUMMY1 = 16
+    ECHO PLAYER The mist simply forms a small, smug face, sticks out its tongue, and fades away.
+    GMMSG %N's fortune: (the crystal ball stuck its tongue out)
+  ENDIF
+ENDIF
+
+; Balloon (ITEM1.SCR #739, overridden for the festival). Original RIP-only
+; script extended with POKE/POP and treasure prizes via MACRO 9350. Sold at the
+; festival lot's balloon cart; "a treasure balloon" holds a prize.
+INUMBER 739
+NAME 313
+SUBSTANCE CLOTH
+WEIGHT 0
+VOLUME 3
+MISC
+IFPREVERB RIP -1
+  CLEARVERB
+  CALL 9350
+ENDIF
+IFPREVERB POP -1
+  CLEARVERB
+  CALL 9350
+ENDIF
+IFPREVERB POKE -1
+  CLEARVERB
+  CALL 9350
+ENDIF
+
+; ── Festival lot fixtures (room 287) ─────────────────────────────────────────
+; Room items show their EXAMINE text from the room's ITEM EXAM blocks, not here.
+INUMBER 9360
+NAME 9350
+ADJECTIVE 9356
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+INUMBER 9361
+NAME 202
+ADJECTIVE 9355
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; "some pumpkin bread" on the table — GET/TAKE BREAD hands out a slice (9354).
+INUMBER 9362
+NAME 345
+ADJECTIVE 971
+ARTICLE SOME
+MISC
+WEIGHT 1000
+VOLUME 10
+FIXED
+IFPREVERB GET -1
+  CLEARVERB
+  CALL 9351
+ENDIF
+IFPREVERB TAKE -1
+  CLEARVERB
+  CALL 9351
+ENDIF
+;
+; "some hot cider" on the table — GET/TAKE CIDER ladles out a portion (9353).
+INUMBER 9363
+NAME 9351
+ADJECTIVE 162
+ARTICLE SOME
+MISC
+WEIGHT 1000
+VOLUME 10
+FIXED
+IFPREVERB GET -1
+  CLEARVERB
+  CALL 9352
+ENDIF
+IFPREVERB TAKE -1
+  CLEARVERB
+  CALL 9352
+ENDIF
+;
+; Striped balloon cart — the lot itself is the shop (room STOREITEMs); READ CART.
+; (Deliberately not adjective "balloon": "pop balloon"/"touch ball" would match
+; the cart, a room item, before the player's own balloon or the crystal ball.)
+INUMBER 9364
+NAME 1229
+ADJECTIVE 614
+MISC
+WEIGHT 1000
+VOLUME 100
+FIXED
+;
+; Crystal ball — TOUCH/RUB/GAZE BALL for a fortune. Scripted on the item so a GM
+; can also @additem one into a fortune-teller's booth anywhere.
+INUMBER 9365
+NAME 546
+ADJECTIVE 77
+MISC
+WEIGHT 1000
+VOLUME 5
+FIXED
+IFPREVERB TOUCH -1
+  CLEARVERB
+  CALL 9353
+ENDIF
+IFPREVERB RUB -1
+  CLEARVERB
+  CALL 9353
+ENDIF
+IFPREVERB GAZE -1
+  CLEARVERB
+  CALL 9353
+ENDIF
+
+; ── Halloween monsters ────────────────────────────────────────────────────────
+; GM use: @genmon <number>. The cemetery spawner (CEVENT 9352, HWHAUNT=1) draws
+; from 9350-9357. Stats are pitched low-to-mid so mixed-level groups can enjoy
+; them; the stitched monster and headless horseman are the "boss" tier.
+
+; Witch — caster.
+MNUMBER 9350
+NAME witch
+ADJECTIVE 9350
+HUMAN
+GENDER 1
+*DESCRIPTION_START
+A hunched crone in a tattered black dress and a tall, crooked hat. Her skin has a faint green cast, her nose is long and hooked, and her eyes glitter like wet coal. She smells of graveyard dirt and burnt sugar.
+*DESCRIPTION_END
+ALIGNMENT -50
+BODY 110
+EXTRABODY 30
+ATTACK1 80
+DEFENSE 75
+MANA 120
+SPELLSKILL 90
+SPELLUSE 45
+CASTLEVEL 10
+SPELL 100
+SPELL 200
+SPELL 211
+RESIST 40
+speed 2
+STRATEGY 350
+TREASURE 6
+WEAPON 12 -1 10
+TEXE A cackling witch sweeps in on a gust of cold air.
+TEXG With a puff of green smoke, a cackling witch appears!
+TEXM A cackling witch hobbles
+TEXF A cackling witch shrieks and scuttles
+TEXS A cackling witch stirs the air with a crooked finger, muttering a rhyme.
+TEXL A cackling witch jabs a crooked finger
+TEXD lets out one last cackle and collapses into a heap of black rags.
+TEX1 A cackling witch cackles madly.
+TEX2 A cackling witch sniffs the air. "I smell a tasty little morsel..."
+TEX3 A cackling witch pulls a toad from her sleeve, considers it, and puts it back.
+TEX4 A cackling witch hums a tuneless song about bubbling cauldrons.
+TEXZ A cackling witch cackles over %s, "Into the pot with you, dearie!"
+;
+; Ghost — lesser undead, needs a magic weapon, chills on touch.
+MNUMBER 9351
+NAME ghost
+ADJECTIVE 9351
+HUMAN
+*DESCRIPTION_START
+A translucent figure in the grave-clothes of another age drifts a hand's breadth above the ground. Its face is a smear of grief, and the air around it is cold enough to fog your breath.
+*DESCRIPTION_END
+ALIGNMENT -20
+BODY 80
+EXTRABODY 40
+ATTACK1 70
+DEFENSE 90
+DISCORPORATE
+MAGICWEAPON 1
+IMMUNITY 0 0
+IMMUNITY 1 1
+IMMUNITY 2 1
+IMMUNITY 5 0
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 8 3
+IMMUNITY 9 0
+FATIGUE 25 10
+RACE 22
+SPECUSE 15
+SPECUSES 3
+SPECBASE 5
+SPECDMG 10
+SPECDMGTYPE COLD
+speed 2
+STRATEGY 340
+TREASURE 3
+WEAPON 544 -1 10
+TEXE A wailing ghost drifts in through a wall.
+TEXG The air turns bitterly cold, and a wailing ghost rises up out of the ground!
+TEXM A wailing ghost drifts
+TEXF A wailing ghost shrieks and flits
+TEXI Your weapon passes harmlessly through the ghost's misty form.
+TEXX %s passes its icy hand straight through %s!
+TEXD lets out a long, fading wail and dissolves into mist.
+TEX1 A wailing ghost moans, "Where... where is my grave?"
+TEX2 A wailing ghost wails mournfully.
+TEX3 A wailing ghost flickers in and out of sight.
+TEX4 Your breath fogs in the sudden cold around a wailing ghost.
+;
+; Stitched monster — Frankenstein's monster. Big, slow, electricity-proof,
+; afraid of fire.
+MNUMBER 9352
+NAME monster
+ADJECTIVE 9352
+HUMAN
+*DESCRIPTION_START
+Easily eight feet tall, this hulking creature has been sewn together from the parts of several different people, none of which quite match. Coarse black stitches cross its grey-green skin, iron bolts jut from its neck, and its flat-topped head sits on shoulders as broad as a doorway. It moves slowly, but nothing about it looks gentle.
+*DESCRIPTION_END
+ALIGNMENT -10
+BODY 380
+EXTRABODY 80
+ATTACK1 160
+DEFENSE 90
+ARMOR 10
+STRENGTH 20
+IMMUNITY 3 4
+IMMUNITY 4 0
+IMMUNITY 6 1
+RACE 28
+speed 3
+STRATEGY 550
+TREASURE 7
+WEAPON 544 -1 10
+TEXE A stitched monster lurches in, arms outstretched.
+TEXG With a crackle of lightning, a stitched monster lurches to its feet!
+TEXM A stitched monster lurches
+TEXA A stitched monster lumbers toward
+TEXD groans, sways, and topples over like a felled tree.
+TEX1 A stitched monster groans, "Fire... bad!"
+TEX2 Sparks crackle between the bolts in a stitched monster's neck.
+TEX3 A stitched monster flexes its mismatched hands.
+TEX4 A stitched monster sniffs a flower growing between the gravestones, then crushes it.
+;
+; Gill monster — creature from the black lagoon. Place it near water.
+MNUMBER 9353
+NAME monster
+ADJECTIVE 9353
+HUMAN
+*DESCRIPTION_START
+A scaled, web-fingered thing stands upright on two clawed feet, water streaming from its body. Gills flutter along its neck, its fish-like eyes never blink, and a crest of fin runs from the top of its head down its back.
+*DESCRIPTION_END
+ALIGNMENT -10
+BODY 160
+EXTRABODY 40
+ATTACK1 110
+DEFENSE 85
+ARMOR 10
+IMMUNITY 3 3
+IMMUNITY 5 1
+SKINADJ 152
+SKINITEM 507 70 60 0
+SKINITEM 505 30 40 0
+speed 2
+STRATEGY 501
+TREASURE 5
+WEAPON 279 -1 10
+TEXE A gill monster lopes in, dripping water.
+TEXG With a great splash, a gill monster rises out of the water!
+TEXM A gill monster lopes
+TEXA A gill monster slaps its webbed feet toward
+TEXD gurgles horribly and collapses in a puddle.
+TEX1 A gill monster's gills flutter as it gasps at the dry air.
+TEX2 A gill monster shakes water from its crest.
+TEX3 A gill monster stares at you with unblinking, fishy eyes.
+;
+; Headless horseman — no head to aim at; scythe-wielding undead.
+MNUMBER 9354
+NAME horseman
+ADJECTIVE 9354
+*DESCRIPTION_START
+A tall figure in a mud-spattered riding coat and boots, with nothing at all above the collar. In one gloved hand it carries a long scythe; in the other, by the stem, a carved jack-o'-lantern whose candle burns an unnatural green.
+*DESCRIPTION_END
+ALIGNMENT -80
+PART 1
+PART 2
+PART 5
+PART 6
+PART 7
+PART 8
+BODY 300
+EXTRABODY 60
+ATTACK1 180
+DEFENSE 140
+MAGICWEAPON 1
+IMMUNITY 5 0
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 8 2
+IMMUNITY 9 0
+RACE 22
+RESIST 60
+speed 2
+STRATEGY 550
+TREASURE 8
+WEAPON 1002 -1 10
+WEAPONPLUS 5
+TEXE A headless horseman strides in, scythe in hand, its jack-o'-lantern blazing green.
+TEXG A cold green light flares, and a headless horseman steps out of the dark!
+TEXM A headless horseman strides
+TEXA A headless horseman swings its scythe toward
+TEXD drops its jack-o'-lantern, which shatters, and crumbles into dust and dead leaves.
+TEX1 A headless horseman raises its jack-o'-lantern high, as if to look around.
+TEX2 Somewhere, in the distance, a horse screams.
+TEX3 The jack-o'-lantern held by a headless horseman laughs softly to itself.
+;
+; Pumpkinhead — animated scarecrow with a jack-o'-lantern head. Burns well.
+MNUMBER 9355
+NAME pumpkinhead
+ADJECTIVE 9355
+HUMAN
+*DESCRIPTION_START
+A gangling scarecrow of sticks, sacking and straw, topped by an enormous carved pumpkin whose jagged grin flickers with candlelight from within.
+*DESCRIPTION_END
+BODY 70
+EXTRABODY 20
+ATTACK1 60
+DEFENSE 50
+IMMUNITY 1 1
+IMMUNITY 2 1
+IMMUNITY 3 4
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 9 0
+RACE 28
+speed 2
+STRATEGY 501
+TREASURE 3
+WEAPON 544 -1 10
+TEXE A grinning pumpkinhead shambles in, straw trailing behind it.
+TEXG The candle inside a carved pumpkin flares, and a grinning pumpkinhead heaves itself upright!
+TEXM A grinning pumpkinhead shambles
+TEXD collapses into a heap of straw as its candle gutters out.
+TEX1 Straw falls from a grinning pumpkinhead as it moves.
+TEX2 A grinning pumpkinhead's candle flickers, making its grin seem to widen.
+TEX3 A grinning pumpkinhead creaks, "Trick... or... treat..."
+;
+; Black cat — harmless ambience. Flees from everyone.
+MNUMBER 9356
+NAME cat
+ADJECTIVE 2
+ANIMAL
+*DESCRIPTION_START
+A sleek black cat with eyes like two gold coins. It regards you with the absolute contempt only a cat can manage.
+*DESCRIPTION_END
+BODY 8
+ATTACK1 15
+DEFENSE 40
+speed 1
+STRATEGY 201
+TREASURE 0
+WEAPON 279 -1 10
+TEXE A black cat slinks in.
+TEXG A black cat slinks out of the shadows.
+TEXM A black cat slinks
+TEXF A black cat hisses and bolts
+TEXD yowls once and goes still.
+TEX1 A black cat washes one paw, ignoring you.
+TEX2 A black cat crosses your path. Deliberately.
+TEX3 A black cat stares at an empty patch of air, its fur standing on end.
+TEX4 A black cat yowls at the moon.
+;
+; Vampire — greater undead, drains fatigue.
+MNUMBER 9357
+NAME vampire
+ADJECTIVE 9356
+HUMAN
+*DESCRIPTION_START
+An elegant figure in an old-fashioned high-collared cloak, with a face as white as candle wax and lips far too red. When it smiles, you see that its canine teeth are long and sharp.
+*DESCRIPTION_END
+ALIGNMENT -90
+BODY 220
+EXTRABODY 60
+ATTACK1 150
+DEFENSE 130
+MAGICWEAPON 1
+FATIGUE 35 15
+IMMUNITY 5 1
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 8 2
+RACE 22
+MANA 100
+SPELLSKILL 100
+SPELLUSE 25
+CASTLEVEL 15
+SPELL 201
+SPELL 211
+RESIST 60
+speed 1
+STRATEGY 350
+TREASURE 8
+WEAPON 280 -1 10
+TEXE A pale vampire glides in, cloak sweeping the ground.
+TEXG A cloud of bats swirls together and becomes a pale vampire!
+TEXM A pale vampire glides
+TEXF A pale vampire dissolves into a cloud of bats and flutters
+TEXL A pale vampire fixes a hypnotic stare
+TEXD crumbles into a pile of grey ash.
+TEX1 A pale vampire smiles, showing its fangs. "Good evening."
+TEX2 A pale vampire adjusts its high collar.
+TEX3 A pale vampire glances at the sky, as if checking for the dawn.
+;
+; Banshee — screaming spirit. Special attack is her wail.
+MNUMBER 9358
+NAME banshee
+ADJECTIVE 9357
+HUMAN
+GENDER 1
+*DESCRIPTION_START
+The ghost of a gaunt woman with long, wild white hair that streams around her as if in a gale. Her mouth is open far wider than any living mouth should open.
+*DESCRIPTION_END
+ALIGNMENT -40
+BODY 120
+EXTRABODY 30
+ATTACK1 90
+DEFENSE 100
+DISCORPORATE
+MAGICWEAPON 1
+IMMUNITY 0 0
+IMMUNITY 1 1
+IMMUNITY 2 1
+IMMUNITY 5 0
+IMMUNITY 6 0
+IMMUNITY 7 0
+IMMUNITY 8 3
+IMMUNITY 9 0
+RACE 22
+SPECUSE 25
+SPECUSES 4
+SPECBASE 8
+SPECDMG 12
+SPECDMGTYPE COLD
+speed 2
+STRATEGY 340
+TREASURE 4
+WEAPON 544 -1 10
+TEXE A shrieking banshee sweeps in on a howling wind.
+TEXG A howling wind rises, and a shrieking banshee takes shape within it!
+TEXM A shrieking banshee sweeps
+TEXF A shrieking banshee wails and flies
+TEXI Your weapon passes through the banshee as if through smoke.
+TEXX %s opens her mouth impossibly wide and screams at %s!
+TEXD lets out one last, dwindling scream and is gone.
+TEX1 A shrieking banshee keens a name you do not recognize. You hope you never will.
+TEX2 A shrieking banshee combs her wild hair with skeletal fingers.
+;
+; Restless spirit — reserved for story files (HALLOWEEN2026.SCR uses its own
+; MNUMBER 9300); 9359 left free.
+
+; ── Rooms ─────────────────────────────────────────────────────────────────────
+
+; 287 — the festival lot outside the Old Fayd Cemetery gate. Base: FAYD.SCR /
+; FAYD<season>.SCR room 287 (gate portal, thieves' alley, exits unchanged).
+; MONSTER_GROUP 2 removed so Poor Quarter toughs don't spawn into the party.
+NUMBER 287
+NAME Poor Quarter, festival lot
+OUTDOOR_OTHER
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+Rubble has been cleared from the west end of this alley to make room for the Fall Festival. Strings of paper lanterns sway between the leaning tenements, and logs have been dragged into a ring around a crackling campfire to serve as benches. A trestle table sags beneath pumpkin bread and a steaming kettle of hot cider, free to all, and a gaudy striped balloon cart is parked against one wall beside a velvet-draped stool where a crystal ball glimmers. Beyond the merriment, an imposing iron gate still seals off the Old Fayd Cemetery, its chains rattling softly whenever the wind finds them.
+*DESCRIPTION_END
+ITEM 0 219 VAL2=299
+ITEM 1 692 val2=644 VAL5=1
+ITEM 2 9360
+ITEM 3 9361
+ITEM 4 9362
+ITEM 5 9363
+ITEM 6 9364
+ITEM 7 9365
+ITEM 9 693 ADJ1=10
+EXIT E 286
+EXIT ABOVE 2152
+*DESCRIPTION_START ITEM EXAM 2
+A cheerful fire of split logs crackles inside a ring of old grave-curbing stones. Sparks drift up into the dark and wink out among the paper lanterns.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 3
+A long trestle table covered in an orange cloth. A hand-lettered card propped against the kettle reads, "Help yourself! -- the Festival Committee." (GET BREAD or GET CIDER)
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 6
+A wooden cart painted in loud stripes of orange and black, with dozens of balloons bobbing on strings tied to its rail. A price board is nailed to the side.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM READ 6
+         ~ BALLOONS ~
+  Orange, black, purple or white ..... 1 shilling
+  TREASURE balloon ................... 1 crown
+     (POP it and see what's inside!)
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 7
+A crystal ball the size of a melon rests on a velvet-draped stool. Faint mist stirs inside it. A small sign reads, "Touch, and know thy fortune."
+*DESCRIPTION_END
+STOREITEM 739 225 10
+STOREITEM 739 25 10
+STOREITEM 739 248 10
+STOREITEM 739 347 10
+STOREITEM 739 9350 100
+;
+; 199 — Randolphs (FAYD.SCR). Unchanged except a festival display, a price card,
+; and STOREITEMs (the original shop had none).
+NUMBER 199
+NAME Randolphs
+FIXED_LIGHT
+INDOOR_FLOOR
+BUY_JEWELRY
+CALL 33
+*DESCRIPTION_START
+Plush ruby colored carpeting muffles your footsteps as you enter this fine
+establishment. Shimmering rainbows of light, created by hundreds of tear-
+shaped crystals dangling from an enormous golden chandelier overhead, are
+reflected in the spotless glass counters encircling the room. A distinquished
+tuxcedo clad gentlemen standing between a pair of white marble columns carved
+with heroic scenes, waits to assist you. For the Fall Festival, one counter
+has been draped in cobwebs and filled with novelty jewelry, and a small sign
+beside it lists the festival prices.
+*DESCRIPTION_END
+ITEM 0 350 VAL2=266
+ITEM 1 470 ADJ1=303 ADJ2=143
+ITEM 2 1509 ADJ1=347 ADJ2=187
+ITEM 3 1509 ADJ1=347 ADJ2=187
+ITEM 4 1249 ADJ1=468
+ITEM 5 1416 ADJ1=241 ADJ2=32
+ITEM 6 204
+*DESCRIPTION_START ITEM READ 6
+      RANDOLPHS -- FALL FESTIVAL NOVELTIES
+  Spider ring (black, orange, purple plastic) ..... 5 shillings
+  Spiderweb earcuff (silver) ...................... 5 crowns
+  Spiderweb earcuff (gold) ........................ 12 crowns
+*DESCRIPTION_END
+STOREITEM 9355 25 50
+STOREITEM 9355 225 50
+STOREITEM 9355 248 50
+STOREITEM 9356 292 500
+STOREITEM 9356 147 1200
+;
+; 359 — Tailor's Shop (FAYDINDR.SCR). Original stock unchanged; festival shirts
+; and masks added, and the price sign extended.
+NUMBER 359
+NAME Tailor's Shop
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+Various cloaks, breeches and other articles of clothing are on display throughout the shop. The tailor and his apprentices are busy at work completing a few items. Business must be going quite well if the level of activity here is any indication. Orange and black bunting hangs over a rack of festival shirts and a basket of masks by the door. A sign nailed to the wall lists the clothing for sale.
+*DESCRIPTION_END
+EXIT O 255
+ITEM 0 204
+ITEM 9 693 ADJ1=10
+
+*DESCRIPTION_START ITEM READ 0
+Item                 Price
+----                 -----
+Breeches            20 Crowns
+Cape                20 Crowns
+Cloak               30 Crowns
+Doublet             20 Crowns
+Surcoat             40 Crowns
+Tunic               20 Crowns
+
+All items are available in black, blue, brown, green, red, violet and white.
+
+FALL FESTIVAL SPECIALS
+Festival shirt       3 Crowns   (orange, black, purple or white)
+Festival mask        2 Crowns   (pumpkin, skull, ghostly or black)
+*DESCRIPTION_END
+STOREITEM 252 -1 3000
+STOREITEM 252 25 3000
+STOREITEM 252 40 3000
+STOREITEM 252 29 3000
+STOREITEM 252 152 3000
+STOREITEM 252 259 3000
+STOREITEM 252 347 3000
+STOREITEM 252 340 3000
+STOREITEM 253 -1 2000
+STOREITEM 253 25 2000
+STOREITEM 253 40 2000
+STOREITEM 253 29 2000
+STOREITEM 253 152 2000
+STOREITEM 253 259 2000
+STOREITEM 253 347 2000
+STOREITEM 253 340 2000
+STOREITEM 254 -1 2000
+STOREITEM 254 25 2000
+STOREITEM 254 40 2000
+STOREITEM 254 29 2000
+STOREITEM 254 152 2000
+STOREITEM 254 259 2000
+STOREITEM 254 347 2000
+STOREITEM 254 340 2000
+STOREITEM 255 -1 2000
+STOREITEM 255 25 2000
+STOREITEM 255 40 2000
+STOREITEM 255 29 2000
+STOREITEM 255 152 2000
+STOREITEM 255 259 2000
+STOREITEM 255 347 2000
+STOREITEM 255 340 2000
+STOREITEM 256 -1 4000
+STOREITEM 256 25 4000
+STOREITEM 256 40 4000
+STOREITEM 256 29 4000
+STOREITEM 256 152 4000
+STOREITEM 256 259 4000
+STOREITEM 256 347 4000
+STOREITEM 256 340 4000
+STOREITEM 257 -1 2000
+STOREITEM 257 25 2000
+STOREITEM 257 40 2000
+STOREITEM 257 29 2000
+STOREITEM 257 152 2000
+STOREITEM 257 259 2000
+STOREITEM 257 347 2000
+STOREITEM 257 340 2000
+STOREITEM 258 -1 2000
+STOREITEM 258 25 2000
+STOREITEM 258 40 2000
+STOREITEM 258 29 2000
+STOREITEM 258 152 2000
+STOREITEM 258 259 2000
+STOREITEM 258 347 2000
+STOREITEM 258 340 2000
+STOREITEM 535 -1 10000
+STOREITEM 535 25 10000
+STOREITEM 535 40 10000
+STOREITEM 535 29 10000
+STOREITEM 535 152 10000
+STOREITEM 535 259 10000
+STOREITEM 535 347 10000
+STOREITEM 535 340 10000
+STOREITEM 536 -1 500
+STOREITEM 536 25 500
+STOREITEM 536 40 500
+STOREITEM 536 29 500
+STOREITEM 536 152 500
+STOREITEM 536 259 500
+STOREITEM 536 347 500
+STOREITEM 536 340 500
+STOREITEM 9350 225 300
+STOREITEM 9350 25 300
+STOREITEM 9350 248 300
+STOREITEM 9350 347 300
+STOREITEM 9357 971 200
+STOREITEM 9357 714 200
+STOREITEM 9357 1374 200
+STOREITEM 9357 25 200
+;
+; 398 — Aunt Emma's Bakery (FAYDINDR.SCR). Original stock unchanged; festival
+; treats added to the display and to the store.
+NUMBER 398
+NAME Aunt Emma's Bakery
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+There are a few tables with red checkered cloths and some white wicker chairs near the window. The air is heavily laden with the scent of cinnamon and nutmeg. Aunt Emma herself presides behind the glass display counter filled with an abundance of luscious goodies, and for the Fall Festival a whole shelf has been given over to sugar skulls, caramel apples and pumpkin everything.
+*DESCRIPTION_END
+EXIT O 396
+ITEM 0 852 ADJ1=143
+ITEM 1 249 ADJ1=178
+ITEM 2 91
+EXTEND 2 with covered with a checkered tablecloth
+ITEM 3 86 ADJ1=347 ADJ2=748
+ITEM 9 693 ADJ1=10
+
+IFVERB SMELL -1
+	IFVAR RAC < 7
+		ECHO PLAYER The scent of Aunt Emma's cinnamon rolls makes you instantly hungry.
+	ELSE
+		ECHO PLAYER The scent of Aunt Emma's cinnamon rolls makes you wish you could eat.
+	ENDIF
+ENDIF
+IFVERB LOOK 1
+	SHOWROOM 396
+	CLEARVERB
+ENDIF
+*DESCRIPTION_START ITEM IN 0
+Many delicious items are on display here with tiny signs showing their prices:
+
+            Chocolate cake     3 pennies per slice
+            Coffee cake        2 pennies per slice
+            Honey bread        1 penny per loaf
+            Cherry pie         1 shilling per slice
+            Custard pie        1 shilling per slice
+            Rainbow cookies    1 penny each
+
+            -- Fall Festival treats --
+            Sugar skull        2 pennies
+            Caramel apple      5 pennies
+            Pumpkin pie        1 shilling per slice
+            Pumpkin bread      3 pennies
+            Spiced cider       3 pennies
+*DESCRIPTION_END
+STOREITEM 293 54 3
+STOREITEM 293 480 2
+STOREITEM 1413 387 1
+STOREITEM 1414 651 10
+STOREITEM 1414 1030 10
+STOREITEM 790 1055 1
+STOREITEM 9351 933 2
+STOREITEM 9352 -1 5
+STOREITEM 1414 971 10
+STOREITEM 9354 -1 3
+STOREITEM 9353 -1 3
+
+; ── Cyclic events ─────────────────────────────────────────────────────────────
+; Keep these LAST: a CEVENT body runs until the next NUMBER/INUMBER/MNUMBER/
+; CEVENT/MACRO line, so anything after one (vocabulary, VARIABLEs) would be
+; swallowed into it.
+
+; CEVENT 9350 (every ~90s): festival revelry around the city. One random line
+; in one random festival-route room per firing.
+CEVENT 9350 30 206
+IFVAR HWQUIET = 0
+  RANDOM HWRND 1 14
+  IFVAR HWRND = 1
+    AFFECT 206
+    ECHO ALL A troupe of children in paper masks runs shrieking through the bazaar, chased by a laughing youth draped in a bedsheet.
+  ENDIF
+  IFVAR HWRND = 2
+    AFFECT 202
+    ECHO ALL A juggler in a pumpkin mask tosses flaming torches high into the air to scattered applause.
+  ENDIF
+  IFVAR HWRND = 3
+    AFFECT 209
+    ECHO ALL The smell of roasting nuts and hot cider drifts through the bazaar.
+  ENDIF
+  IFVAR HWRND = 4
+    AFFECT 203
+    ECHO ALL A merchant hangs a string of paper bats over his stall, then steps back to admire them.
+  ENDIF
+  IFVAR HWRND = 5
+    AFFECT 250
+    ECHO ALL A crier calls out, "Fall Festival tonight! Stories by the fire at the cemetery gate in the Poor Quarter! Free cider!"
+  ENDIF
+  IFVAR HWRND = 6
+    AFFECT 253
+    ECHO ALL A couple strolls past arm in arm, sharing a caramel apple and arguing cheerfully about ghosts.
+  ENDIF
+  IFVAR HWRND = 7
+    AFFECT 286
+    ECHO ALL Laughter and the crackle of a bonfire drift up the alley from the west.
+  ENDIF
+  IFVAR HWRND = 8
+    AFFECT 287
+    ECHO ALL Someone near the campfire begins a ghost story, and the listeners lean in close.
+  ENDIF
+  IFVAR HWRND = 9
+    AFFECT 287
+    ECHO ALL A balloon slips free of the cart and drifts up past the paper lanterns into the dark.
+  ENDIF
+  IFVAR HWRND = 10
+    AFFECT 287
+    ECHO ALL The campfire pops loudly, and half the people around it jump.
+  ENDIF
+  IFVAR HWRND = 11
+    AFFECT 265
+    ECHO ALL Jack-o'-lanterns grin from the park railings, their candles guttering in the breeze.
+  ENDIF
+  IFVAR HWRND = 12
+    AFFECT 201
+    ECHO ALL The gate guards have stuck a carved pumpkin on top of the gatehouse, and are pretending not to be proud of it.
+  ENDIF
+  IFVAR HWRND = 13
+    AFFECT 224
+    ECHO ALL A vendor hawks sugar skulls from a tray hung around his neck. "Sweet as sin and half the price!"
+  ENDIF
+  IFVAR HWRND = 14
+    AFFECT 288
+    ECHO ALL A pair of revelers in mismatched costumes stagger past, singing a song that has lost most of its words.
+  ENDIF
+ENDIF
+
+; CEVENT 9351 (every ~2m): chill winds and unease around the cemetery.
+CEVENT 9351 40 299
+IFVAR HWQUIET = 0
+  RANDOM HWRND2 1 10
+  IFVAR HWRND2 = 1
+    AFFECT 287
+    ECHO ALL A cold wind gusts out from between the cemetery gate's bars, and the campfire flattens for a moment before springing back.
+  ENDIF
+  IFVAR HWRND2 = 2
+    AFFECT 287
+    ECHO ALL The chains on the cemetery gate clink softly, though no one is touching them.
+  ENDIF
+  IFVAR HWRND2 = 3
+    AFFECT 299
+    ECHO ALL A chill wind moans through the gravestones, carrying the faint sound of laughter from the festival beyond the gate.
+  ENDIF
+  IFVAR HWRND2 = 4
+    AFFECT 300
+    ECHO ALL Dead leaves skitter across the trail and settle against the broken obelisk.
+  ENDIF
+  IFVAR HWRND2 = 5
+    AFFECT 301
+    ECHO ALL The crows in the willow fall silent all at once, then resume their quarrelling.
+  ENDIF
+  IFVAR HWRND2 = 6
+    AFFECT 309
+    ECHO ALL The grey leaves of the Maytan tree whisper against the gravestones, though the air is still.
+  ENDIF
+  IFVAR HWRND2 = 7
+    AFFECT 310
+    ECHO ALL For a moment you could swear you see a light moving among the graves below the hillock. Then it is gone.
+  ENDIF
+  IFVAR HWRND2 = 8
+    AFFECT 307
+    ECHO ALL Something inside the ruined house creaks, like a sleeper turning over in a rusted bed.
+  ENDIF
+  IFVAR HWRND2 = 9
+    AFFECT 302
+    ECHO ALL A clod of earth tumbles into the empty grave beside the trail with a soft, final thump.
+  ENDIF
+  IFVAR HWRND2 = 10
+    AFFECT 288
+    ECHO ALL An icy draft curls out of the alley to the west, smelling of wet earth.
+  ENDIF
+ENDIF
+
+; CEVENT 9352 (every ~2m): Halloween monster spawner, OFF unless @set HWHAUNT 1.
+; Picks one cemetery room; spawns only if no creature is already there, so at
+; most one Halloween monster per room (hostile ones don't wander, and the
+; cemetery only connects to the city through the gate portal). Never spawns in
+; the festival lot (287) or the caretaker's house (308).
+CEVENT 9352 40 299
+IFVAR HWHAUNT = 1
+  RANDOM HWRND 1 8
+  IFVAR HWRND = 1
+    AFFECT 299
+  ENDIF
+  IFVAR HWRND = 2
+    AFFECT 300
+  ENDIF
+  IFVAR HWRND = 3
+    AFFECT 301
+  ENDIF
+  IFVAR HWRND = 4
+    AFFECT 302
+  ENDIF
+  IFVAR HWRND = 5
+    AFFECT 307
+  ENDIF
+  IFVAR HWRND = 6
+    AFFECT 309
+  ENDIF
+  IFVAR HWRND = 7
+    AFFECT 310
+  ENDIF
+  IFVAR HWRND = 8
+    AFFECT 3186
+  ENDIF
+  IFVAR MONINROOM < 1
+    RANDOM HWRND2 1 10
+    IFVAR HWRND2 = 1
+      GENMON 9350
+    ENDIF
+    IFVAR HWRND2 = 2
+      GENMON 9351
+    ENDIF
+    IFVAR HWRND2 = 3
+      GENMON 9351
+    ENDIF
+    IFVAR HWRND2 = 4
+      GENMON 9352
+    ENDIF
+    IFVAR HWRND2 = 5
+      GENMON 9355
+    ENDIF
+    IFVAR HWRND2 = 6
+      GENMON 9355
+    ENDIF
+    IFVAR HWRND2 = 7
+      GENMON 9356
+    ENDIF
+    IFVAR HWRND2 = 8
+      GENMON 9357
+    ENDIF
+    IFVAR HWRND2 = 9
+      GENMON 9358
+    ENDIF
+    IFVAR HWRND2 = 10
+      GENMON 9354
+    ENDIF
+  ENDIF
+ENDIF

@@ -34,7 +34,7 @@ type PlayerPresence struct {
 type Event struct {
 	ID            bson.ObjectID `bson:"_id,omitempty"`
 	MachineID     string        `bson:"machineId"`
-	Type          string        `bson:"type"` // room_broadcast, global_broadcast, send_to_player, gm_broadcast
+	Type          string        `bson:"type"` // room_broadcast, global_broadcast, send_to_player, gm_broadcast, gm_channel
 	RoomNumber     int            `bson:"roomNumber,omitempty"`
 	TargetPlayer   string         `bson:"targetPlayer,omitempty"`
 	ExcludePlayers []string       `bson:"excludePlayers,omitempty"`

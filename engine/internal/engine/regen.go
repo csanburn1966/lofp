@@ -12,9 +12,9 @@ import (
 // based on their stats and position.
 //
 // Regen rates (per tick):
-//   - Fatigue: Constitution / 20 (min 1)
-//   - Mana: (Willpower + Empathy) / 30 (min 1)
-//   - PSI: Willpower / 20 (min 1)
+//   - Fatigue: Constitution / 10, rounded up (min 1)
+//   - Mana: Empathy / 10, rounded up (min 1)
+//   - PSI: Willpower / 10, rounded up (min 1)
 //   - Body Points: Constitution / 50 (min 1, only when injured)
 //
 // Position multipliers:
@@ -66,7 +66,7 @@ func (e *GameEngine) regenTick() {
 
 		// Fatigue regen
 		if p.Fatigue < p.MaxFatigue {
-			base := p.Constitution / 20
+			base := ceilDiv(p.Constitution, 10)
 			if base < 1 {
 				base = 1
 			}
@@ -83,7 +83,7 @@ func (e *GameEngine) regenTick() {
 
 		// Mana regen
 		if p.Mana < p.MaxMana {
-			base := (p.Willpower + p.Empathy) / 30
+			base := ceilDiv(p.Empathy, 10)
 			if base < 1 {
 				base = 1
 			}
@@ -100,7 +100,7 @@ func (e *GameEngine) regenTick() {
 
 		// PSI regen
 		if p.Psi < p.MaxPsi {
-			base := p.Willpower / 20
+			base := ceilDiv(p.Willpower, 10)
 			if base < 1 {
 				base = 1
 			}
@@ -132,8 +132,16 @@ func (e *GameEngine) regenTick() {
 			changed = true
 		}
 
-		// Poison damage
-		if p.Poisoned && !died {
+		// Undead have no life force for poison or disease to work on (GMSCRIPT.DOC
+		// immunity #7). Clears what a character had before a GM made them undead.
+		if p.IsUndead() && (p.Poisoned || p.Diseased) {
+			p.Poisoned, p.PoisonLevel = false, 0
+			p.Diseased, p.DiseaseLevel = false, 0
+			changed = true
+		}
+
+		// Poison damage — Mist Form / Slime Form take no damage from anything, including DOTs.
+		if p.Poisoned && !died && !p.IsFormLocked() {
 			lvl := p.PoisonLevel
 			if lvl < 1 {
 				lvl = 1
@@ -166,8 +174,19 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
-		// Bleeding damage (from unhealed slash/puncture wounds)
-		if p.Bleeding && !died {
+		// A wound left bleeding from before the player stopped being able to bleed
+		// (Ephemerals, whose no-bleeding trait was added after characters existed)
+		// stops here rather than draining them until healed.
+		if p.Bleeding && !p.CanBleed() {
+			for i := range p.Wounds {
+				p.Wounds[i].Bleeding = false
+			}
+			p.Bleeding = false
+			changed = true
+		}
+
+		// Bleeding damage (from unhealed slash/puncture wounds) — Mist Form / Slime Form immune.
+		if p.Bleeding && !died && !p.IsFormLocked() {
 			total := 0
 			for _, w := range p.Wounds {
 				if w.Bleeding {
@@ -204,8 +223,8 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
-		// Disease damage
-		if p.Diseased && !died {
+		// Disease damage — Mist Form / Slime Form immune.
+		if p.Diseased && !died && !p.IsFormLocked() {
 			lvl := p.DiseaseLevel
 			if lvl < 1 {
 				lvl = 1
@@ -255,6 +274,16 @@ func (e *GameEngine) regenTick() {
 			}
 			if e.roomBroadcast != nil {
 				e.roomBroadcast(p.RoomNumber, []string{fmt.Sprintf("%s stirs and regains consciousness.", p.FirstName)})
+			}
+		}
+
+		// Check for expired melee-crit stun (see monsterAttackPlayer)
+		if p.Stunned && !p.StunExpiry.IsZero() && time.Now().After(p.StunExpiry) {
+			p.Stunned = false
+			p.StunExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"You shake off the stun and can act again."})
 			}
 		}
 
@@ -385,6 +414,47 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
+		// Light (113) / Night Vision (520) — see darkness.go.
+		if !p.LightSpellExpiry.IsZero() && !p.LightSpellActive() {
+			p.LightSpellExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"The glow surrounding you fades away."})
+			}
+			if !p.IsConcealed() && e.roomBroadcastExclude != nil {
+				e.roomBroadcastExclude(p.RoomNumber, p.FirstName, []string{fmt.Sprintf("The glow surrounding %s fades away.", p.DisplayName())})
+			}
+		}
+		// Mindlink (403) telepathy from the spell, herb or potion. It never used
+		// to expire. Innate telepathy (Ephemeral, Telepathor) stays on.
+		if !p.TelepathyExpiry.IsZero() && time.Now().After(p.TelepathyExpiry) {
+			p.TelepathyExpiry = time.Time{}
+			changed = true
+			if p.TelepathyActive && !p.hasInnateTelepathy() {
+				p.TelepathyActive = false
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"Your mind closes to the thoughts of others."})
+				}
+			}
+		}
+		if !p.NightVisionExpiry.IsZero() && !p.NightVisionActive() {
+			p.NightVisionExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"Your night vision fades."})
+			}
+		}
+
+		// Check for expired Divine Blessing buff (spell 347)
+		if p.DivineBlessingBonus > 0 && !p.DivineBlessingExpiry.IsZero() && time.Now().After(p.DivineBlessingExpiry) {
+			p.DivineBlessingBonus = 0
+			p.DivineBlessingExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"The divine light fades from you."})
+			}
+		}
+
 		// Check for expired Haste buff
 		if !p.HasteExpiry.IsZero() && time.Now().After(p.HasteExpiry) {
 			p.HasteExpiry = time.Time{}
@@ -442,14 +512,26 @@ func (e *GameEngine) regenTick() {
 			p.FlyExpiry = time.Time{}
 			p.CanFly = false
 			changed = true
-			if p.Position == 4 {
-				p.Position = 0
-				if e.roomBroadcast != nil {
-					e.roomBroadcast(p.RoomNumber, []string{fmt.Sprintf("%s drifts to the ground as the magic fades.", p.FirstName)})
+			// Over open sky there's no ground to settle onto — fall instead
+			// (skyfall.go). A Drakin still flies on their own, so stays aloft.
+			if fallMsgs := e.fallIfFlightLost(context.Background(), p, true); fallMsgs != nil {
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, append([]string{"The magic sustaining your flight fades!"}, fallMsgs...))
 				}
-			}
-			if e.sendToPlayer != nil {
-				e.sendToPlayer(p.FirstName, []string{"The magic sustaining your flight fades. You settle back to the ground."})
+			} else if p.IsFlying() {
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"The magic of your Fly spell fades, but your own wings keep you aloft."})
+				}
+			} else {
+				if p.Position == 4 {
+					p.Position = 0
+					if e.roomBroadcast != nil {
+						e.roomBroadcast(p.RoomNumber, []string{fmt.Sprintf("%s drifts to the ground as the magic fades.", p.FirstName)})
+					}
+				}
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"The magic sustaining your flight fades. You settle back to the ground."})
+				}
 			}
 		}
 
@@ -459,6 +541,22 @@ func (e *GameEngine) regenTick() {
 			changed = true
 			if e.sendToPlayer != nil {
 				e.sendToPlayer(p.FirstName, []string{"The magical slowness fades. You feel yourself return to normal speed."})
+			}
+		}
+
+		// Paranoia (spell 226): while active, a 50% chance each real minute to send
+		// one random unsettling echo (see paranoiaEchoes in spells.go).
+		if !p.ParanoiaExpiry.IsZero() {
+			if time.Now().After(p.ParanoiaExpiry) {
+				p.ParanoiaExpiry = time.Time{}
+				changed = true
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{"Your paranoia fades. You feel at ease once more."})
+				}
+			} else if rand.Intn(2) == 0 {
+				if e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{paranoiaEchoes[rand.Intn(len(paranoiaEchoes))]})
+				}
 			}
 		}
 
@@ -519,6 +617,11 @@ func revertExpiredBladeSpell(item *InventoryItem) bool {
 	item.BladeSpellPrevVal3 = 0
 	item.BladeSpellPrevVal5 = 0
 	return true
+}
+
+// ceilDiv returns n/d rounded up, for non-negative n and positive d.
+func ceilDiv(n, d int) int {
+	return (n + d - 1) / d
 }
 
 func positionMultiplier(position int) float64 {

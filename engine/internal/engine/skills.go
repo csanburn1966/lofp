@@ -78,6 +78,7 @@ var SkillPrerequisites = map[int][]int{
 	27: {26},                        // Mind over Mind requires Psionics
 	28: {26},                        // Mind over Matter requires Psionics
 	34: {33},                        // Disguise requires Stealth
+	2:  {33},                        // Backstab requires Stealth (house rule; skills.txt lists none)
 }
 
 // checkPrerequisite returns true if the player meets prerequisites for a skill.
@@ -231,19 +232,23 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 			return &CommandResult{Messages: []string{fmt.Sprintf("Not enough build points. %s costs %d BP (you have %d).", name, bpCost, player.BuildPoints)}}
 		}
 
-		// Only ranks within the room's own posted training cap are charged gold;
-		// ranks made available by a fellow player's TEACH are free.
-		goldCost := 0
+		// Only ranks within the room's own posted training cap are charged a fee;
+		// ranks made available by a fellow player's TEACH are free. The fee is
+		// 5 gold crowns per rank, charged in the room's regional currency at the
+		// MONEYDEF exchange rate (currency.go) — e.g. the Kragenholm
+		// weaponmaster's yard takes kragenmarks, like the town's shops do.
+		md := e.roomCurrency(player.RoomNumber)
+		fee := 0
 		if player.Level > 4 && currentLvl+1 <= o.roomMaxLevel {
-			goldCost = 5 * (currentLvl + 1)
+			fee = copperToCurrency(md, 5*(currentLvl+1)*100)
 		}
-		if goldCost > 0 && player.Gold < goldCost {
-			return &CommandResult{Messages: []string{fmt.Sprintf("Training costs %d gold crowns. You only have %d.", goldCost, player.Gold)}}
+		if fee > 0 && playerFunds(player, md) < fee {
+			return &CommandResult{Messages: []string{fmt.Sprintf("Training costs %s. You only have %s.", formatCurrency(md, fee), formatCurrency(md, playerFunds(player, md)))}}
 		}
 
 		player.BuildPoints -= bpCost
-		if goldCost > 0 {
-			player.Gold -= goldCost
+		if fee > 0 {
+			e.spendFunds(player, md, fee)
 		}
 		player.Skills[o.skillID] = currentLvl + 1
 
@@ -262,15 +267,20 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 			}
 		}
 
+		rankMsg := e.autoTrainOrgRank(player, player.RoomNumber, bpCost)
+
 		e.SavePlayer(ctx, player)
 
 		goldMsg := ""
-		if goldCost > 0 {
-			goldMsg = fmt.Sprintf(", %d gold", goldCost)
+		if fee > 0 {
+			goldMsg = ", " + formatCurrency(md, fee)
 		}
 		msgs := []string{fmt.Sprintf("You train in %s to rank %d. (-%d BP%s, %d BP remaining)", name, currentLvl+1, bpCost, goldMsg, player.BuildPoints)}
 		if giftMsg != "" {
 			msgs = append(msgs, giftMsg)
+		}
+		if rankMsg != "" {
+			msgs = append(msgs, rankMsg)
 		}
 		return &CommandResult{
 			Messages:    msgs,
@@ -351,6 +361,8 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 		}
 	}
 	containerTarget, containerMine := stripMyPrefix(containerTarget)
+	containerTarget, ordSkip := parseOrdinal(containerTarget)
+	skip := ordSkip
 
 	// Find a lockpick in inventory, recording its index and material adjective.
 	pickIdx := -1
@@ -377,7 +389,7 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	// tryPick returns (success bool, roll int). The roll value lets the caller
 	// assess how badly a failure was (higher roll = worse fumble).
 	tryPick := func(lockDiff int) (bool, int) {
-		chance := 30 + lockSkill*5 + player.Agility/5 - lockDiff
+		chance := 30 + lockSkill*5 + player.Agility/5 - lockDiff + unemoteSkillBonus(player)
 		if chance < 5 {
 			chance = 5
 		}
@@ -410,7 +422,7 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	successMsg := func(displayName string) *CommandResult {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You hear a soft CLICK as you pick the lock on %s.", displayName)},
-			RoomBroadcast: []string{fmt.Sprintf("You hear a soft CLICK as %s picks the lock on %s.", player.FirstName, displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("You hear a soft CLICK as %s picks the lock on %s.", player.DisplayName(), displayName)},
 		}
 	}
 
@@ -422,7 +434,7 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 		}
 		return &CommandResult{
 			Messages:      msgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s fiddles with a lock on %s.", player.FirstName, displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s fiddles with a lock on %s.", player.DisplayName(), displayName)},
 		}
 	}
 
@@ -430,13 +442,20 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	// over one merely lying in the room (matches doPut/doGetAllFromContainer).
 	for i, ii := range player.Inventory {
 		def := e.items[ii.Archetype]
-		if def == nil || strings.ToUpper(ii.State) != "LOCKED" {
+		if def == nil {
 			continue
 		}
 		if !matchesTarget(e.getItemNounName(def), containerTarget, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
 			continue
 		}
+		if skip > 0 {
+			skip--
+			continue
+		}
 		displayName := e.formatItemName(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+		if strings.ToUpper(ii.State) != "LOCKED" {
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't locked.", displayName)}}
+		}
 		chance := 30 + lockSkill*5 + player.Agility/5 - ii.Val1
 		if chance < 5 {
 			chance = 5
@@ -458,13 +477,20 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	if room != nil && !containerMine {
 		for i, ri := range room.Items {
 			def := e.items[ri.Archetype]
-			if def == nil || strings.ToUpper(ri.State) != "LOCKED" {
+			if def == nil {
 				continue
 			}
 			if !matchesTarget(e.getItemNounName(def), containerTarget, e.getAdjName(ri.Adj1), e.getAdjName(ri.Adj2), e.getAdjName(ri.Adj3)) {
 				continue
 			}
+			if skip > 0 {
+				skip--
+				continue
+			}
 			displayName := e.formatItemName(def, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+			if strings.ToUpper(ri.State) != "LOCKED" {
+				return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't locked.", displayName)}}
+			}
 			chance := 30 + lockSkill*5 + player.Agility/5 - ri.Val1
 			if chance < 5 {
 				chance = 5
@@ -514,7 +540,7 @@ func (e *GameEngine) doTend(ctx context.Context, player *Player, args []string) 
 		return e.tendPlayer(ctx, player, player, "yourself", healSkill)
 	}
 	if found := e.findPlayerInRoom(player, t); found != nil {
-		return e.tendPlayer(ctx, player, found, found.FirstName, healSkill)
+		return e.tendPlayer(ctx, player, found, found.DisplayName(), healSkill)
 	}
 	if inst, def := e.findMonsterInRoomIncludeDead(player, t); inst != nil {
 		name := FormatMonsterName(def, e.monAdjs)
@@ -599,18 +625,18 @@ func (e *GameEngine) tendPlayer(ctx context.Context, healer, target *Player, tar
 		}
 		return &CommandResult{
 			Messages:      msgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s tends to %s wounds.", healer.FirstName, healer.Possessive())},
+			RoomBroadcast: []string{fmt.Sprintf("%s tends to %s wounds.", healer.DisplayNameCap(), healer.Possessive())},
 			PlayerState:   healer,
 		}
 	}
 
-	targetMsgs := []string{fmt.Sprintf("%s tends to your %s, healing %d body points. [BP: %d/%d]", healer.FirstName, woundDesc, heal, target.BodyPoints, target.MaxBodyPoints)}
+	targetMsgs := []string{fmt.Sprintf("%s tends to your %s, healing %d body points. [BP: %d/%d]", healer.DisplayName(), woundDesc, heal, target.BodyPoints, target.MaxBodyPoints)}
 	if wakeMsg != "" {
 		targetMsgs = append(targetMsgs, wakeMsg)
 	}
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You tend to %s's %s, healing %d body points.", targetName, woundDesc, heal)},
-		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.FirstName, targetName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.DisplayNameCap(), targetName)},
 		TargetName:    target.FirstName,
 		TargetMsg:     targetMsgs,
 		PlayerState:   healer,
@@ -645,7 +671,7 @@ func (e *GameEngine) tendMonster(ctx context.Context, healer *Player, inst *Mons
 
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You tend to %s's %s. [Round: 5 sec]", targetName, woundDesc)},
-		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.FirstName, targetName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.DisplayNameCap(), targetName)},
 		PlayerState:   healer,
 	}
 }

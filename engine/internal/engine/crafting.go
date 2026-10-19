@@ -266,8 +266,12 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 		return &CommandResult{Messages: []string{fmt.Sprintf("You must wait %.0f more seconds.", remaining)}}
 	}
 
+	if player.Fatigue <= 0 {
+		return &CommandResult{Messages: []string{"You are too tired to mine right now."}}
+	}
+
 	// Success chance: base 30% + mining*5 + STR/10
-	chance := 30 + miningSkill*5 + player.Strength/10
+	chance := 30 + miningSkill*5 + player.Strength/10 + unemoteSkillBonus(player)
 	if chance > 90 {
 		chance = 90
 	}
@@ -285,7 +289,7 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{"You swing at the rock face but find nothing useful.", fmt.Sprintf("[Round: %d sec]", mineRoundTime)},
-			RoomBroadcast: []string{fmt.Sprintf("%s swings a mining tool at the rock.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s swings a mining tool at the rock.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -446,7 +450,7 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 
 	ore := InventoryItem{
 		Archetype: oreArch,
-		Val1:      purity,          // purity: chance of successful smelt
+		Val1:      purity,             // purity: chance of successful smelt
 		Val2:      oreColorVal(grade), // color: determines max weapon sharpness
 	}
 	if specialAdjID != 0 {
@@ -486,7 +490,7 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 			fmt.Sprintf("[Round: %d sec]", mineRoundTime),
 			fmt.Sprintf("You have been awarded %d experience points.", xp),
 		},
-		RoomBroadcast: []string{fmt.Sprintf("%s mines some ore from the rock.", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s mines some ore from the rock.", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
@@ -633,7 +637,7 @@ func (e *GameEngine) doMineGemAttempt(ctx context.Context, player *Player, grade
 			fmt.Sprintf("[Round: %d sec]", roundTime),
 			fmt.Sprintf("You have been awarded %d experience points.", xp),
 		},
-		RoomBroadcast: []string{fmt.Sprintf("%s discovers a gem while mining!", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s discovers a gem while mining!", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
@@ -656,7 +660,6 @@ func weightedPickMine(weights []int) int {
 	}
 	return len(weights) - 1
 }
-
 
 // ---- SMELTING ----
 
@@ -703,14 +706,14 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 	if len(args) > 0 {
 		target = strings.ToLower(strings.Join(args, " "))
 	}
+	cleanTarget, skip := parseOrdinal(target)
 
 	for i, ii := range player.Inventory {
 		def := e.items[ii.Archetype]
 		if def == nil || def.Type != "ORE" {
 			continue
 		}
-		name := strings.ToLower(e.getItemNounName(def))
-		if !strings.HasPrefix(name, target) && target != "ore" {
+		if !matchesTargetOrdinal(e.getItemNounName(def), cleanTarget, &skip, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
 			continue
 		}
 
@@ -728,7 +731,7 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 		player.RoundTime = smeltRT
 
 		// Roll against purity + skill bonus
-		smeltChance := purity + smithSkill*2
+		smeltChance := purity + smithSkill*2 + unemoteSkillBonus(player)
 		if smeltChance > 95 {
 			smeltChance = 95
 		}
@@ -737,7 +740,7 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
 				Messages:      []string{"You heat the ore in the forge, but it crumbles to useless slag.", fmt.Sprintf("[Round: %d sec]", smeltRT)},
-				RoomBroadcast: []string{fmt.Sprintf("%s works at the forge.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s works at the forge.", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
@@ -780,7 +783,7 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 				fmt.Sprintf("[Round: %d sec]", smeltRT),
 				fmt.Sprintf("You have been awarded %d experience points.", xpAward),
 			},
-			RoomBroadcast: []string{fmt.Sprintf("%s works at the forge, smelting ore.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works at the forge, smelting ore.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -793,6 +796,10 @@ func (e *GameEngine) doSmelt(ctx context.Context, player *Player, args []string)
 // metalDifficulty returns the quench success rate for a metal adjective name.
 func metalDifficulty(metal string) int {
 	switch strings.ToLower(metal) {
+	case "tin":
+		// Softer and even easier to work than copper — very low melting point —
+		// but a poor choice for a weapon (see metalQualityXPBonus).
+		return 80
 	case "copper":
 		return 70
 	case "iron", "brass", "bronze":
@@ -810,6 +817,11 @@ func metalDifficulty(metal string) int {
 // metalQualityXPBonus returns the XP bonus for metal quality when completing a weapon.
 func metalQualityXPBonus(metal string) int {
 	switch strings.ToLower(metal) {
+	case "tin":
+		// Below copper's baseline — tin is a poor, low-quality metal for a weapon,
+		// not an exotic one. Previously fell through to the "exotic" default (+300),
+		// wildly overpaying XP for the softest, lowest-quality metal available.
+		return -10
 	case "copper":
 		return 0
 	case "iron", "brass", "bronze":
@@ -834,18 +846,39 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			if !containsFlag(def.Flags, "CRAFTABLE") {
 				continue
 			}
-			name := e.nouns[def.NameID]
-			if name == "" {
+			if e.nouns[def.NameID] == "" {
 				continue
 			}
+			name := e.getItemNounName(def)
 			var skillID int
 			var skillName string
 			var skillNeeded int
-			// PARAMETER1 = Weaponsmithing level; PARAMETER2 = Jeweler/Weaving level.
-			// Substance/type order: cloth and wood first, then weapon/armor, then
-			// use PARAMETER2 > 0 to identify Jeweler items regardless of substance
-			// (STONE, HARDMETAL, SOFTMETAL, etc. all use PARAMETER2 for Jeweler).
-			if def.Substance == "CLOTH" {
+			// PARAMETER1 = the item's own stat when it has one that isn't a skill level
+			// (weapon damage tier, ARMOR/SHIELD's DR%/DefBonus) — for those, the real
+			// skill level lives in PARAMETER2 instead (confirmed against every
+			// pre-existing CRAFTABLE ARMOR item in the original 1990s data, which all
+			// have an explicit PARAMETER2 unrelated to Weight; e.g. INUMBER 222 is
+			// Weight 1 but PARAMETER2 24). Only plain weapons and WOOD-substance items
+			// (which have no competing stat on PARAMETER1) use PARAMETER1 as the level.
+			// Substance/type order: SHIELD and HIDE are checked first — SHIELD's
+			// Parameter1 is its DefBonus stat, so it can't fall into the WOOD/generic-
+			// metal branches below the way it did before this existed, and HIDE-
+			// substance ARMOR must route to Dyeing/Weaving before the generic ARMOR
+			// branch would otherwise catch it and send it to Weaponsmithing.
+			if def.Type == "SHIELD" {
+				if def.Substance == "WOOD" {
+					skillID = 18
+					skillName = "Wood Lore"
+				} else {
+					skillID = 8
+					skillName = "Weaponsmithing"
+				}
+				skillNeeded = def.Parameter2
+			} else if def.Substance == "HIDE" {
+				skillID = 15
+				skillName = "Dyeing/Weaving"
+				skillNeeded = def.Parameter2
+			} else if def.Substance == "CLOTH" {
 				skillID = 15
 				skillName = "Dyeing/Weaving"
 				skillNeeded = def.Parameter2
@@ -860,7 +893,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			} else if def.Type == "ARMOR" {
 				skillID = 8
 				skillName = "Weaponsmithing"
-				skillNeeded = def.Weight / 3
+				skillNeeded = def.Parameter2
 			} else if def.Parameter2 > 0 {
 				skillID = 0
 				skillName = "Jeweler"
@@ -893,8 +926,15 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			})
 			msgs = append(msgs, fmt.Sprintf("\n%s:", skillName))
 			for _, entry := range entries {
-				if (entry.level > 0) {
+				// A zero skillNeeded is a genuine "no training required" result for
+				// Weight/3-derived armor/shield requirements on light pieces (a buckler,
+				// circlet, or pair of gloves rounds down to 0) — previously this was
+				// silently hidden from the list entirely even though CRAFT <item> already
+				// worked for it directly, so light new items were invisible here.
+				if entry.level > 0 {
 					msgs = append(msgs, fmt.Sprintf("  %-30s (requires level %d)", entry.name, entry.level))
+				} else {
+					msgs = append(msgs, fmt.Sprintf("  %-30s (no skill required)", entry.name))
 				}
 			}
 		}
@@ -953,17 +993,50 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 		if !containsFlag(def.Flags, "CRAFTABLE") {
 			continue
 		}
-		name := strings.ToLower(e.nouns[def.NameID])
-		if !strings.HasPrefix(name, target) {
+		if !matchesTarget(e.getItemNounName(def), target) {
 			continue
 		}
+		name := e.getItemNounName(def)
 
-		// PARAMETER1 = Weaponsmithing level; PARAMETER2 = Jeweler/Weaving level.
+		// See the matching comment in the no-args listing block above: PARAMETER2 is
+		// the skill level for ARMOR/SHIELD/HIDE (PARAMETER1 is their DR%/DefBonus
+		// stat instead); PARAMETER1 is the level for plain weapons and WOOD items.
 		skillNeeded := 0
 		skillID := 0
 		skillName := ""
 
-		if def.Substance == "CLOTH" {
+		if def.Type == "SHIELD" {
+			if def.Substance == "WOOD" {
+				if !isFletcher {
+					if workshopErrMsg == "" {
+						workshopErrMsg = "You need a fletcher's workshop to craft that."
+					}
+					continue
+				}
+				skillID = 18
+				skillName = "Wood Lore"
+			} else {
+				if !isForge {
+					if workshopErrMsg == "" {
+						workshopErrMsg = "You need a forge to craft that."
+					}
+					continue
+				}
+				skillID = 8
+				skillName = "Weaponsmithing"
+			}
+			skillNeeded = def.Parameter2
+		} else if def.Substance == "HIDE" {
+			if !isLoom && !isForge {
+				if workshopErrMsg == "" {
+					workshopErrMsg = "You need a loom or forge to craft that."
+				}
+				continue
+			}
+			skillID = 15
+			skillName = "Dyeing/Weaving"
+			skillNeeded = def.Parameter2
+		} else if def.Substance == "CLOTH" {
 			if !isLoom && !isForge {
 				if workshopErrMsg == "" {
 					workshopErrMsg = "You need a loom or forge to craft that."
@@ -1002,7 +1075,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			}
 			skillID = 8
 			skillName = "Weaponsmithing"
-			skillNeeded = def.Weight / 3
+			skillNeeded = def.Parameter2
 		} else if def.Parameter2 > 0 {
 			if !isLoom && !isForge {
 				if workshopErrMsg == "" {
@@ -1035,8 +1108,13 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			continue
 		}
 
-		// For weapons at the forge, enter the CRAFT→WORK cycle instead of instant creation
-		if isForge && isWeapon(def.Type) {
+		// At the forge: weapons, and now metal ARMOR/SHIELD too, all enter the SAME
+		// CRAFT→WORK cycle (heat/hammer/quench/buff/sharpen-or-finish) rather than
+		// instant creation — armor and shields must follow the identical procedure
+		// as every other Weaponsmithing item, not a shortcut. Gated on skillID == 8
+		// so a HIDE-substance ARMOR item (routed to Dyeing/Weaving, skillID 15) at a
+		// dual FORGE+LOOM room can't accidentally land here.
+		if isForge && skillID == 8 && (isWeapon(def.Type) || def.Type == "ARMOR" || def.Type == "SHIELD") {
 			player.CraftingItem = name
 			player.CraftingStep = 1
 			player.CraftingSkill = "weaponsmithing"
@@ -1046,7 +1124,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 					fmt.Sprintf("You begin to plan the crafting of your %s...", name),
 					"[Next, work your item from a substance, e.g., \"WORK IRON.\"]",
 				},
-				RoomBroadcast: []string{fmt.Sprintf("%s studies a forge, planning something.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s studies a forge, planning something.", player.DisplayNameCap())},
 			}
 		}
 
@@ -1061,7 +1139,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 					fmt.Sprintf("You begin planning the crafting of your %s, selecting the right techniques.", name),
 					"[Next, WORK <material> to shape it into your design, e.g., \"WORK GOLD.\"]",
 				},
-				RoomBroadcast: []string{fmt.Sprintf("%s studies their tools, planning something.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s studies their tools, planning something.", player.DisplayNameCap())},
 			}
 		}
 
@@ -1076,7 +1154,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 					fmt.Sprintf("You set up your workspace to begin crafting a %s.", name),
 					"[Next, WORK <material> to begin weaving, e.g., \"WORK HIDE\" or \"WORK CLOTH.\"]",
 				},
-				RoomBroadcast: []string{fmt.Sprintf("%s prepares their workspace at the loom.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s prepares their workspace at the loom.", player.DisplayNameCap())},
 			}
 		}
 
@@ -1091,7 +1169,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 					fmt.Sprintf("You examine your materials, planning how to craft a %s.", name),
 					"[Next, WORK <material> to begin shaping, e.g., \"WORK BRANCH\" or \"WORK WOOD.\"]",
 				},
-				RoomBroadcast: []string{fmt.Sprintf("%s examines their materials, planning something.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s examines their materials, planning something.", player.DisplayNameCap())},
 			}
 		}
 
@@ -1187,8 +1265,11 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 		// Oily/oiled metals become iridescent (752) + oiled (684) in the finished piece.
 		finishedAdjs := canonicalizeOilyAdjs([3]int{craftAdj(0), craftAdj(1), craftAdj(2)})
 
-		// Val1 = copper value per GMSCRIPT.DOC; computeSellValue() pays out half of it on
-		// sale. Only metal (Weaponsmithing, skillID 8) items reach this path — scale with
+		// Copper sell value, stamped into CraftedValue (not Val1) like completeCraft's
+		// Wood Lore/Jewelry/Weaving items, so every crafted item keeps its price in one
+		// dedicated field; computeSellValue() pays out half of it on sale (and still
+		// falls back to Val1 for items forged before this change). Only metal
+		// (Weaponsmithing, skillID 8) items reach this path — scale with
 		// the skill level required, capped at what the raw material actually cost
 		// (matItem.Val1, stamped at purchase in doBuy) so resale can never exceed half the
 		// material's cost. See the identical cap in doWork's weapon-finishing step.
@@ -1203,27 +1284,22 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 			}
 		}
 		item := InventoryItem{
-			Archetype: def.Number,
-			Adj1:      finishedAdjs[0],
-			Adj2:      finishedAdjs[1],
-			Adj3:      finishedAdjs[2],
-			Val1:      itemValue,
+			Archetype:    def.Number,
+			Adj1:         finishedAdjs[0],
+			Adj2:         finishedAdjs[1],
+			Adj3:         finishedAdjs[2],
+			CraftedValue: itemValue,
 		}
 		player.Inventory = append(player.Inventory, item)
 
-		// XP award: scale by skill level required (weaponsmithing uses metalDifficulty instead).
-		// Jewelry/weaving items always carry this on Parameter2 (Parameter1 unused there).
-		// Wood Lore items are inconsistent in the source data — many non-launcher items
-		// (instruments, staves, etc.) never got a Parameter2 assigned, so fall back to
-		// Parameter1 (their only other small, per-item difficulty-shaped field) rather
-		// than silently awarding zero.
+		// XP award: scale by the skill level required (weaponsmithing uses metalDifficulty
+		// instead). skillNeeded was already derived above from def's type/substance — reuse
+		// it rather than re-guessing "whichever of Parameter1/2 is nonzero", which picks up
+		// unrelated fields on some types (e.g. a missile weapon's Parameter2 is its
+		// ammunition item number, not a difficulty rating).
 		xpAward := 0
 		if skillID != 8 {
-			if def.Parameter2 > 0 {
-				xpAward = def.Parameter2 * 20
-			} else if def.Parameter1 > 0 {
-				xpAward = def.Parameter1 * 20
-			}
+			xpAward = skillNeeded * 20
 		}
 		if xpAward > 0 {
 			player.Experience += xpAward
@@ -1240,7 +1316,7 @@ func (e *GameEngine) doCraft(ctx context.Context, player *Player, args []string)
 		}
 		return &CommandResult{
 			Messages:      msgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -1307,7 +1383,7 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 				tempRI := gameworld.RoomItem{
 					Ref: -1, Archetype: ii.Archetype,
 					Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+					Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 					ItemBits: ii.ItemBits,
 				}
 				sc := e.RunPreverbScripts(player, room, "WORK", &tempRI, itemDef)
@@ -1365,66 +1441,10 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		// Strip trailing " metal" so "work copper metal" == "work copper"
 		metalSearch := strings.TrimSuffix(metal, " metal")
 
-		// Find matching material in inventory — check all adj slots (Adj1/Adj2/Adj3).
-		// Purchased metals arrive with the metal type adj in Adj3 (doBuy stores si.Adj
-		// there); mined/smelted metals have the metal adj in Adj1; elemental metals have
-		// an elemental prefix in Adj1 and the metal type in Adj2.
-		materialIdx := -1
-
-		for j, ii := range player.Inventory {
-			mDef := e.items[ii.Archetype]
-			if mDef == nil {
-				continue
-			}
-			isMaterial := mDef.Type == "MATERIAL" || containsFlag(mDef.Flags, "MATERIAL2") || mDef.Type == "MISC"
-			if !isMaterial || (mDef.Parameter2 != 8 && mDef.Parameter2 != 0) {
-				continue
-			}
-
-			// Check every adj slot for the requested metal name
-			adjIDs := [3]int{ii.Adj1, ii.Adj2, ii.Adj3}
-			metalAdjSlot := -1
-			for k, adjID := range adjIDs {
-				if adjID > 0 && strings.ToLower(e.getAdjName(adjID)) == metalSearch {
-					metalAdjSlot = k
-					break
-				}
-			}
-			// Fallback: MATERIAL items may encode the metal type in Parameter1 with no
-			// instance adj set (e.g., purchased steel arch 1372 has PARAMETER1=310 "steel"
-			// but Adj1/Adj2/Adj3 are all 0 after doBuy).
-			if metalAdjSlot < 0 && mDef.Type == "MATERIAL" && mDef.Parameter1 > 0 &&
-				strings.ToLower(e.getAdjName(mDef.Parameter1)) == metalSearch {
-				metalAdjSlot = 3 // sentinel: matched via Parameter1
-			}
-			if metalAdjSlot < 0 {
-				continue
-			}
-
-			materialIdx = j
-			// Normalize adj layout so the crafted weapon shows the right name.
-			// Purchased metals have the metal adj in slot 2 (Adj3); move it to
-			// slot 0 (Adj1) for weapon naming. Parameter1-matched items get their
-			// built-in metal adj in slot 0. All other layouts are preserved.
-			if metalAdjSlot == 3 {
-				player.CraftingAdj1 = mDef.Parameter1
-				player.CraftingAdj2 = 0
-				player.CraftingAdj3 = 0
-			} else if metalAdjSlot == 2 {
-				player.CraftingAdj1 = ii.Adj3
-				player.CraftingAdj2 = 0
-				player.CraftingAdj3 = 0
-			} else {
-				player.CraftingAdj1 = ii.Adj1
-				player.CraftingAdj2 = ii.Adj2
-				player.CraftingAdj3 = ii.Adj3
-			}
-			player.CraftingVal1 = ii.Val1
-			player.CraftingVal2 = ii.Val2
-			player.CraftingVal3 = ii.Val3
-			player.CraftingVal4 = ii.Val4
-			player.CraftingVal5 = ii.Val5
-			break
+		materialIdx, adj1, adj2, adj3, val1, val2, val3, val4, val5, found := e.findMetalMaterialByName(player, metalSearch, 8)
+		if found {
+			player.CraftingAdj1, player.CraftingAdj2, player.CraftingAdj3 = adj1, adj2, adj3
+			player.CraftingVal1, player.CraftingVal2, player.CraftingVal3, player.CraftingVal4, player.CraftingVal5 = val1, val2, val3, val4, val5
 		}
 
 		if materialIdx < 0 {
@@ -1442,8 +1462,8 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		e.SavePlayer(ctx, player)
 
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You place some %s metal into a mold in the forge and heat it until it is roughly the shape you desire.", metalSearch)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+			Messages:      []string{fmt.Sprintf("You place some %s metal into a mold in the forge and heat it until it is roughly the shape you desire.", metalSearch), fmt.Sprintf("[Round: %d sec]", smithRT)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	case 2: // Heated → Hammer
@@ -1454,8 +1474,8 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		e.SavePlayer(ctx, player)
 
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You remove the %s metal from the forge and begin to hammer it into shape on the anvil.", player.CraftingMetal)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+			Messages:      []string{fmt.Sprintf("You remove the %s metal from the forge and begin to hammer it into shape on the anvil.", player.CraftingMetal), fmt.Sprintf("[Round: %d sec]", smithRT2)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -1463,7 +1483,7 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		smithSkill := player.Skills[8]
 		baseChance := metalDifficulty(player.CraftingMetal)
 		// Add skill bonus: +3% per skill level
-		chance := baseChance + smithSkill*3
+		chance := baseChance + smithSkill*3 + unemoteSkillBonus(player)
 		if chance > 95 {
 			chance = 95
 		}
@@ -1478,8 +1498,8 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 			player.CraftingStep = 2
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
-				Messages:      []string{"You quench the hot metal in a pool of water. After some examination, you surmise that it will require more work."},
-				RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+				Messages:      []string{"You quench the hot metal in a pool of water. After some examination, you surmise that it will require more work.", fmt.Sprintf("[Round: %d sec]", smithRT3)},
+				RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
@@ -1491,14 +1511,14 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		// High roll = almost done message
 		if roll <= chance/2 {
 			return &CommandResult{
-				Messages:      []string{"You quench the hot metal in a pool of water. It looks like it is almost finished!"},
-				RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+				Messages:      []string{"You quench the hot metal in a pool of water. It looks like it is almost finished!", fmt.Sprintf("[Round: %d sec]", smithRT3)},
+				RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
 		return &CommandResult{
-			Messages:      []string{"You quench the hot metal in a pool of water. Pleased with your progress, you surmise that it will only require a little more work."},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+			Messages:      []string{"You quench the hot metal in a pool of water. Pleased with your progress, you surmise that it will only require a little more work.", fmt.Sprintf("[Round: %d sec]", smithRT3)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -1510,8 +1530,8 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		e.SavePlayer(ctx, player)
 
 		return &CommandResult{
-			Messages:      []string{"You buff the metal, smoothing and polishing the surface. Your weapon is nearly complete!"},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.FirstName)},
+			Messages:      []string{"You buff the metal, smoothing and polishing the surface. Your piece is nearly complete!", fmt.Sprintf("[Round: %d sec]", smithRT4)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -1521,17 +1541,17 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(smithRT5) * time.Second)
 		player.RoundTime = smithRT5
 
-		// Find the CRAFTABLE item definition matching the crafting item
+		// Find the CRAFTABLE item definition matching the crafting item. Weapons,
+		// ARMOR, and SHIELD all reach this step now (see the CRAFT entry point above).
 		var weaponDef *gameworld.ItemDef
 		for _, def := range e.items {
 			if !containsFlag(def.Flags, "CRAFTABLE") {
 				continue
 			}
-			if !isWeapon(def.Type) {
+			if !isWeapon(def.Type) && def.Type != "ARMOR" && def.Type != "SHIELD" {
 				continue
 			}
-			name := strings.ToLower(e.nouns[def.NameID])
-			if name == player.CraftingItem {
+			if e.getItemNounName(def) == player.CraftingItem {
 				weaponDef = def
 				break
 			}
@@ -1555,8 +1575,12 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 			adj1 = e.adjByName(player.CraftingMetal)
 		}
 		// CraftingVal2 held the ore's color (1=purple, 2=indigo, 3=blue) through the
-		// smelt→forge pipeline. Convert it now to a non-magical to-hit bonus (Sharpness).
-		// Val2 on the finished weapon means magical enchantment, so it must be zeroed.
+		// smelt→forge pipeline. Convert it now to a non-magical bonus (Sharpness) —
+		// weapons read this as a to-hit bonus, but armorEnchantBonus (combat.go)
+		// already reads worn ARMOR/SHIELD Sharpness the same way for their defense
+		// bonus, so reusing the exact same formula/field for all three item kinds is
+		// correct, not just convenient reuse.
+		// Val2 on the finished item means magical enchantment, so it must be zeroed.
 		smithSkill := player.Skills[8]
 		sharpness := weaponSharpnessBonus(player.CraftingVal2, smithSkill)
 		val3 := player.CraftingVal3
@@ -1565,13 +1589,27 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		if finishedAdjs != origAdjs {
 			val3 = 0
 		}
+		// VAL3 means "elemental crit/slayer type" only for hand-to-hand weapons (see
+		// the item Val-field convention) — meaningless on ARMOR/SHIELD, so don't carry
+		// it over onto those.
+		if !isWeapon(weaponDef.Type) {
+			val3 = 0
+		}
 
+		// PARAMETER1 is the crafting level for weapons, but for ARMOR/SHIELD it's
+		// already taken by the DR%/DefBonus stat — their level lives in PARAMETER2
+		// instead (see the doCraft routing comment and ITEMSNEW.SCR's header).
 		baseSkill := weaponDef.Parameter1
+		if !isWeapon(weaponDef.Type) {
+			baseSkill = weaponDef.Parameter2
+		}
 		if baseSkill < 1 {
 			baseSkill = 1
 		}
-		// Val1 = copper value per GMSCRIPT.DOC; computeSellValue() pays out half of it
-		// when the item is sold, matching the standard shop margin. Scale the value with
+		// Copper sell value, stamped into CraftedValue (not Val1) — same dedicated field
+		// completeCraft uses, see InventoryItem.CraftedValue. computeSellValue() pays out
+		// half of it when the item is sold, matching the standard shop margin, and still
+		// falls back to Val1 for weapons forged before this change. Scale the value with
 		// the skill level required to craft the weapon, but never let it exceed what the
 		// raw material actually cost (player.CraftingVal1, stamped at purchase in doBuy)
 		// — so the eventual sale (half of Val1) is capped at half the material cost.
@@ -1587,16 +1625,16 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		}
 
 		item := InventoryItem{
-			Archetype: weaponDef.Number,
-			Adj1:      finishedAdjs[0],
-			Adj2:      finishedAdjs[1],
-			Adj3:      finishedAdjs[2],
-			Val1:      itemValue,
-			Val2:      0,         // no magical enchantment from forging
-			Val3:      val3,      // elemental crit type (from ore); 0 if oily/oiled
-			Val4:      player.CraftingVal4,
-			Val5:      player.CraftingVal5,
-			Sharpness: sharpness, // non-magical quality bonus, forged into the weapon
+			Archetype:    weaponDef.Number,
+			Adj1:         finishedAdjs[0],
+			Adj2:         finishedAdjs[1],
+			Adj3:         finishedAdjs[2],
+			CraftedValue: itemValue,
+			Val2:         0,    // no magical enchantment from forging
+			Val3:         val3, // elemental crit type (from ore); 0 if oily/oiled
+			Val4:         player.CraftingVal4,
+			Val5:         player.CraftingVal5,
+			Sharpness:    sharpness, // non-magical quality bonus, forged into the weapon
 		}
 		player.Inventory = append(player.Inventory, item)
 
@@ -1626,27 +1664,57 @@ func (e *GameEngine) doWork(ctx context.Context, player *Player, args []string) 
 		player.CraftingVal1, player.CraftingVal2, player.CraftingVal3, player.CraftingVal4, player.CraftingVal5 = 0, 0, 0, 0, 0
 		e.SavePlayer(ctx, player)
 
-		sharpnessDesc := "rather dull"
+		var finishMsg string
 		switch {
-		case sharpness >= 10:
-			sharpnessDesc = "exceptionally sharp"
-		case sharpness >= 7:
-			sharpnessDesc = "very sharp"
-		case sharpness >= 4:
-			sharpnessDesc = "sharp"
-		case sharpness >= 1:
-			sharpnessDesc = "serviceable"
+		case isWeapon(weaponDef.Type):
+			sharpnessDesc := "rather dull"
+			switch {
+			case sharpness >= 10:
+				sharpnessDesc = "exceptionally sharp"
+			case sharpness >= 7:
+				sharpnessDesc = "very sharp"
+			case sharpness >= 4:
+				sharpnessDesc = "sharp"
+			case sharpness >= 1:
+				sharpnessDesc = "serviceable"
+			}
+			finishMsg = fmt.Sprintf("You carefully sharpen your weapon on a large whetstone until its cutting edge is honed to deadly precision. Your %s %s is complete! The blade is %s. (+%d non-magical bonus)", craftingMetal, craftingItem, sharpnessDesc, sharpness)
+		case weaponDef.Type == "SHIELD":
+			qualityDesc := "roughly finished"
+			switch {
+			case sharpness >= 10:
+				qualityDesc = "masterfully finished"
+			case sharpness >= 7:
+				qualityDesc = "expertly finished"
+			case sharpness >= 4:
+				qualityDesc = "well finished"
+			case sharpness >= 1:
+				qualityDesc = "solidly finished"
+			}
+			finishMsg = fmt.Sprintf("You give the boss a final polish and fit the grip straps. Your %s %s is complete! The work is %s. (+%d non-magical bonus)", craftingMetal, craftingItem, qualityDesc, sharpness)
+		default: // ARMOR
+			qualityDesc := "roughly finished"
+			switch {
+			case sharpness >= 10:
+				qualityDesc = "masterfully finished"
+			case sharpness >= 7:
+				qualityDesc = "expertly finished"
+			case sharpness >= 4:
+				qualityDesc = "well finished"
+			case sharpness >= 1:
+				qualityDesc = "solidly finished"
+			}
+			finishMsg = fmt.Sprintf("You buff the metal to a bright sheen and check every joint and rivet. Your %s %s is complete! The work is %s. (+%d non-magical bonus)", craftingMetal, craftingItem, qualityDesc, sharpness)
 		}
-		msgs := []string{
-			fmt.Sprintf("You carefully sharpen your weapon on a large whetstone until its cutting edge is honed to deadly precision. Your %s %s is complete! The blade is %s. (+%d non-magical bonus)", craftingMetal, craftingItem, sharpnessDesc, sharpness),
-		}
+		msgs := []string{finishMsg}
 		if xpAward > 0 {
 			msgs = append(msgs, fmt.Sprintf("You have been awarded %d experience points.", xpAward))
 		}
+		msgs = append(msgs, fmt.Sprintf("[Round: %d sec]", smithRT5))
 
 		return &CommandResult{
 			Messages:      msgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s finishes crafting %s!", player.FirstName, itemName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s finishes crafting %s!", player.DisplayNameCap(), itemName)},
 			PlayerState:   player,
 		}
 
@@ -1669,13 +1737,10 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 	}
 
 	room := e.rooms[player.RoomNumber]
-	if room == nil || !containsModifier(room.Modifiers, "FORGE") {
-		return &CommandResult{Messages: []string{"You need to be at a forge to repair weapons."}}
-	}
-
-	smithSkill := player.Skills[8]
-	if smithSkill < 1 {
-		return &CommandResult{Messages: []string{"You have no training in Weaponsmithing."}}
+	isForge := room != nil && containsModifier(room.Modifiers, "FORGE")
+	isFletcher := room != nil && containsModifier(room.Modifiers, "FLETCHER")
+	if !isForge && !isFletcher {
+		return &CommandResult{Messages: []string{"You need to be at a forge or a fletcher's workshop to repair weapons."}}
 	}
 
 	// Check roundtime
@@ -1684,14 +1749,18 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		return &CommandResult{Messages: []string{fmt.Sprintf("You are still working... %.0f seconds remaining.", remaining+0.5)}}
 	}
 
-	target := strings.ToLower(strings.Join(args, " "))
+	rawTarget := strings.ToLower(strings.Join(args, " "))
+	target, skip := parseOrdinal(rawTarget)
+	// "REPAIR 4 broadsword" / "REPAIR fourth broadsword" names one specific weapon:
+	// the 4th name-match, counted the same way as every other ordinal command.
+	hasOrdinal := target != rawTarget
 
-	// Find the weapon in inventory with DAMAGED state. Keep scanning past
-	// name-matches that aren't damaged — a player carrying more than one item
-	// with the same name (e.g. two steel stilettos, one damaged, one not)
-	// would otherwise always hit whichever one happens to sit first in the
-	// slice and be wrongly told "That doesn't need repair" even though a
-	// damaged match exists later on.
+	// Find the weapon in inventory with DAMAGED state. Without an ordinal, keep
+	// scanning past name-matches that aren't damaged — a player carrying more than
+	// one item with the same name (e.g. two steel stilettos, one damaged, one not)
+	// would otherwise always hit whichever one happens to sit first in the slice
+	// and be wrongly told "That doesn't need repair" even though a damaged match
+	// exists later on. With an ordinal, the named weapon is the one checked.
 	found := false
 	for i, ii := range player.Inventory {
 		def := e.items[ii.Archetype]
@@ -1705,14 +1774,45 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		if !matchesTarget(name, target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
 			continue
 		}
+		if skip > 0 {
+			skip--
+			continue
+		}
 		found = true
 
 		if ii.State != "DAMAGED" {
+			if hasOrdinal {
+				break
+			}
 			continue
 		}
 
-		// Skill check: base 40% + smithSkill*5
-		chance := 40 + smithSkill*5
+		// Wood weapons (bows, etc.) are repaired with Wood Lore at a fletcher's
+		// workshop — the same skill/workshop split doCraft/doWork use to craft
+		// them in the first place. Everything else uses Weaponsmithing at a
+		// forge, as before. Reported: a Wood Lore crafter couldn't repair the
+		// bows they themselves made, since REPAIR only ever checked for a FORGE
+		// room and Weaponsmithing skill.
+		skillID := 8
+		skillName := "Weaponsmithing"
+		workshopNoun := "forge"
+		atWorkshop := isForge
+		if def.Substance == "WOOD" {
+			skillID = 18
+			skillName = "Wood Lore"
+			workshopNoun = "fletcher's workshop"
+			atWorkshop = isFletcher
+		}
+		if !atWorkshop {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You need to be at a %s to repair that.", workshopNoun)}}
+		}
+		skill := player.Skills[skillID]
+		if skill < 1 {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You have no training in %s.", skillName)}}
+		}
+
+		// Skill check: base 40% + skill*5
+		chance := 40 + skill*5 + unemoteSkillBonus(player)
 		if chance > 95 {
 			chance = 95
 		}
@@ -1722,13 +1822,13 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(repairRT) * time.Second)
 		player.RoundTime = repairRT
 
-		itemName := e.formatItemName(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+		itemName := e.formatItemNameNoArticle(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 
 		if roll > chance {
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("[Success: %d%%, Roll %d] You are unable to repair the weapon.", chance, roll)},
-				RoomBroadcast: []string{fmt.Sprintf("%s works at the forge, trying to repair a weapon.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s works at the %s, trying to repair a weapon.", player.DisplayNameCap(), workshopNoun)},
 				PlayerState:   player,
 			}
 		}
@@ -1742,7 +1842,7 @@ func (e *GameEngine) doRepair(ctx context.Context, player *Player, args []string
 
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("[Success: %d%%, Roll %d] You carefully repair your %s.", chance, roll, itemName)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works at the forge, repairing a weapon.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works at the %s, repairing a weapon.", player.DisplayNameCap(), workshopNoun)},
 			PlayerState:   player,
 		}
 	}
@@ -1786,7 +1886,7 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 
 	// Success chance grows with Wood Lore skill and Perception, mirroring MINE's
 	// skill-scaled chance (base 30% + skill*5 + STR/10, capped 90%).
-	chance := 30 + woodLore*6 + player.Perception/10
+	chance := 30 + woodLore*6 + player.Perception/10 + unemoteSkillBonus(player)
 	if chance > 90 {
 		chance = 90
 	}
@@ -1794,7 +1894,7 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{"You search the area but find nothing useful.", fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -1845,10 +1945,15 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 			if itemDef == nil {
 				continue
 			}
+			// FORAGEDEF has no copper-value field (unlike SKINITEM/MINDEF), so
+			// without a stamp computeSellValue fell back to weight+1 and every
+			// foraged find sold for 1 copper. Stamped into CraftedValue, not Val1:
+			// item 1858's (wrinkled mushroom) LICK script uses ITEMVAL1 as scratch.
 			item := InventoryItem{
-				Archetype: fd.ItemNum,
-				Val2:      fd.Val2,
-				Val5:      fd.Val5,
+				Archetype:    fd.ItemNum,
+				Val2:         fd.Val2,
+				Val5:         fd.Val5,
+				CraftedValue: e.forageItemValue(fd.ItemNum, fd.AdjNum),
 			}
 			if fd.AdjNum > 0 {
 				// Item scripts (e.g. the herb IFVAR ITEMADJ3 = ... blocks in
@@ -1864,7 +1969,7 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 			itemName := e.formatItemName(itemDef, 0, 0, item.Adj3)
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("You search the area and find %s!", itemName), fmt.Sprintf("[Round: %d sec]", rt)},
-				RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
@@ -1874,6 +1979,67 @@ func (e *GameEngine) doForageReal(ctx context.Context, player *Player) *CommandR
 	return &CommandResult{
 		Messages:    []string{"You search but find nothing useful.", fmt.Sprintf("[Round: %d sec]", rt)},
 		PlayerState: player,
+	}
+}
+
+// forageItemValue returns the copper value of a forageable item (archetype +
+// variety adjective; adj <= 0 means none), or 0 if it isn't forageable. If any
+// shop sells the same item (STOREITEM), the cheapest listing in copper is used,
+// so selling a foraged herb pays half what a merchant charges for it (e.g.
+// mandrake root, thesnia leaf, rosewood). Otherwise the value scales with the
+// item's rarity — the lowest FORAGEDEF ratio across terrains.
+func (e *GameEngine) forageItemValue(arch, adj int) int {
+	if adj < 0 {
+		adj = 0
+	}
+	minRatio := 0
+	for _, fd := range e.forageDefs {
+		fadj := fd.AdjNum
+		if fadj < 0 {
+			fadj = 0
+		}
+		if fd.ItemNum == arch && fadj == adj && (minRatio == 0 || fd.Ratio < minRatio) {
+			minRatio = fd.Ratio
+		}
+	}
+	if minRatio == 0 {
+		return 0
+	}
+
+	shopPrice := 0
+	for num, room := range e.rooms {
+		for _, si := range room.StoreItems {
+			sadj := si.Adj
+			if sadj < 0 {
+				sadj = 0
+			}
+			// Price 1 is a placeholder, not a real price — e.g. Morthain's private
+			// workshop (KKLUNK.SC9 room 45) lists rosewood and metals at 1 copper.
+			if si.Archetype != arch || sadj != adj || si.Price <= 1 {
+				continue
+			}
+			copper := currencyToCopper(e.roomCurrency(num), si.Price)
+			if shopPrice == 0 || copper < shopPrice {
+				shopPrice = copper
+			}
+		}
+	}
+	if shopPrice > 0 {
+		return shopPrice
+	}
+
+	// No shop sells it: rarer finds (lower ratio) are worth more. Tunable.
+	switch {
+	case minRatio >= 10:
+		return 20
+	case minRatio >= 7:
+		return 40
+	case minRatio >= 5:
+		return 80
+	case minRatio >= 3:
+		return 150
+	default:
+		return 300
 	}
 }
 
@@ -1927,7 +2093,7 @@ func (e *GameEngine) doForageFallback(ctx context.Context, player *Player, rt in
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{"You search the area but find nothing useful.", fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -1939,12 +2105,33 @@ func (e *GameEngine) doForageFallback(ctx context.Context, player *Player, rt in
 
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You search the area and find some %s!", chosen.name), fmt.Sprintf("[Round: %d sec]", rt)},
-		RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s forages in the area.", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
 
 // ---- DYEING ----
+
+// insertLeadingAdjectives inserts newAdjs, in order, at the front of an item's
+// adjective chain, shifting whatever is already in adj1-adj3 further back to
+// make room — it never discards an existing adjective (e.g. a metal's
+// material, "elkyri"). Returns ok=false, with adj1-adj3 unchanged, if there
+// isn't room for both the new adjectives and everything already there.
+func insertLeadingAdjectives(adj1, adj2, adj3 int, newAdjs ...int) (int, int, int, bool) {
+	combined := make([]int, 0, 3)
+	combined = append(combined, newAdjs...)
+	for _, a := range []int{adj1, adj2, adj3} {
+		if a > 0 {
+			combined = append(combined, a)
+		}
+	}
+	if len(combined) > 3 {
+		return adj1, adj2, adj3, false
+	}
+	var out [3]int
+	copy(out[:], combined)
+	return out[0], out[1], out[2], true
+}
 
 func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *CommandResult {
 	room := e.rooms[player.RoomNumber]
@@ -1977,10 +2164,14 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 	}
 
 	raw := strings.ToLower(strings.Join(args, " "))
-	itemTarget, dyeTarget := parseWithClause(raw)
-	if dyeTarget == "" {
+	itemTargetRaw, dyeTargetRaw := parseWithClause(raw)
+	if dyeTargetRaw == "" {
 		return &CommandResult{Messages: []string{"Dye with what? Usage: DYE <item> WITH <dye>"}}
 	}
+	// Each side of the WITH clause can carry its own adjectives and/or an ordinal
+	// ("dye white cotton with second wart stem"), so parse and match them independently.
+	itemTarget, itemSkip := parseOrdinal(itemTargetRaw)
+	dyeTarget, dyeSkip := parseOrdinal(dyeTargetRaw)
 
 	// Find the item to dye (must be DYEABLE): inventory first, then loose on the
 	// ground, then inside any container in the room (e.g. cloth left in the
@@ -1997,8 +2188,7 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 		if def == nil || !containsFlag(def.Flags, "DYEABLE") {
 			continue
 		}
-		name := strings.ToLower(e.getItemNounName(def))
-		if strings.HasPrefix(name, itemTarget) {
+		if matchesTargetOrdinal(e.getItemNounName(def), itemTarget, &itemSkip, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
 			targetItem = &player.Inventory[i]
 			targetDef = def
 			break
@@ -2015,8 +2205,7 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 			if def == nil || !containsFlag(def.Flags, "DYEABLE") {
 				continue
 			}
-			name := strings.ToLower(e.getItemNounName(def))
-			if strings.HasPrefix(name, itemTarget) {
+			if matchesTargetOrdinal(e.getItemNounName(def), itemTarget, &itemSkip, e.getAdjName(ri.Adj1), e.getAdjName(ri.Adj2), e.getAdjName(ri.Adj3)) {
 				roomTargetRI = ri
 				targetDef = def
 				break
@@ -2039,8 +2228,7 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 				if def == nil || !containsFlag(def.Flags, "DYEABLE") {
 					continue
 				}
-				name := strings.ToLower(e.getItemNounName(def))
-				if strings.HasPrefix(name, itemTarget) {
+				if matchesTargetOrdinal(e.getItemNounName(def), itemTarget, &itemSkip, e.getAdjName(ci.Adj1), e.getAdjName(ci.Adj2), e.getAdjName(ci.Adj3)) {
 					containerRef, containerIdx = ri.Ref, i
 					targetDef = def
 					break searchContainers
@@ -2055,8 +2243,7 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 				if def == nil || !containsFlag(def.Flags, "DYEABLE") {
 					continue
 				}
-				name := strings.ToLower(e.getItemNounName(def))
-				if strings.HasPrefix(name, itemTarget) {
+				if matchesTargetOrdinal(e.getItemNounName(def), itemTarget, &itemSkip, e.getAdjName(ri2.Adj1), e.getAdjName(ri2.Adj2), e.getAdjName(ri2.Adj3)) {
 					containerTargetRI = ri2
 					targetDef = def
 					break searchContainers
@@ -2075,51 +2262,64 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 		if def == nil || !containsFlag(def.Flags, "DYE") {
 			continue
 		}
-		name := strings.ToLower(e.getItemNounName(def))
-		if strings.HasPrefix(name, dyeTarget) || strings.Contains(name, dyeTarget) {
-			// Apply dye, preserving the material adjective in Adj1. Per the DYE-flagged
-			// reagents in ITEM1.SCR (e.g. "Spleen for inky black": PARAMETER2=167 inky,
-			// PARAMETER3=25 black), PARAMETER3 is the base color adjective and PARAMETER2
-			// an optional modifier preceding it ("cobalt blue", "deep brown") — PARAMETER1
-			// is not color data.
+		if matchesTargetOrdinal(e.getItemNounName(def), dyeTarget, &dyeSkip, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			// Apply dye by inserting its color word(s) at the FRONT of the item's
+			// adjective chain, shifting whatever's already there (e.g. a metal's
+			// material — "elkyri" — or a cloth's weave) further back rather than
+			// overwriting it. Per the DYE-flagged reagents in ITEM1.SCR (e.g.
+			// "Spleen for inky black": PARAMETER2=167 inky, PARAMETER3=25 black),
+			// PARAMETER3 is the base color adjective and PARAMETER2 an optional
+			// modifier preceding it ("cobalt blue", "deep brown") — PARAMETER1 is
+			// not color data.
+			var dyeAdjs []int
+			if def.Parameter2 > 0 {
+				dyeAdjs = append(dyeAdjs, def.Parameter2)
+			}
+			if def.Parameter3 > 0 {
+				dyeAdjs = append(dyeAdjs, def.Parameter3)
+			}
+			// beyondSkill returns the shared failure message for when an item's
+			// existing adjectives plus the dye's color word(s) can't all fit in the
+			// three available slots — the player is told plainly rather than having
+			// the engine silently overwrite (and lose) something already there.
+			beyondSkill := func() *CommandResult {
+				return &CommandResult{Messages: []string{"Dyeing that is beyond your skill — it already carries as much detail as it can hold."}}
+			}
+
 			var dyedName string
 			switch {
 			case targetItem != nil:
-				if def.Parameter2 > 0 {
-					targetItem.Adj2 = def.Parameter2
+				a1, a2, a3, ok := insertLeadingAdjectives(targetItem.Adj1, targetItem.Adj2, targetItem.Adj3, dyeAdjs...)
+				if !ok {
+					return beyondSkill()
 				}
-				if def.Parameter3 > 0 {
-					targetItem.Adj3 = def.Parameter3
-				}
+				targetItem.Adj1, targetItem.Adj2, targetItem.Adj3 = a1, a2, a3
 				dyedName = e.formatItemName(targetDef, targetItem.Adj1, targetItem.Adj2, targetItem.Adj3, targetItem.Tail)
 			case roomTargetRI != nil:
-				if def.Parameter2 > 0 {
-					roomTargetRI.Adj2 = def.Parameter2
+				a1, a2, a3, ok := insertLeadingAdjectives(roomTargetRI.Adj1, roomTargetRI.Adj2, roomTargetRI.Adj3, dyeAdjs...)
+				if !ok {
+					return beyondSkill()
 				}
-				if def.Parameter3 > 0 {
-					roomTargetRI.Adj3 = def.Parameter3
-				}
+				roomTargetRI.Adj1, roomTargetRI.Adj2, roomTargetRI.Adj3 = a1, a2, a3
 				dyedName = e.formatItemName(targetDef, roomTargetRI.Adj1, roomTargetRI.Adj2, roomTargetRI.Adj3, roomTargetRI.Extend)
 				itemCopy := *roomTargetRI
 				e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_update", ItemRef: roomTargetRI.Ref, Item: &itemCopy})
 			case containerRef != -1:
 				contents := e.roomContainerGet(room.Number, containerRef)
 				ci := &contents[containerIdx]
-				if def.Parameter2 > 0 {
-					ci.Adj2 = def.Parameter2
+				a1, a2, a3, ok := insertLeadingAdjectives(ci.Adj1, ci.Adj2, ci.Adj3, dyeAdjs...)
+				if !ok {
+					return beyondSkill()
 				}
-				if def.Parameter3 > 0 {
-					ci.Adj3 = def.Parameter3
-				}
+				ci.Adj1, ci.Adj2, ci.Adj3 = a1, a2, a3
 				e.roomContainerSet(room.Number, containerRef, contents)
 				dyedName = e.formatItemName(targetDef, ci.Adj1, ci.Adj2, ci.Adj3, ci.Tail)
 			case containerTargetRI != nil:
-				if def.Parameter2 > 0 {
-					containerTargetRI.Adj2 = def.Parameter2
+				a1, a2, a3, ok := insertLeadingAdjectives(containerTargetRI.Adj1, containerTargetRI.Adj2, containerTargetRI.Adj3, dyeAdjs...)
+				if !ok {
+					return beyondSkill()
 				}
-				if def.Parameter3 > 0 {
-					containerTargetRI.Adj3 = def.Parameter3
-				}
+				containerTargetRI.Adj1, containerTargetRI.Adj2, containerTargetRI.Adj3 = a1, a2, a3
 				dyedName = e.formatItemName(targetDef, containerTargetRI.Adj1, containerTargetRI.Adj2, containerTargetRI.Adj3, containerTargetRI.Extend)
 				itemCopy := *containerTargetRI
 				e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_update", ItemRef: containerTargetRI.Ref, Item: &itemCopy})
@@ -2134,7 +2334,7 @@ func (e *GameEngine) doDye(ctx context.Context, player *Player, args []string) *
 
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("You carefully dye the material. It is now %s.", dyedName), "[Round: 15 sec]"},
-				RoomBroadcast: []string{fmt.Sprintf("%s works at the loom, dyeing materials.", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s works at the loom, dyeing materials.", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
@@ -2535,7 +2735,7 @@ func (e *GameEngine) doBrew(ctx context.Context, player *Player, args []string) 
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You add %s to the brew. (%d/3 ingredients)", reagentName, container.Val5), fmt.Sprintf("[Round: %d sec]", brewRT)},
-			RoomBroadcast: []string{fmt.Sprintf("%s adds an ingredient to a bubbling brew.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s adds an ingredient to a bubbling brew.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 	}
@@ -2612,7 +2812,7 @@ func (e *GameEngine) doBrew(ctx context.Context, player *Player, args []string) 
 					fmt.Sprintf("[Round: %d sec]", brewRT),
 					fmt.Sprintf("You have been awarded %d experience points.", xpAward),
 				},
-				RoomBroadcast: []string{fmt.Sprintf("%s completes a potion that shimmers with magical energy!", player.FirstName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s completes a potion that shimmers with magical energy!", player.DisplayNameCap())},
 				PlayerState:   player,
 			}
 		}
@@ -2624,7 +2824,7 @@ func (e *GameEngine) doBrew(ctx context.Context, player *Player, args []string) 
 	e.SavePlayer(ctx, player)
 	return &CommandResult{
 		Messages:      []string{"A foul odor rises from the brew. The combination produces nothing useful.", fmt.Sprintf("[Round: %d sec]", brewRT)},
-		RoomBroadcast: []string{fmt.Sprintf("%s's brew emits a foul odor.", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s's brew emits a foul odor.", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
@@ -2787,7 +2987,7 @@ func (e *GameEngine) doGemAdorn(ctx context.Context, player *Player, args []stri
 			fmt.Sprintf("You carefully set the %s into the piece, creating %s.", gemNoun, itemName),
 			fmt.Sprintf("[Round: %d sec]", rt),
 		},
-		RoomBroadcast: []string{fmt.Sprintf("%s works carefully at the jeweler's bench.", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s works carefully at the jeweler's bench.", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
@@ -2802,6 +3002,151 @@ func (e *GameEngine) doInlay(ctx context.Context, player *Player, args []string)
 
 func (e *GameEngine) doInset(ctx context.Context, player *Player, args []string) *CommandResult {
 	return e.doGemAdorn(ctx, player, args, "inset", "inset", 650)
+}
+
+// ---- REINFORCE ----
+
+// doReinforce handles "REINFORCE <shield> WITH <metal>" — the two-crafter combo step
+// for shields: a Wood Lore crafter makes the base wood shield (ITEMSNEW.SCR's WOOD-tier
+// archetypes), then a Weaponsmith reinforces it with metal here, same idiom as
+// ENCRUST/INLAY (doGemAdorn) — consumes a metal material and upgrades the existing
+// instance in place rather than creating a new archetype. The spreadsheet's wood/
+// metal-reinforced/full-metal tiers only differ in weight and breakage resistance, and
+// breakage isn't implemented yet (see the project notes), so reinforcing doesn't change
+// DefBonus or Substance — its concrete effect is the metal adjective (so a plain
+// "buckler" becomes "a steel buckler") plus a forged-in Sharpness bonus, the same
+// non-magical quality bonus a full forge job grants, which armorEnchantBonus
+// (combat.go) already reads from a worn shield exactly like it does for a weapon.
+func (e *GameEngine) doReinforce(ctx context.Context, player *Player, args []string) *CommandResult {
+	room := e.rooms[player.RoomNumber]
+	if room == nil || !containsModifier(room.Modifiers, "FORGE") {
+		return &CommandResult{Messages: []string{"You need to be at a forge to reinforce a shield."}}
+	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := time.Until(player.RoundTimeExpiry).Seconds()
+		return &CommandResult{Messages: []string{fmt.Sprintf("You must wait %.0f more seconds.", remaining)}}
+	}
+	if len(args) == 0 {
+		return &CommandResult{Messages: []string{"Reinforce what? Usage: REINFORCE <shield> WITH <metal>"}}
+	}
+
+	raw := strings.ToLower(strings.Join(args, " "))
+	shieldTarget, metalTarget := parseWithClause(raw)
+	if metalTarget == "" {
+		return &CommandResult{Messages: []string{"Reinforce with what metal? Usage: REINFORCE <shield> WITH <metal>"}}
+	}
+
+	// Find a WOOD-substance shield: inventory first, then the off-hand (shields go to
+	// player.OffHand when wielded, not player.Worn — see doWield).
+	shieldIdx := -1
+	inOffHand := false
+	var shieldDef *gameworld.ItemDef
+	var a1, a2, a3, itemBits int
+	var tail string
+	for i, ii := range player.Inventory {
+		d := e.items[ii.Archetype]
+		if d == nil || d.Type != "SHIELD" || d.Substance != "WOOD" {
+			continue
+		}
+		if matchesTarget(e.getItemNounName(d), shieldTarget, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			shieldIdx, shieldDef = i, d
+			a1, a2, a3 = ii.Adj1, ii.Adj2, ii.Adj3
+			itemBits = ii.ItemBits
+			tail = ii.Tail
+			break
+		}
+	}
+	if shieldDef == nil && player.OffHand != nil {
+		d := e.items[player.OffHand.Archetype]
+		if d != nil && d.Type == "SHIELD" && d.Substance == "WOOD" &&
+			matchesTarget(e.getItemNounName(d), shieldTarget, e.getAdjName(player.OffHand.Adj1), e.getAdjName(player.OffHand.Adj2), e.getAdjName(player.OffHand.Adj3)) {
+			inOffHand, shieldDef = true, d
+			a1, a2, a3 = player.OffHand.Adj1, player.OffHand.Adj2, player.OffHand.Adj3
+			itemBits = player.OffHand.ItemBits
+			tail = player.OffHand.Tail
+		}
+	}
+	if shieldDef == nil {
+		return &CommandResult{Messages: []string{"You don't have a wooden shield matching that to reinforce."}}
+	}
+
+	// Skill check: reinforcing is real smithing work, not a touch-up — require roughly
+	// what forging that shape in full metal would take. Every wood/metal shield pair in
+	// ITEMSNEW.SCR keeps the metal tier at ~2x the wood tier's PARAMETER2, so that ratio
+	// is applied here directly rather than looking up the (implicit, unlinked) metal
+	// sibling archetype.
+	needed := shieldDef.Parameter2 * 2
+	if needed < 1 {
+		needed = 1
+	}
+	if player.Skills[8] < needed {
+		return &CommandResult{Messages: []string{fmt.Sprintf("Your Weaponsmithing skill (%d) is not high enough to reinforce that. You need at least %d.", player.Skills[8], needed)}}
+	}
+
+	// A shield only gets reinforced once. Sharpness alone can't mark that — a
+	// purchased (not smelted) metal carries no ore "color", so weaponSharpnessBonus
+	// legitimately returns 0, which would let a shop-bought reinforcement be redone
+	// forever. Use a dedicated ItemBit instead (bit 0 — these are brand-new
+	// archetypes with no existing script touching their ItemBits, so any bit is free
+	// to claim; see the ITEMBIT system notes).
+	const reinforcedBit = 1 << 0
+	if itemBits&reinforcedBit != 0 {
+		return &CommandResult{Messages: []string{"That shield has already been reinforced."}}
+	}
+	if a1 != 0 && a2 != 0 && a3 != 0 {
+		return &CommandResult{Messages: []string{"That shield has no room left for a metal reinforcement."}}
+	}
+
+	matIdx, matAdj1, _, _, _, matVal2, _, _, _, found := e.findMetalMaterialByName(player, metalTarget, 8)
+	if !found {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s metal to reinforce it with.", metalTarget)}}
+	}
+
+	// Consume the metal. Removing from Inventory can shift a lower shieldIdx down by one.
+	player.Inventory = append(player.Inventory[:matIdx], player.Inventory[matIdx+1:]...)
+	if !inOffHand && matIdx < shieldIdx {
+		shieldIdx--
+	}
+
+	smithSkill := player.Skills[8]
+	sharpness := weaponSharpnessBonus(matVal2, smithSkill)
+
+	newAdjs := [3]int{a1, a2, a3}
+	for i, v := range newAdjs {
+		if v == 0 {
+			newAdjs[i] = matAdj1
+			break
+		}
+	}
+
+	rt := applyRoundTime(player, 30)
+	player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
+	player.RoundTime = rt
+
+	if inOffHand {
+		player.OffHand.Adj1, player.OffHand.Adj2, player.OffHand.Adj3 = newAdjs[0], newAdjs[1], newAdjs[2]
+		player.OffHand.Sharpness = sharpness
+		player.OffHand.ItemBits |= reinforcedBit
+	} else {
+		player.Inventory[shieldIdx].Adj1, player.Inventory[shieldIdx].Adj2, player.Inventory[shieldIdx].Adj3 = newAdjs[0], newAdjs[1], newAdjs[2]
+		player.Inventory[shieldIdx].Sharpness = sharpness
+		player.Inventory[shieldIdx].ItemBits |= reinforcedBit
+	}
+
+	xpAward := needed * 20
+	player.Experience += xpAward
+	e.SavePlayer(ctx, player)
+
+	itemName := e.formatItemName(shieldDef, newAdjs[0], newAdjs[1], newAdjs[2], tail)
+	return &CommandResult{
+		Messages: []string{
+			fmt.Sprintf("You carefully rivet %s plating across the shield's face, reinforcing it. Your work produces %s! (+%d non-magical bonus)", metalTarget, itemName, sharpness),
+			fmt.Sprintf("[Round: %d sec]", rt),
+			fmt.Sprintf("You have been awarded %d experience points.", xpAward),
+		},
+		RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the forge, reinforcing a shield.", player.DisplayNameCap())},
+		PlayerState:   player,
+	}
 }
 
 // ---- HIGHLANDER GEM MOLDING ----
@@ -2828,10 +3173,29 @@ func moldValueBonusPercent(level int) int {
 	return bonus
 }
 
+// currentGemValue returns a gem's locked full (pre-halving) copper value (Val1),
+// rolling and returning one via computeGemValue if the gem doesn't have one yet —
+// e.g. a gem placed directly by an original script rather than generated as
+// treasure. Does not persist the roll itself; callers that don't immediately
+// overwrite Val1 with a new value should assign the result back to gem.Val1 so it
+// stays locked in.
+func (e *GameEngine) currentGemValue(def *gameworld.ItemDef, gem *InventoryItem) int {
+	if gem.Val1 > 0 {
+		return gem.Val1
+	}
+	qualMult := 1.0
+	if gem.Val2 > 0 {
+		qualMult = float64(gem.Val2) / 100.0
+	}
+	return e.computeGemValue(def.Number, qualMult)
+}
+
 // doMold handles the Highlander MOLD ability ("MOLD chipped diamond", "MOLD 3 diamond"):
-// works a chipped or cracked gem into a polished one, raising its sale value. A botched
-// attempt (see moldFailChance) ruins the gem with the damaged adjective instead, and a
-// damaged or already-polished gem can't be molded again.
+// works any gem that isn't already polished or damaged into a polished one, raising its
+// sale value — this includes plain gems and ones with an existing quality adjective
+// (cracked, chipped, flawless, perfect), not just flawed ones. A botched attempt (see
+// moldFailChance) ruins the gem with the damaged adjective instead and halves its
+// value, and a damaged or already-polished gem can't be molded again.
 func (e *GameEngine) doMold(ctx context.Context, player *Player, args []string) *CommandResult {
 	if player.Race != RaceHighlander {
 		return &CommandResult{Messages: []string{"Only Highlanders know how to mold gemstones."}}
@@ -2895,6 +3259,12 @@ func (e *GameEngine) doMold(ctx context.Context, player *Player, args []string) 
 		}
 	}
 
+	// Any gem not already polished or damaged can be worked: one carrying an actual flaw
+	// (cracked/chipped) has that flaw adjective replaced by "polished" — molding fixes
+	// the flaw and polishes it in the same step. "flawless"/"perfect" are not flaws (the
+	// opposite, in fact) and must never be overwritten — those gems fall through to the
+	// free-slot search below just like a plain gem, so "polished" is added alongside the
+	// existing quality word instead of clobbering it.
 	var flawSlot *int
 	for _, a := range slots {
 		if (chippedID != 0 && *a == chippedID) || (crackedID != 0 && *a == crackedID) {
@@ -2903,47 +3273,53 @@ func (e *GameEngine) doMold(ctx context.Context, player *Player, args []string) 
 		}
 	}
 	if flawSlot == nil {
-		return &CommandResult{Messages: []string{"That gem has no flaws for you to mold away."}}
+		for _, a := range slots {
+			if *a == 0 {
+				flawSlot = a
+				break
+			}
+		}
+	}
+	if flawSlot == nil {
+		return &CommandResult{Messages: []string{"That gem's every facet is already accounted for — there's no room left to work."}}
 	}
 
-	itemName := e.formatItemName(def, gem.Adj1, gem.Adj2, gem.Adj3, gem.Tail)
+	itemName := e.formatItemNameNoArticle(def, gem.Adj1, gem.Adj2, gem.Adj3, gem.Tail)
 
 	moldRT := applyRoundTime(player, 5)
 	player.RoundTimeExpiry = time.Now().Add(time.Duration(moldRT) * time.Second)
 	player.RoundTime = moldRT
 
-	failChance := moldFailChance(player.Level)
+	failChance := max(moldFailChance(player.Level)-unemoteSkillBonus(player), 1)
 	roll := rand.Intn(100) + 1
 
 	if roll <= failChance {
 		*flawSlot = damagedID
+		gem.Val1 = e.currentGemValue(def, gem) / 2
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages: []string{
 				fmt.Sprintf("Your hands slip! You botch the working and damage your %s.", itemName),
 				fmt.Sprintf("[Round: %d sec]", moldRT),
 			},
-			RoomBroadcast: []string{fmt.Sprintf("%s carefully works a gemstone between %s fingers.", player.FirstName, player.Possessive())},
+			RoomBroadcast: []string{fmt.Sprintf("%s carefully works a gemstone between %s fingers.", player.DisplayNameCap(), player.Possessive())},
 			PlayerState:   player,
 		}
 	}
 
 	*flawSlot = polishedID
 	bonusPct := moldValueBonusPercent(player.Level)
-	baseVal := gem.Val2
-	if baseVal <= 0 {
-		baseVal = 100
-	}
-	gem.Val2 = baseVal + baseVal*bonusPct/100
+	baseVal := e.currentGemValue(def, gem)
+	gem.Val1 = baseVal + baseVal*bonusPct/100
 
-	newName := e.formatItemName(def, gem.Adj1, gem.Adj2, gem.Adj3, gem.Tail)
+	newName := e.formatItemNameNoArticle(def, gem.Adj1, gem.Adj2, gem.Adj3, gem.Tail)
 	e.SavePlayer(ctx, player)
 	return &CommandResult{
 		Messages: []string{
 			fmt.Sprintf("Your skilled hands work the flaws out of your %s, leaving your %s!", itemName, newName),
 			fmt.Sprintf("[Round: %d sec]", moldRT),
 		},
-		RoomBroadcast: []string{fmt.Sprintf("%s carefully works a gemstone between %s fingers.", player.FirstName, player.Possessive())},
+		RoomBroadcast: []string{fmt.Sprintf("%s carefully works a gemstone between %s fingers.", player.DisplayNameCap(), player.Possessive())},
 		PlayerState:   player,
 	}
 }
@@ -3024,7 +3400,7 @@ func (e *GameEngine) doEngrave(ctx context.Context, player *Player, args []strin
 			fmt.Sprintf("You carefully engrave the inscription onto the item. It is now %s.", itemName),
 			fmt.Sprintf("[Round: %d sec]", rt),
 		},
-		RoomBroadcast: []string{fmt.Sprintf("%s carefully engraves an inscription onto an item.", player.FirstName)},
+		RoomBroadcast: []string{fmt.Sprintf("%s carefully engraves an inscription onto an item.", player.DisplayNameCap())},
 		PlayerState:   player,
 	}
 }
@@ -3075,6 +3451,110 @@ func (e *GameEngine) findCraftMaterial(player *Player, target string, matSkillID
 		return -1, InventoryItem{}, nil, fmt.Sprintf("You don't have any %s.", target)
 	}
 	return -1, InventoryItem{}, nil, fmt.Sprintf("That %s is not suitable material for that item.", target)
+}
+
+// findMetalMaterialByName finds a WORK-able metal material in the player's
+// inventory by name. metalSearch may be:
+//   - the item's complete descriptive name, exactly as displayed/typed back
+//     (e.g. "sparkling green steel", "elkyri metal") — matched against
+//     formatItemNameNoArticle, so it works whether the metal's identity lives
+//     in an instance adjective ("elkyri") or in the archetype's own noun/
+//     Parameter1 ("steel" — see below);
+//   - a single instance adjective ("sparkling", "green", "elkyri");
+//   - or, for a material whose base metal name isn't an instance adjective at
+//     all but baked into the archetype (e.g. plain purchased steel, arch 1372:
+//     noun "steel", Parameter1 310 "steel", no instance adjectives), that
+//     base name ("steel") — this still works even if the item has since
+//     picked up instance adjectives from dyeing.
+//
+// Whichever way it matches, the FULL set of adjectives the material
+// contributes — every instance adjective plus, if applicable, the archetype's
+// Parameter1 identity — is returned, so a match on just one word (e.g.
+// searching "steel" against a dyed "sparkling green steel" bar) never causes
+// the other adjectives ("sparkling", "green") to be silently dropped from the
+// finished item.
+func (e *GameEngine) findMetalMaterialByName(player *Player, metalSearch string, matSkillID int) (idx, adj1, adj2, adj3, val1, val2, val3, val4, val5 int, found bool) {
+	for j, ii := range player.Inventory {
+		mDef := e.items[ii.Archetype]
+		if mDef == nil {
+			continue
+		}
+		isMaterial := mDef.Type == "MATERIAL" || containsFlag(mDef.Flags, "MATERIAL2") || mDef.Type == "MISC"
+		if !isMaterial || (mDef.Parameter2 != matSkillID && mDef.Parameter2 != 0) {
+			continue
+		}
+
+		adjIDs := [3]int{ii.Adj1, ii.Adj2, ii.Adj3}
+
+		// Everything this material would contribute to a crafted item's
+		// adjectives: its own instance adjectives, in order, plus the
+		// archetype's fixed Parameter1 identity adjective (e.g. "steel" on a
+		// plain purchased steel bar whose base metal name is baked into
+		// Parameter1 rather than an instance adjective) if it isn't already
+		// one of them. Computed once so every match path below returns the
+		// same, complete set.
+		combined := make([]int, 0, 3)
+		for _, a := range adjIDs {
+			if a > 0 {
+				combined = append(combined, a)
+			}
+		}
+		if mDef.Type == "MATERIAL" && mDef.Parameter1 > 0 {
+			alreadyPresent := false
+			for _, a := range combined {
+				if a == mDef.Parameter1 {
+					alreadyPresent = true
+					break
+				}
+			}
+			if !alreadyPresent {
+				combined = append(combined, mDef.Parameter1)
+			}
+		}
+
+		matched := false
+
+		// Full descriptive name match — exactly what the player sees on the
+		// item (and can type back), e.g. "sparkling green steel".
+		if strings.ToLower(e.formatItemNameNoArticle(mDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)) == metalSearch {
+			matched = true
+		}
+
+		// Bare instance-adjective match ("elkyri", "sparkling", "green").
+		if !matched {
+			for _, adjID := range adjIDs {
+				if adjID > 0 && strings.ToLower(e.getAdjName(adjID)) == metalSearch {
+					matched = true
+					break
+				}
+			}
+		}
+
+		// Base-identity match via the archetype's own fixed Parameter1
+		// adjective — works even if the item also carries instance adjectives
+		// from dyeing.
+		if !matched && mDef.Type == "MATERIAL" && mDef.Parameter1 > 0 &&
+			strings.ToLower(e.getAdjName(mDef.Parameter1)) == metalSearch {
+			matched = true
+		}
+
+		if !matched {
+			continue
+		}
+
+		var a1, a2, a3 int
+		if len(combined) > 0 {
+			a1 = combined[0]
+		}
+		if len(combined) > 1 {
+			a2 = combined[1]
+		}
+		if len(combined) > 2 {
+			a3 = combined[2]
+		}
+		return j, a1, a2, a3, ii.Val1, ii.Val2, ii.Val3, ii.Val4, ii.Val5, true
+	}
+	return -1, 0, 0, 0, 0, 0, 0, 0, 0, false
 }
 
 // buildCraftAdjs computes the adjective list for a crafted item from the source material.
@@ -3131,6 +3611,41 @@ func buildWeaveCraftAdjs(matItem InventoryItem, matDef *gameworld.ItemDef) (adj1
 	return adj1, adj2, matDef.Parameter1
 }
 
+// craftSkillRequirement returns which skill (and level) a CRAFTABLE item's own data
+// gates it behind. Mirrors the type/substance branching in doCraft's no-args listing
+// and craft-start validation (crafting.go, "Items you can craft" and the CRAFT <item>
+// skill check) — see the matching comment there: PARAMETER1 doubles as the required
+// skill level for plain weapons and WOOD-substance items (whose PARAMETER1 is their
+// damage-tier stat with no competing use); PARAMETER2 is the level for SHIELD/ARMOR/
+// HIDE/CLOTH/jewelry items instead, since their PARAMETER1 slot already holds DR%/
+// DefBonus. Used both to gate crafting and (via completeCraft) to size its XP reward —
+// keeping both on one source of truth so they can't drift apart the way they did when
+// completeCraft had its own separate "whichever of Parameter1/2 is nonzero" guess.
+func craftSkillRequirement(def *gameworld.ItemDef) (skillID int, skillName string, skillNeeded int) {
+	switch {
+	case def.Type == "SHIELD":
+		if def.Substance == "WOOD" {
+			skillID, skillName = 18, "Wood Lore"
+		} else {
+			skillID, skillName = 8, "Weaponsmithing"
+		}
+		skillNeeded = def.Parameter2
+	case def.Substance == "HIDE", def.Substance == "CLOTH":
+		skillID, skillName, skillNeeded = 15, "Dyeing/Weaving", def.Parameter2
+	case def.Substance == "WOOD":
+		skillID, skillName, skillNeeded = 18, "Wood Lore", def.Parameter1
+	case isWeapon(def.Type):
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter1
+	case def.Type == "ARMOR":
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter2
+	case def.Parameter2 > 0:
+		skillID, skillName, skillNeeded = 0, "Jeweler", def.Parameter2
+	default:
+		skillID, skillName, skillNeeded = 8, "Weaponsmithing", def.Parameter1
+	}
+	return
+}
+
 // completeCraft creates the finished item for jewelry, weaving, or wood crafts and resets state.
 func (e *GameEngine) completeCraft(ctx context.Context, player *Player, completionMsg, broadcastMsg string) *CommandResult {
 	var craftDef *gameworld.ItemDef
@@ -3138,7 +3653,7 @@ func (e *GameEngine) completeCraft(ctx context.Context, player *Player, completi
 		if !containsFlag(def.Flags, "CRAFTABLE") {
 			continue
 		}
-		if strings.ToLower(e.nouns[def.NameID]) == player.CraftingItem {
+		if e.getItemNounName(def) == player.CraftingItem {
 			craftDef = def
 			break
 		}
@@ -3159,25 +3674,52 @@ func (e *GameEngine) completeCraft(ctx context.Context, player *Player, completi
 		return &CommandResult{Messages: []string{"Something went wrong with your crafting."}}
 	}
 
+	// XP and sell value both scale with the same skill level gating whether the
+	// player could craft this item at all (craftSkillRequirement) — NOT a blind
+	// "whichever of Parameter1/Parameter2 is nonzero" guess. That naive guess
+	// double-counted as difficulty a field that means something else entirely on
+	// some item types — e.g. a BOW_WEAPON's Parameter2 is its ammunition item
+	// number (a sling has Parameter2=433, the sling-stone archetype), not a
+	// difficulty rating, and was paying out 433*20 = 8660 XP for a skill-2 craft.
+	_, _, skillNeeded := craftSkillRequirement(craftDef)
+
+	// Stamped into CraftedValue (not Val1 — see its doc comment on InventoryItem):
+	// computeSellValue() pays out half of it on sale, matching the standard shop
+	// margin — same formula as the forged-weapon path (crafting.go's metal WORK
+	// cycle), just kept out of Val1 since some craftable items' own scripts
+	// repurpose that field for unrelated per-instance state (e.g. item 968's
+	// harp). Previously this was stamped into Val1 and left at the zero value
+	// before that, so every Wood Lore/Jewelry/Weaving item (bows included) fell
+	// through computeSellValue's near-nothing weight-based fallback and sold for
+	// 1 copper regardless of how demanding it was to make. Capped at the raw
+	// material's own cost (player.CraftingVal1, stamped when WORK consumed it)
+	// so the eventual sale can never exceed half the material's cost — same
+	// anti-laundering cap as the metal path.
+	itemValue := skillNeeded * 30
+	if player.CraftingVal1 > 0 && itemValue > player.CraftingVal1 {
+		itemValue = player.CraftingVal1
+	}
+	if itemValue < 1 {
+		itemValue = 1
+	}
+
 	item := InventoryItem{
-		Archetype: craftDef.Number,
-		Adj1:      player.CraftingAdj1,
-		Adj2:      player.CraftingAdj2,
-		Adj3:      player.CraftingAdj3,
+		Archetype:    craftDef.Number,
+		Adj1:         player.CraftingAdj1,
+		Adj2:         player.CraftingAdj2,
+		Adj3:         player.CraftingAdj3,
+		CraftedValue: itemValue,
+	}
+	if craftDef.Type == "AMMO" && craftDef.Parameter2 > 0 {
+		// Val3 = units in this freshly-crafted bundle — see the matching comment in
+		// doBuy. Without this, crafting arrows/bolts produced a "some arrows" stack
+		// that silently held zero (doLoadWeapon still consumed the whole stack in
+		// one NOCK regardless, so it was never actually observable as "empty").
+		item.Val3 = craftDef.Parameter2
 	}
 	player.Inventory = append(player.Inventory, item)
 
-	// Jewelry/weaving items always carry difficulty on Parameter2 (Parameter1 unused
-	// there). Wood Lore items are inconsistent in the source data — many non-launcher
-	// items (instruments, staves, etc.) never got a Parameter2 assigned, so fall back
-	// to Parameter1 (their only other small, per-item difficulty-shaped field) rather
-	// than silently awarding zero.
-	xpAward := 0
-	if craftDef.Parameter2 > 0 {
-		xpAward = craftDef.Parameter2 * 20
-	} else if craftDef.Parameter1 > 0 {
-		xpAward = craftDef.Parameter1 * 20
-	}
+	xpAward := skillNeeded * 20
 	if xpAward > 0 {
 		player.Experience += xpAward
 	}
@@ -3231,6 +3773,9 @@ func (e *GameEngine) doWorkJewelry(ctx context.Context, player *Player, args []s
 		player.CraftingAdj1 = finishedAdjs[0]
 		player.CraftingAdj2 = finishedAdjs[1]
 		player.CraftingAdj3 = finishedAdjs[2]
+		// Stamp the raw material's value so completeCraft can cap the finished
+		// item's sell value against it, same as the metal/forge path.
+		player.CraftingVal1 = matItem.Val1
 		player.CraftingMetal = target
 		player.CraftingStep = 2
 
@@ -3240,7 +3785,7 @@ func (e *GameEngine) doWorkJewelry(ctx context.Context, player *Player, args []s
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You carefully work the %s, shaping it into the base form of the %s.", target, player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3252,7 +3797,7 @@ func (e *GameEngine) doWorkJewelry(ctx context.Context, player *Player, args []s
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You use fine jeweler's tools to engrave and refine the %s, adding intricate detail.", player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the workshop.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3260,7 +3805,7 @@ func (e *GameEngine) doWorkJewelry(ctx context.Context, player *Player, args []s
 		mat, item := player.CraftingMetal, player.CraftingItem
 		return e.completeCraft(ctx, player,
 			fmt.Sprintf("You carefully polish the %s %s to a gleaming shine. Your work is complete!", mat, item),
-			player.FirstName)
+			player.DisplayNameCap())
 	}
 
 	player.CraftingStep = 0
@@ -3302,6 +3847,9 @@ func (e *GameEngine) doWorkWeaving(ctx context.Context, player *Player, args []s
 		player.CraftingAdj3 = adj3
 		player.CraftingMetal = target
 		player.CraftingStep = 2
+		// Stamp the raw material's value so completeCraft can cap the finished
+		// item's sell value against it, same as the metal/forge path.
+		player.CraftingVal1 = matItem.Val1
 
 		rt := applyRoundTime(player, 15)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
@@ -3309,7 +3857,7 @@ func (e *GameEngine) doWorkWeaving(ctx context.Context, player *Player, args []s
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You mount the %s on the loom and begin weaving it into shape for the %s.", target, player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the loom.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the loom.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3321,7 +3869,7 @@ func (e *GameEngine) doWorkWeaving(ctx context.Context, player *Player, args []s
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You carefully cut and stitch the fabric, shaping it into the form of the %s.", player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the loom.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the loom.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3329,7 +3877,7 @@ func (e *GameEngine) doWorkWeaving(ctx context.Context, player *Player, args []s
 		mat, item := player.CraftingMetal, player.CraftingItem
 		return e.completeCraft(ctx, player,
 			fmt.Sprintf("You add finishing touches, hemming the edges neatly. Your %s %s is complete!", mat, item),
-			player.FirstName)
+			player.DisplayNameCap())
 	}
 
 	player.CraftingStep = 0
@@ -3371,6 +3919,9 @@ func (e *GameEngine) doWorkWood(ctx context.Context, player *Player, args []stri
 		player.CraftingAdj3 = adj3
 		player.CraftingMetal = target
 		player.CraftingStep = 2
+		// Stamp the raw material's value so completeCraft can cap the finished
+		// item's sell value against it, same as the metal/forge path.
+		player.CraftingVal1 = matItem.Val1
 
 		rt := applyRoundTime(player, 15)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
@@ -3378,7 +3929,7 @@ func (e *GameEngine) doWorkWood(ctx context.Context, player *Player, args []stri
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You begin carving the %s, shaping it roughly into the form of a %s.", target, player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the fletcher's workshop.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the fletcher's workshop.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3390,7 +3941,7 @@ func (e *GameEngine) doWorkWood(ctx context.Context, player *Player, args []stri
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You sand and smooth the %s, refining its shape and removing rough edges.", player.CraftingItem), fmt.Sprintf("[Round: %d sec]", rt)},
-			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the fletcher's workshop.", player.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s works diligently at the fletcher's workshop.", player.DisplayNameCap())},
 			PlayerState:   player,
 		}
 
@@ -3398,7 +3949,7 @@ func (e *GameEngine) doWorkWood(ctx context.Context, player *Player, args []stri
 		mat, item := player.CraftingMetal, player.CraftingItem
 		return e.completeCraft(ctx, player,
 			fmt.Sprintf("You apply finishing oil, bringing out the natural grain of the wood. Your %s %s is complete!", mat, item),
-			player.FirstName)
+			player.DisplayNameCap())
 	}
 
 	player.CraftingStep = 0
@@ -3453,6 +4004,7 @@ func (e *GameEngine) doAdviceCrafting(player *Player) *CommandResult {
 			"- CRAFT <item> to start shaping metal into a weapon or piece of armor",
 			"- WORK <material> to continue a piece you've already started",
 			"- REPAIR patches up damaged weapons and armor",
+			"- REINFORCE <shield> WITH <metal> adds metal plating to a Wood Lore-crafted shield",
 			"- Truesteel and other rare metals are trickier to quench than iron or bronze — expect more failures",
 		)
 	}

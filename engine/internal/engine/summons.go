@@ -66,6 +66,70 @@ func (e *GameEngine) castSummonElemental(player *Player, spell *SpellDef) *Comma
 	return e.spawnSummonedCreature(player, mnumberMap[spell.ID], false, flavorMap[spell.ID])
 }
 
+// sorcerousSummonsDemon maps Sorcerous Summons I/II (139/140) to the demon each one
+// calls: the lesser (MNUMBER 110) and greater (MNUMBER 111) demons of Idemmu Ag. No
+// surviving doc names them; they're the only lesser/greater demon pair in MONSTERS.SCR.
+var sorcerousSummonsDemon = map[int]int{
+	139: 110, // Sorcerous Summons I — lesser demon
+	140: 111, // Sorcerous Summons II — greater demon
+}
+
+// castSorcerousSummons handles Sorcerous Summons I & II (139/140). Per MAGIC.TXT they
+// "summon an angry, uncontrollable demon", so the demon is spawned as an ordinary wild
+// monster rather than a summon — no SummonerName, no COMMAND — and the normal hostile
+// aggro pass (both demons are STRATEGY 501) turns it on everyone in the room, caster
+// included. There's no one-summon limit for the same reason: the caster doesn't own it.
+func (e *GameEngine) castSorcerousSummons(player *Player, spell *SpellDef) *CommandResult {
+	appear, ok := e.spawnSorcerousDemon(spell.ID, player.RoomNumber)
+	if !ok {
+		return &CommandResult{Messages: []string{"The summoning fails — no creature answers your call."}}
+	}
+	return &CommandResult{
+		Messages:      []string{appear},
+		RoomBroadcast: []string{appear},
+	}
+}
+
+// spawnSorcerousDemon spawns spell 139/140's demon in roomNum as a wild hostile
+// monster and returns its appearance line. Shared by player casts and monsters that
+// list the spell (the vith drone, KOSS.SCR's winged panther — see resolveMonsterCast).
+// It takes the monster lock itself, so the caller must not hold it.
+func (e *GameEngine) spawnSorcerousDemon(spellID, roomNum int) (appear string, ok bool) {
+	def := e.monsters[sorcerousSummonsDemon[spellID]]
+	if def == nil || e.monsterMgr == nil {
+		return "", false
+	}
+	hp := def.Body
+	if def.ExtraBody > 0 {
+		hp += rand.Intn(def.ExtraBody/2+1) + def.ExtraBody/2
+	}
+	e.monsterMgr.SpawnOne(def.Number, roomNum, hp, def.Mana, def.Psi)
+
+	// TEXG is the monster's own appearance line (the lesser demon's "A thickening
+	// cloud of mist gradually takes the form of a lesser demon."); the greater demon
+	// has none, so it gets a generic one.
+	appear = def.TextOverrides["TEXG"]
+	if appear == "" {
+		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+		appear = fmt.Sprintf("The air tears open with a foul stench, and %s%s steps through!", articleFor(name, def.Unique), name)
+	}
+	return appear, true
+}
+
+// sorcerousDemonPresent reports whether spell 139/140's demon is already alive in
+// roomNum. Monsters won't cast the summons again while it is — their mana never
+// recovers but KOSS.SCR's panther has 500 of it, enough to flood a room with 25
+// demons in one fight. Takes the monster lock itself.
+func (e *GameEngine) sorcerousDemonPresent(spellID, roomNum int) bool {
+	demon := sorcerousSummonsDemon[spellID]
+	for _, m := range e.monsterMgr.MonstersInRoom(roomNum) {
+		if m.DefNumber == demon {
+			return true
+		}
+	}
+	return false
+}
+
 // spawnSummonedCreature creates a summoned monster in the player's room, links it to the player,
 // and returns a CommandResult with flavor text. isFamiliar enables COMMAND WATCH WILL.
 func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamiliar bool, flavorPrefix string) *CommandResult {
@@ -89,6 +153,7 @@ func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamili
 		MaxHP:        hp,
 		DefenseBonus: monsterPsiDefenseBonus(def.Disciplines),
 		CurrentMana:  def.Mana,
+		CurrentPsi:   def.Psi,
 		SummonerName: player.FirstName,
 		IsSummoned:   true,
 		IsFamiliar:   isFamiliar,
@@ -146,12 +211,12 @@ func (e *GameEngine) castControlUndead(player *Player, spell *SpellDef, args []s
 		return &CommandResult{Messages: []string{"You already have a summoned or controlled creature. Use COMMAND BEGONE to dismiss it first."}}
 	}
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Control which undead creature?"}}
+		return &CommandResult{Messages: []string{"Control which undead creature?"}, TargetNotFound: true}
 	}
 	targetName := strings.Join(args, " ")
 	inst, def := e.findMonsterInRoom(player, targetName)
 	if inst == nil {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
 	}
 	if def.Race != 22 {
 		return &CommandResult{Messages: []string{"Your spell has no effect — that creature is not undead."}}
@@ -195,16 +260,103 @@ func (e *GameEngine) castControlUndead(player *Player, spell *SpellDef, args []s
 	}
 }
 
+// castCommandSpell handles Command (205), Domination I (206), and Domination II (214).
+// Each temporarily dominates a living (non-undead) creature in the room, granting the
+// same COMMAND-verb control as a summoned elemental, but only for the spell's duration —
+// control lapses automatically via the same ControlExpiry check monsterTick already runs
+// for Control Undead (see castControlUndead). Recasting on the creature already under the
+// caster's control resets the duration rather than stacking it. Caps are checked against
+// the creature's CURRENT body points, not its max:
+//
+//	205 Command:      <=50  current body,  2 minute duration
+//	206 Domination I:  <=100 current body, 20 minute duration
+//	214 Domination II: <=200 current body, 20 minute duration
+func (e *GameEngine) castCommandSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s which creature?", spell.Name)}, TargetNotFound: true}
+	}
+	targetName := strings.Join(args, " ")
+	inst, def := e.findMonsterInRoom(player, targetName)
+	if inst == nil {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}, TargetNotFound: true}
+	}
+	if def.Race == 22 {
+		return &CommandResult{Messages: []string{"Your spell has no effect — that creature is undead."}}
+	}
+
+	var bodyCap int
+	var duration time.Duration
+	switch spell.ID {
+	case 205:
+		bodyCap, duration = 50, 2*time.Minute
+	case 206:
+		bodyCap, duration = 100, 20*time.Minute
+	default: // 214
+		bodyCap, duration = 200, 20*time.Minute
+	}
+
+	instID := inst.ID
+	recasting := player.SummonedCreatureID != 0 && player.SummonedCreatureID == instID
+
+	if inst.CurrentHP > bodyCap {
+		return &CommandResult{Messages: []string{"This creature's will is too strong for you to dominate."}}
+	}
+	if player.SummonedCreatureID != 0 && !recasting {
+		return &CommandResult{Messages: []string{"You already have a summoned or controlled creature. Use COMMAND BEGONE to dismiss it first."}}
+	}
+	if inst.IsSummoned && !recasting {
+		return &CommandResult{Messages: []string{"That creature is already under someone's control."}}
+	}
+
+	cname := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+	carticle := articleFor(cname, def.Unique)
+	durLabel := fmt.Sprintf("%d minutes", int(duration.Minutes()))
+
+	e.monsterMgr.mu.Lock()
+	for i := range e.monsterMgr.instances {
+		if e.monsterMgr.instances[i].ID == instID {
+			e.monsterMgr.instances[i].IsSummoned = true
+			e.monsterMgr.instances[i].SummonerName = player.FirstName
+			if !recasting {
+				e.monsterMgr.instances[i].FollowTarget = player.FirstName
+				e.monsterMgr.instances[i].Target = ""
+				e.monsterMgr.instances[i].MonsterTargetID = 0
+			}
+			e.monsterMgr.instances[i].ControlExpiry = time.Now().Add(duration)
+			break
+		}
+	}
+	e.monsterMgr.mu.Unlock()
+	player.SummonedCreatureID = instID
+
+	if recasting {
+		return &CommandResult{
+			Messages: []string{
+				fmt.Sprintf("You fix your gaze on %s%s once more, renewing your dominion!", carticle, cname),
+				fmt.Sprintf("Your control over %s%s is refreshed for %s.", carticle, cname, durLabel),
+			},
+			RoomBroadcast: []string{fmt.Sprintf("%s fixes %s gaze on %s%s again.", player.DisplayName(), player.Possessive(), carticle, cname)},
+		}
+	}
+	return &CommandResult{
+		Messages: []string{
+			fmt.Sprintf("You fix your gaze on %s%s and speak words of dark binding!", carticle, cname),
+			fmt.Sprintf("%s%s falls under your control for %s. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND GUARD ME, COMMAND ATTACK <name>, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", capArticle(carticle), cname, durLabel),
+		},
+		RoomBroadcast: []string{fmt.Sprintf("%s fixes %s gaze on %s%s, who suddenly goes still and obedient.", player.DisplayName(), player.Possessive(), carticle, cname)},
+	}
+}
+
 // castSpeakWithDead handles spell 311 — Speak with Dead. Grants a dead player in the
 // room the ability to speak again, even though they remain otherwise incapacitated.
 func (e *GameEngine) castSpeakWithDead(player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Speak with Dead requires a target. Cast it on a dead player's body."}}
+		return &CommandResult{Messages: []string{"Speak with Dead requires a target. Cast it on a dead player's body."}, TargetNotFound: true}
 	}
 	targetName := strings.ToLower(strings.Join(args, " "))
 	target := e.findPlayerInRoom(player, targetName)
 	if target == nil {
-		return &CommandResult{Messages: []string{"You don't see that here."}}
+		return &CommandResult{Messages: []string{"You don't see that here."}, TargetNotFound: true}
 	}
 	if !target.Dead {
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is not dead.", target.FirstName)}}
@@ -270,7 +422,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 	rawRest := extractRawArgs(rawInput, 2)
 
 	// Determine how the player appears to others (hidden/invisible → "something")
-	isHidden := player.Hidden || player.Invisible || player.GMInvis
+	isHidden := player.Hidden || player.Invisible || player.PhantomForm || player.GMInvis
 	sameRoom := instRoom == player.RoomNumber
 
 	// commandBroadcast returns the gaze+says lines to show in the player's room to others.
@@ -302,7 +454,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 			found := false
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.NameEquals(rest) && p.RoomNumber == instRoom && !p.Dead {
+					if p.NameMatches(rest) && p.RoomNumber == instRoom && !p.Dead {
 						followTarget = p.FirstName // internal bookkeeping: real name, not the apparent one
 						followLabel = "follow " + p.DisplayName()
 						found = true
@@ -449,7 +601,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 			found := false
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.NameEquals(guardTarget) && p.RoomNumber == instRoom {
+					if p.NameMatches(guardTarget) && p.RoomNumber == instRoom {
 						guardTarget = p.FirstName // internal bookkeeping: real name, not the apparent one
 						found = true
 						break
@@ -476,8 +628,11 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 					e.monsterMgr.instances[i].GuardingPlayers = next
 					alreadyGuarding = true
 				} else {
+					// Guarding is purely additive — it adds guardTarget to the guard
+					// list (a creature can guard several people at once) and must never
+					// touch FollowTarget. Only COMMAND FOLLOW <target> changes who the
+					// creature follows.
 					e.monsterMgr.instances[i].GuardingPlayers = append(cur, guardTarget)
-					e.monsterMgr.instances[i].FollowTarget = ""
 					e.monsterMgr.instances[i].Target = ""
 				}
 				break
@@ -536,7 +691,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		var targetPlayer *Player
 		if e.sessions != nil {
 			for _, p := range e.sessions.OnlinePlayers() {
-				if p.NameEquals(rest) && p.RoomNumber == instRoom && !p.Dead {
+				if p.NameMatches(rest) && p.RoomNumber == instRoom && !p.Dead {
 					targetPlayer = p
 					break
 				}
@@ -552,7 +707,10 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 				if e.monsterMgr.instances[i].ID == instID {
 					e.monsterMgr.instances[i].Target = targetPlayer.FirstName
 					e.monsterMgr.instances[i].MonsterTargetID = 0
-					e.monsterMgr.instances[i].GuardingPlayers = nil
+					// GuardingPlayers is intentionally left alone — guarding and attacking
+					// on command aren't mutually exclusive (see the "purely additive"
+					// comment in the "guard" case above), so a creature ordered to attack
+					// keeps intercepting attacks on whoever it's guarding.
 					e.monsterMgr.instances[i].FollowTarget = ""
 					break
 				}
@@ -596,7 +754,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 				if e.monsterMgr.instances[i].ID == instID {
 					e.monsterMgr.instances[i].MonsterTargetID = monsterTargetID
 					e.monsterMgr.instances[i].Target = ""
-					e.monsterMgr.instances[i].GuardingPlayers = nil
+					// GuardingPlayers left alone — see the player-target attack branch above.
 					e.monsterMgr.instances[i].FollowTarget = ""
 					break
 				}

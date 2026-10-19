@@ -19,6 +19,10 @@ type GMScript struct {
 	Name                string           `bson:"name" json:"name"`
 	Content             string           `bson:"content" json:"content"`
 	Priority            int              `bson:"priority" json:"priority"` // higher = loads sooner
+	// Draft scripts are stored (and readable/editable in the GM panel) but are not
+	// applied to the running game and are skipped at startup. Missing in older
+	// documents, so the zero value (false) means "live" — existing scripts stay live.
+	Draft               bool             `bson:"draft" json:"draft"`
 	Size                int              `bson:"size" json:"size"`
 	UploadedBy          string           `bson:"uploadedBy" json:"uploadedBy"`
 	UploadedByAccountID string           `bson:"uploadedByAccountId" json:"uploadedByAccountId"`
@@ -97,6 +101,22 @@ func (e *GameEngine) SaveGMScript(ctx context.Context, script *GMScript) error {
 	return err
 }
 
+// SetGMScriptDraft flips a stored script between draft and live without touching
+// its content or version history. The caller applies/withdraws it in the engine.
+func (e *GameEngine) SetGMScriptDraft(ctx context.Context, filename string, draft bool) error {
+	if e.db == nil {
+		return fmt.Errorf("database not available")
+	}
+	res, err := e.db.Collection(gmScriptsCollection).UpdateOne(ctx, bson.M{"_id": filename}, bson.M{"$set": bson.M{"draft": draft}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return fmt.Errorf("script %q not found", filename)
+	}
+	return nil
+}
+
 // DeleteGMScript removes a GM script from MongoDB.
 func (e *GameEngine) DeleteGMScript(ctx context.Context, filename string) error {
 	if e.db == nil {
@@ -131,6 +151,10 @@ func (e *GameEngine) LoadGMScripts() {
 	}
 	log.Printf("Loading %d GM scripts from MongoDB...", len(scripts))
 	for _, s := range scripts {
+		if s.Draft {
+			log.Printf("  %s: draft, not loaded", s.Filename)
+			continue
+		}
 		parsed, err := e.parseAndApplyScript(s.Content, s.Filename)
 		if err != nil {
 			log.Printf("Warning: GM script %q failed to parse: %v", s.Filename, err)
@@ -197,6 +221,14 @@ func (e *GameEngine) ApplyParsedData(parsed *gameworld.ParsedData) ScriptApplySt
 	for i := range parsed.BreakMods {
 		e.breakMods[parsed.BreakMods[i].AdjID] = parsed.BreakMods[i].Modifier
 	}
+	for i := range parsed.MoneyDefs {
+		if md := parsed.MoneyDefs[i]; md.ID >= 1 && md.ID <= 9 && md.ExchangeRate > 0 {
+			if e.moneyDefs == nil {
+				e.moneyDefs = map[int]*gameworld.MoneyDef{}
+			}
+			e.moneyDefs[md.ID] = &md
+		}
+	}
 	for _, v := range parsed.Variables {
 		name := strings.ToUpper(v.Name)
 		if !e.namedVarNames[name] {
@@ -208,8 +240,21 @@ func (e *GameEngine) ApplyParsedData(parsed *gameworld.ParsedData) ScriptApplySt
 	if len(parsed.ForageDefs) > 0 {
 		e.forageDefs = append(e.forageDefs, parsed.ForageDefs...)
 	}
-	if len(parsed.CEvents) > 0 {
-		e.cevents = append(e.cevents, parsed.CEvents...)
+	// A CEVENT with the same ID and room as one already loaded replaces it rather than
+	// running alongside it — otherwise re-uploading an edited GM script (e.g. tweaking
+	// FALLFEST.SCR mid-event) would double every ambient echo and spawner it defines.
+	for _, ce := range parsed.CEvents {
+		replaced := false
+		for i := range e.cevents {
+			if e.cevents[i].ID == ce.ID && e.cevents[i].Room == ce.Room {
+				e.cevents[i] = ce
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			e.cevents = append(e.cevents, ce)
+		}
 	}
 	for i := range parsed.Macros {
 		e.macros[parsed.Macros[i].ID] = parsed.Macros[i].Scripts
@@ -273,28 +318,309 @@ func (e *GameEngine) StartCEventLoop() {
 		for range ticker.C {
 			tick++
 			for _, ce := range e.cevents {
-				if ce.Cycles > 0 && tick%ce.Cycles == 0 {
-					room := e.rooms[ce.Room]
-					if room == nil {
-						continue
-					}
-					sc := &ScriptContext{Room: room, Engine: e, Player: &Player{}}
-					for _, block := range ce.Scripts {
-						if block.Type == "ACTION" {
-							for _, action := range block.Actions {
-								sc.execAction(action)
-							}
-						} else {
-							sc.execBlock(block)
-						}
-					}
-					// Deliver ECHO messages from CEVENT scripts to players in the room
-					if e.roomBroadcast != nil && len(sc.RoomMsgs) > 0 {
-						e.roomBroadcast(ce.Room, sc.RoomMsgs)
-					}
-					e.Events.Publish("cevent", fmt.Sprintf("CEVENT %d fired in room %d (%s)", ce.ID, ce.Room, room.Name))
+				// Cycles<=0 (e.g. "CEVENT 91 0 350") means fire every tick, not never —
+				// several original scripts (KREETEK's subway timer, EVILFAYD's ambient
+				// echoes) rely on a 0 interval and roll their own internal randomization
+				// or counters for pacing.
+				if ce.Cycles <= 0 || tick%ce.Cycles == 0 {
+					e.runCEvent(ce)
 				}
 			}
 		}
 	}()
+}
+
+// runCEvent fires one cyclic event. Split out of StartCEventLoop so a panic in one
+// event's script is logged (recoverBackground) and skipped instead of killing the
+// whole server.
+func (e *GameEngine) runCEvent(ce gameworld.CEvent) {
+	defer recoverBackground(fmt.Sprintf("CEVENT %d (room %d)", ce.ID, ce.Room))
+	room := e.rooms[ce.Room]
+	if room == nil {
+		return
+	}
+	sc := &ScriptContext{Room: room, Engine: e, Player: &Player{}}
+	for _, block := range ce.Scripts {
+		if block.Type == "ACTION" {
+			for _, action := range block.Actions {
+				sc.execAction(action)
+			}
+		} else {
+			sc.execBlock(block)
+		}
+	}
+	// Deliver ECHO messages from CEVENT scripts to players in the room
+	if e.roomBroadcast != nil && len(sc.RoomMsgs) > 0 {
+		e.roomBroadcast(ce.Room, sc.RoomMsgs)
+	}
+	e.Events.Publish("cevent", fmt.Sprintf("CEVENT %d fired in room %d (%s)", ce.ID, ce.Room, room.Name))
+}
+
+// ── Drafts: withdrawing a live GM script from the running game ───────────────
+//
+// Applying a GM script is additive (ApplyParsedData replaces entities by number).
+// Withdrawing one — disabling it to a draft, deleting it, or re-saving it without
+// some of its old entities — puts back what the game would have without it:
+// each room/item/monster/macro/CEVENT it defined reverts to the disk-script
+// definition captured at startup (or disappears if the disk scripts never had
+// it), and then any other live GM script that also defines that entity is laid
+// back on top, in normal load order. Vocabulary, named variables, monster
+// adjectives, break mods, money/org/forage definitions are left alone: they're
+// harmless leftovers and clear on the next restart.
+
+// snapshotBaseDefinitions records the disk-script definitions, before any GM
+// script is applied. Called once from NewGameEngine.
+func (e *GameEngine) snapshotBaseDefinitions() {
+	e.baseRooms = make(map[int]*gameworld.Room, len(e.rooms))
+	for n, r := range e.rooms {
+		e.baseRooms[n] = r
+	}
+	e.baseItems = make(map[int]*gameworld.ItemDef, len(e.items))
+	for n, it := range e.items {
+		e.baseItems[n] = it
+	}
+	e.baseMonsters = make(map[int]*gameworld.MonsterDef, len(e.monsters))
+	for n, m := range e.monsters {
+		e.baseMonsters[n] = m
+	}
+	e.baseMacros = make(map[int][]gameworld.ScriptBlock, len(e.macros))
+	for n, m := range e.macros {
+		e.baseMacros[n] = m
+	}
+	e.baseCEvents = append([]gameworld.CEvent(nil), e.cevents...)
+}
+
+type ceventKey struct{ id, room int }
+
+// scriptEntitySet is the set of entity numbers a parsed script defines.
+type scriptEntitySet struct {
+	rooms, items, monsters, macros map[int]bool
+	cevents                        map[ceventKey]bool
+}
+
+func entitySetOf(p *gameworld.ParsedData) scriptEntitySet {
+	s := scriptEntitySet{map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}, map[ceventKey]bool{}}
+	if p == nil {
+		return s
+	}
+	for i := range p.Rooms {
+		s.rooms[p.Rooms[i].Number] = true
+	}
+	for i := range p.Items {
+		s.items[p.Items[i].Number] = true
+	}
+	for i := range p.Monsters {
+		s.monsters[p.Monsters[i].Number] = true
+	}
+	for i := range p.Macros {
+		s.macros[p.Macros[i].ID] = true
+	}
+	for _, ce := range p.CEvents {
+		s.cevents[ceventKey{ce.ID, ce.Room}] = true
+	}
+	return s
+}
+
+// minus removes everything o defines from s (entities a re-saved script still
+// defines don't need reverting — the new version is applied over them).
+func (s scriptEntitySet) minus(o scriptEntitySet) scriptEntitySet {
+	for n := range o.rooms {
+		delete(s.rooms, n)
+	}
+	for n := range o.items {
+		delete(s.items, n)
+	}
+	for n := range o.monsters {
+		delete(s.monsters, n)
+	}
+	for n := range o.macros {
+		delete(s.macros, n)
+	}
+	for k := range o.cevents {
+		delete(s.cevents, k)
+	}
+	return s
+}
+
+// WithdrawStats summarizes what withdrawing a GM script put back.
+type WithdrawStats struct {
+	Rooms     int `json:"rooms"`
+	Items     int `json:"items"`
+	Monsters  int `json:"monsters"`
+	Macros    int `json:"macros"`
+	CEvents   int `json:"cevents"`
+	Despawned int `json:"despawned"` // creatures removed because their definition went away
+}
+
+// ParsedStats counts what a parsed script defines, without applying it (shown
+// for drafts, where nothing is applied).
+func ParsedStats(p *gameworld.ParsedData) ScriptApplyStats {
+	return ScriptApplyStats{Rooms: len(p.Rooms), Items: len(p.Items), Monsters: len(p.Monsters),
+		Nouns: len(p.Nouns), Variables: len(p.Variables)}
+}
+
+// WithdrawGMScript removes a live GM script's effects from the running game.
+// oldContent is the version currently applied; keep (optional) is a new version
+// about to be applied in its place — entities it still defines are left for it to
+// overwrite. Other live GM scripts are read from MongoDB so their definitions win
+// back any entity they share with the withdrawn one.
+func (e *GameEngine) WithdrawGMScript(ctx context.Context, filename, oldContent string, keep *gameworld.ParsedData) (WithdrawStats, error) {
+	if ScriptParser == nil {
+		return WithdrawStats{}, fmt.Errorf("script parser not initialized")
+	}
+	old, err := ScriptParser(oldContent, filename)
+	if err != nil {
+		return WithdrawStats{}, fmt.Errorf("parse previous version: %w", err)
+	}
+	set := entitySetOf(old)
+	if keep != nil {
+		set = set.minus(entitySetOf(keep))
+	}
+
+	// Other live scripts, in the same order LoadGMScripts applies them.
+	var others []*gameworld.ParsedData
+	if e.db != nil {
+		opts := options.Find().SetSort(bson.D{{Key: "priority", Value: -1}, {Key: "uploadedAt", Value: 1}})
+		cursor, err := e.db.Collection(gmScriptsCollection).Find(ctx, bson.M{"_id": bson.M{"$ne": filename}, "draft": bson.M{"$ne": true}}, opts)
+		if err != nil {
+			return WithdrawStats{}, err
+		}
+		var scripts []GMScript
+		if err := cursor.All(ctx, &scripts); err != nil {
+			return WithdrawStats{}, err
+		}
+		for _, sc := range scripts {
+			p, err := ScriptParser(sc.Content, sc.Filename)
+			if err != nil {
+				log.Printf("Warning: withdraw %s: skipping unparseable GM script %s: %v", filename, sc.Filename, err)
+				continue
+			}
+			others = append(others, p)
+		}
+	}
+	stats := e.revertScriptEntities(set, others)
+	log.Printf("Withdrew GM script %s: %d rooms, %d items, %d monsters, %d macros, %d cevents reverted; %d creatures despawned",
+		filename, stats.Rooms, stats.Items, stats.Monsters, stats.Macros, stats.CEvents, stats.Despawned)
+	return stats, nil
+}
+
+// revertScriptEntities restores every entity in set to its disk definition (or
+// removes it), then re-applies matching definitions from others in order.
+func (e *GameEngine) revertScriptEntities(set scriptEntitySet, others []*gameworld.ParsedData) WithdrawStats {
+	var stats WithdrawStats
+	seasonal := e.seasonalRooms[e.currentSeason]
+
+	for n := range set.rooms {
+		stats.Rooms++
+		base := e.baseRooms[n]
+		var override *gameworld.Room
+		for i := range seasonal {
+			if seasonal[i].Number == n {
+				override = &seasonal[i]
+				break
+			}
+		}
+		switch {
+		case base == nil && override == nil:
+			delete(e.rooms, n)
+			continue
+		case base == nil:
+			// A room only a seasonal script defines comes back as that.
+			base = override
+		case override != nil && override != base:
+			// The season may have changed while the GM version was in place.
+			applySeasonalRoomOverride(base, override)
+		}
+		e.rooms[n] = base
+	}
+	for n := range set.items {
+		stats.Items++
+		if base := e.baseItems[n]; base != nil {
+			e.items[n] = base
+		} else {
+			delete(e.items, n)
+		}
+	}
+	for n := range set.macros {
+		stats.Macros++
+		if base, ok := e.baseMacros[n]; ok {
+			e.macros[n] = base
+		} else {
+			delete(e.macros, n)
+		}
+	}
+	for n := range set.monsters {
+		stats.Monsters++
+		if base := e.baseMonsters[n]; base != nil {
+			e.monsters[n] = base
+		} else {
+			delete(e.monsters, n)
+		}
+	}
+	if len(set.cevents) > 0 {
+		var kept []gameworld.CEvent
+		for _, ce := range e.cevents {
+			if set.cevents[ceventKey{ce.ID, ce.Room}] {
+				stats.CEvents++
+				continue
+			}
+			kept = append(kept, ce)
+		}
+		for _, ce := range e.baseCEvents {
+			if set.cevents[ceventKey{ce.ID, ce.Room}] {
+				kept = append(kept, ce)
+			}
+		}
+		e.cevents = kept
+	}
+
+	// Lay other live scripts back over anything they share with the withdrawn one.
+	for _, p := range others {
+		for i := range p.Rooms {
+			if set.rooms[p.Rooms[i].Number] {
+				e.rooms[p.Rooms[i].Number] = &p.Rooms[i]
+			}
+		}
+		for i := range p.Items {
+			if set.items[p.Items[i].Number] {
+				e.items[p.Items[i].Number] = &p.Items[i]
+			}
+		}
+		for i := range p.Monsters {
+			if set.monsters[p.Monsters[i].Number] {
+				e.monsters[p.Monsters[i].Number] = &p.Monsters[i]
+			}
+		}
+		for i := range p.Macros {
+			if set.macros[p.Macros[i].ID] {
+				e.macros[p.Macros[i].ID] = p.Macros[i].Scripts
+			}
+		}
+		for _, ce := range p.CEvents {
+			if !set.cevents[ceventKey{ce.ID, ce.Room}] {
+				continue
+			}
+			replaced := false
+			for i := range e.cevents {
+				if e.cevents[i].ID == ce.ID && e.cevents[i].Room == ce.Room {
+					e.cevents[i] = ce
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				e.cevents = append(e.cevents, ce)
+			}
+		}
+	}
+
+	// Creatures whose definition no longer exists anywhere are removed.
+	if e.monsterMgr != nil {
+		for n := range set.monsters {
+			if e.monsters[n] == nil {
+				stats.Despawned += e.monsterMgr.RemoveByDef(n)
+			}
+		}
+	}
+	return stats
 }

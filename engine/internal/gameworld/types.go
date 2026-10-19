@@ -1,5 +1,7 @@
 package gameworld
 
+import "time"
+
 // Room represents a game room parsed from script files.
 type Room struct {
 	Number           int               `bson:"number" json:"number"`
@@ -14,6 +16,11 @@ type Room struct {
 	StoreItems       []StoreItem       `bson:"storeItems,omitempty" json:"storeItems,omitempty"`
 	TrainingSkills   []TrainingDef     `bson:"trainingSkills,omitempty" json:"trainingSkills,omitempty"`
 	Region           int               `bson:"region,omitempty" json:"region,omitempty"`
+	// DropLoc is the room-level DROPLOC <room#>. GMSCRIPT.DOC documents it for
+	// arenas (where a "killed" player is carried), but SKYMAP.SCR sets it on
+	// nearly every AERIAL room to the ground below — the engine uses it as where
+	// a player lands when their flight ends mid-air (see skyfall.go).
+	DropLoc int `bson:"dropLoc,omitempty" json:"dropLoc,omitempty"`
 	Modifiers        []string          `bson:"modifiers" json:"modifiers"` // FORGE, LOOM, MINEA, etc.
 	Scripts          []ScriptBlock     `bson:"scripts" json:"scripts"`     // conditional blocks
 	MacroCalls       []int             `bson:"macroCalls,omitempty" json:"macroCalls,omitempty"` // CALL directives; resolved into Scripts at load time
@@ -36,13 +43,37 @@ type RoomItem struct {
 	// HardnessMod is a per-instance modifier to a weapon's Weapon Clash break-resistance
 	// (see weaponHardness in engine/combat.go), GM-editable via @editem.
 	HardnessMod int        `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+	// CraftedValue mirrors engine.InventoryItem.CraftedValue — see its doc comment.
+	// Carried here so a crafted item dropped on the floor keeps its fair sell value.
+	CraftedValue int       `bson:"craftedValue,omitempty" json:"craftedValue,omitempty"`
 	// ItemBits holds the 0-19 boolean flags documented as ITEMBIT(#) in MANUAL.DOC — a
 	// per-instance bitmask distinct from VAL1-5. Bit N corresponds to ITEMBIT<N>.
 	ItemBits  int            `bson:"itemBits,omitempty" json:"itemBits,omitempty"`
+	// WrittenText mirrors engine.InventoryItem.WrittenText — see its doc comment.
+	// Carried here so a written note dropped on the floor keeps its content.
+	WrittenText string       `bson:"writtenText,omitempty" json:"writtenText,omitempty"`
 	State     string         `bson:"state,omitempty" json:"state,omitempty"` // OPEN, CLOSED, LOCKED, etc.
 	Extend    string         `bson:"extend,omitempty" json:"extend,omitempty"` // extended description
 	PutIn     int            `bson:"putIn,omitempty" json:"putIn,omitempty"` // if PUT, which ref it's inside
 	IsPut     bool           `bson:"isPut,omitempty" json:"isPut,omitempty"`
+	// SigilSpellID/SigilOwner track a sigil trap (Imprison Rune 227, Thunder/Inferno/Ice
+	// Glyph 125/124/126, Death Scythe 322 — see castSigilSpell in engine/spells.go).
+	// Mirrors the same fields on engine.InventoryItem for room-floor items, dropped
+	// items, and door/gate items.
+	SigilSpellID int    `bson:"sigilSpellID,omitempty" json:"sigilSpellID,omitempty"`
+	SigilOwner   string `bson:"sigilOwner,omitempty" json:"sigilOwner,omitempty"`
+	// SigilCaster is the real FirstName of the player who inscribed the sigil with CAST
+	// (castSigilSpell in engine/spells.go) — distinct from SigilOwner, which is whoever
+	// later claims it by touch. Used by Truename to reveal who created the glyph.
+	SigilCaster string `bson:"sigilCaster,omitempty" json:"sigilCaster,omitempty"`
+	// BladeSpell* mirror the same fields on engine.InventoryItem (a timed Storm/
+	// Inferno/Winter Blade imbue). Carried here so a weapon set on the floor keeps
+	// its expiry — without them the spell's Val3/Val5 stuck permanently once the
+	// weapon was dropped and picked back up.
+	BladeSpellExpiry     time.Time `bson:"bladeSpellExpiry,omitempty" json:"bladeSpellExpiry,omitempty"`
+	BladeSpellPrevVal3   int       `bson:"bladeSpellPrevVal3,omitempty" json:"bladeSpellPrevVal3,omitempty"`
+	BladeSpellPrevVal5   int       `bson:"bladeSpellPrevVal5,omitempty" json:"bladeSpellPrevVal5,omitempty"`
+	BladeSpellAdjApplied bool      `bson:"bladeSpellAdjApplied,omitempty" json:"bladeSpellAdjApplied,omitempty"`
 }
 
 // StoreItem represents a purchasable item in a shop room.
@@ -82,6 +113,16 @@ type ItemDef struct {
 	Container   string   `bson:"container,omitempty" json:"container,omitempty"` // IN, ON, UNDER, BEHIND
 	Interior    int      `bson:"interior,omitempty" json:"interior,omitempty"`
 	WornSlot    string   `bson:"wornSlot,omitempty" json:"wornSlot,omitempty"`
+	// Adjective/Adjective2 are a FIXED archetype-level adjective (or two, for a
+	// two-word shape like "large round shield") baked into every instance's
+	// displayed name, distinct from the three per-instance Adj1-3 slots (which
+	// carry crafted-in material, dye, encrusted gems, etc.). Mirrors
+	// MonsterDef.Adjective/FormatMonsterName. Needed because CRAFTABLE items
+	// have no room placement or StoreItem entry to hang a per-instance
+	// adjective off of, so an archetype like "round shield" needs its own way
+	// to say it's round without a new noun per shape.
+	Adjective  int `bson:"adjective,omitempty" json:"adjective,omitempty"`
+	Adjective2 int `bson:"adjective2,omitempty" json:"adjective2,omitempty"`
 	Flags       []string `bson:"flags" json:"flags"` // HIDDEN, LOCKABLE, OPENABLE, etc.
 	Scripts     []ScriptBlock `bson:"scripts,omitempty" json:"scripts,omitempty"`
 	MacroCalls  []int    `bson:"macroCalls,omitempty" json:"macroCalls,omitempty"` // CALL directives; resolved into Scripts at load time
@@ -96,6 +137,15 @@ type MonsterDef struct {
 	Adjective   int      `bson:"adjective" json:"adjective"`
 	Description string   `bson:"description" json:"description"`
 	BodyType    string   `bson:"bodyType" json:"bodyType"` // HUMAN, ANIMAL, AVINE
+	// Parts holds raw PART # values from GMSCRIPT.DOC's body-part table (0=head,
+	// 1=body, ... 7/8/9/10/11/12/18/19=leg-type parts). Per GMSCRIPT.DOC, PART "can
+	// be used in conjunction with or alone" — combined with BodyType it ADDS parts
+	// on top of the macro's implied base anatomy (e.g. astral stalker mnumber 87 is
+	// ANIMAL + PART 15/16/17/3 for wings/tail/second-head, still four-legged per its
+	// own description); given alone (no BodyType) it's the creature's complete,
+	// authoritative anatomy (e.g. rattlesnake mnumber 36: PART 0/17 only — no legs).
+	// See monsterHasLegs in combat.go for how this is consumed.
+	Parts []int `bson:"parts,omitempty" json:"parts,omitempty"`
 	Body        int      `bson:"body" json:"body"`         // hit points
 	Attack1     int      `bson:"attack1" json:"attack1"`
 	Attack2     int      `bson:"attack2" json:"attack2"`
@@ -155,6 +205,13 @@ type MonsterDef struct {
 	Disciplines    []int             `bson:"disciplines,omitempty" json:"disciplines,omitempty"`
 	Scripts        []ScriptBlock     `bson:"scripts,omitempty" json:"scripts,omitempty"`
 	MacroCalls     []int             `bson:"macroCalls,omitempty" json:"macroCalls,omitempty"` // SCRIPTMACRO directives; resolved into Scripts at load time
+	// DeathPValNum/DeathPValValue capture a "PVAL <num> <value>" monster field (e.g.
+	// MONSTERS.SCR MNUMBER 294 Ming-K'Tuk: "PVAL 90 1") — when this monster dies, the
+	// engine sets the corresponding global PVAL (see ScriptContext's PVAL getVar/setVar,
+	// engine.PVals) to Value, permanently flipping any room/IFVAR logic gated on it (e.g.
+	// DEEP2.SCR room 1811's "IFVAR PVAL90 = 0" checks). Zero DeathPValNum means unset.
+	DeathPValNum   int               `bson:"deathPValNum,omitempty" json:"deathPValNum,omitempty"`
+	DeathPValValue int               `bson:"deathPValValue,omitempty" json:"deathPValValue,omitempty"`
 	SourceFile     string            `bson:"sourceFile" json:"sourceFile"`
 }
 

@@ -23,9 +23,22 @@ func (e *GameEngine) doEmoteWithScripts(ctx context.Context, player *Player, ver
 			return result
 		}
 	}
-	// Check room-level bare-verb scripts (IFVERB/IFPREVERB VERB -1)
+	return e.doRoomVerbScriptsThenEmote(player, verb, args)
+}
+
+// doRoomVerbScriptsThenEmote runs the room's bare-verb scripts (IFVERB/IFPREVERB VERB -1)
+// and then the plain emote, unless a script blocked it (CLEARVERB). This is the second half
+// of doEmoteWithScripts, split out for verbs that do their own item-target handling first
+// (WAVE, TAP, RUB, PULL, ...) and must not run the target's scripts a second time — e.g.
+// FAYD.SCR room 3630's "IFPREVERB WAVE -1" violinist never fired because bare WAVE went
+// straight to processEmote.
+func (e *GameEngine) doRoomVerbScriptsThenEmote(player *Player, verb string, args []string) *CommandResult {
+	room := e.rooms[player.RoomNumber]
 	if room != nil {
 		sc := e.RunRoomVerbScripts(player, room, verb)
+		if len(sc.DeferredSegments) > 0 {
+			e.scheduleScriptSegments(player, sc.DeferredSegments)
+		}
 		if sc.Blocked || len(sc.Messages) > 0 || len(sc.RoomMsgs) > 0 {
 			result := &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 			if sc.Blocked && len(result.Messages) == 0 {
@@ -43,6 +56,33 @@ func (e *GameEngine) doEmoteWithScripts(ctx context.Context, player *Player, ver
 		}
 	}
 	return e.processEmote(player, verb, args)
+}
+
+// doPullPlayerUp handles PULL <player> on someone who is lying down: it helps them
+// to their feet. Returns nil (caller falls back to the normal PULL emote) when the
+// target isn't a player here, isn't lying down, or can't be raised — dead,
+// unconscious, asleep, or held down by Plant Snare/webs/tentacles (Entangles) or
+// Immobilize/Imprisonment Rune (Immobilized).
+func (e *GameEngine) doPullPlayerUp(ctx context.Context, player *Player, args []string) *CommandResult {
+	if len(args) == 0 {
+		return nil
+	}
+	target := e.findPlayerInRoom(player, strings.ToLower(strings.Join(args, " ")))
+	if target == nil || target == player || target.Position != 2 {
+		return nil
+	}
+	if target.Dead || target.Unconscious || target.Sleeping || target.Immobilized || len(target.Entangles) > 0 {
+		return nil
+	}
+	target.Position = 0
+	target.KnockedDown = false // same as STAND — the knockdown penalty lasts until you're up
+	e.SavePlayer(ctx, target)
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You help %s to %s feet.", target.DisplayName(), target.Possessive())},
+		RoomBroadcast: []string{fmt.Sprintf("%s helps %s to %s feet.", player.DisplayNameCap(), target.DisplayName(), target.Possessive())},
+		TargetName:    target.FirstName,
+		TargetMsg:     []string{fmt.Sprintf("%s helps you to your feet.", player.DisplayNameCap())},
+	}
 }
 
 // runVerbScriptsForTarget finds a named target in the room or player inventory and runs all
@@ -152,7 +192,7 @@ func (e *GameEngine) runVerbScriptsForTarget(ctx context.Context, player *Player
 			}
 			tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 				Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
-				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5,
+				Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 				ItemBits: ii.ItemBits,
 				State: itemState}
 			result := &CommandResult{}
@@ -190,6 +230,9 @@ func (e *GameEngine) runVerbScriptsForTarget(ctx context.Context, player *Player
 }
 
 func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *CommandResult {
+	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	if len(args) < 2 {
 		return &CommandResult{Messages: []string{"Whisper to whom?"}}
 	}
@@ -208,6 +251,9 @@ func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You whisper to those close, \"%s\"", text)},
 			RoomBroadcast: []string{roomLine},
+			// roomLine is already anonymized above for a concealed whisperer, so this
+			// opts out of api.go's default choke-point suppression.
+			ConcealedBroadcastOK: true,
 		}
 	}
 
@@ -230,12 +276,62 @@ func (e *GameEngine) doWhisper(player *Player, args []string, rawInput string) *
 		TargetName:    found.FirstName, // session routing key — must stay the real name even if found is disguised
 		WhisperTarget: found.FirstName,
 		WhisperMsg:    fmt.Sprintf("%s whispers to you, \"%s\"", player.DisplayNameCap(), text),
+		// roomLine is already anonymized above for a concealed whisperer, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
+	}
+}
+
+// doSayTo handles "SAYTO <player> <message>" — a public, room-wide statement
+// addressed to a specific person, unlike WHISPER which is a private aside.
+// No IFSAY scripts run here: those blocks are original-content triggers for the
+// literal SAY command, and SAYTO has no original precedent (it's a new roleplay
+// convenience command), so it mirrors WHISPER/YELL in staying script-free.
+func (e *GameEngine) doSayTo(player *Player, args []string, rawInput string) *CommandResult {
+	if player.IsSilenced() {
+		return &CommandResult{Messages: []string{"You try to speak, but no sound comes out!"}}
+	}
+	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	if len(args) < 2 {
+		return &CommandResult{Messages: []string{"Say what to whom?"}}
+	}
+	targetName := strings.ToLower(args[0])
+	found := e.findPlayerInRoom(player, targetName)
+	if found == nil {
+		return &CommandResult{Messages: []string{"You don't see that person here."}}
+	}
+	text := extractRawArgs(rawInput, 2)
+	if text == "" {
+		return &CommandResult{Messages: []string{"Say what to whom?"}}
+	}
+	verb, thirdVerb := "say", "says"
+	if player.IsUnemoted() {
+		verb, thirdVerb = "intone", "intones"
+	}
+	roomLine := fmt.Sprintf("%s %s to %s, \"%s\"", player.DisplayNameCap(), thirdVerb, found.DisplayName(), text)
+	if player.IsConcealed() {
+		roomLine = fmt.Sprintf("Something %s to %s, \"%s\"", thirdVerb, found.DisplayName(), text)
+	}
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You %s to %s, \"%s\"", verb, found.DisplayName(), text)},
+		RoomBroadcast: []string{roomLine},
+		// roomLine is already anonymized above for a concealed speaker, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
 	}
 }
 
 func (e *GameEngine) doYell(player *Player, args []string, rawInput string) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Yell what?"}}
+	}
+	if player.IsSilenced() {
+		return &CommandResult{Messages: []string{"You try to yell, but no sound comes out!"}}
+	}
+	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
 	}
 	text := extractRawArgs(rawInput, 1)
 	adverb := ""
@@ -261,6 +357,9 @@ func (e *GameEngine) doYell(player *Player, args []string, rawInput string) *Com
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You %syell, \"%s\"", adverb, text)},
 		RoomBroadcast: []string{roomLine},
+		// roomLine is already anonymized above for a concealed yeller, so this
+		// opts out of api.go's default choke-point suppression.
+		ConcealedBroadcastOK: true,
 	}
 }
 
@@ -344,7 +443,7 @@ func (e *GameEngine) doFollow(player *Player, args []string) *CommandResult {
 		return &CommandResult{Messages: []string{"They are not here."}}
 	}
 	if player.Following != "" {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You are already following %s.", player.Following)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You are already following %s.", e.displayNameForOnlinePlayer(player.Following))}}
 	}
 	if found.Following == player.FirstName {
 		return &CommandResult{Messages: []string{"You can't follow someone who is following you."}}
@@ -362,7 +461,7 @@ func (e *GameEngine) doFollow(player *Player, args []string) *CommandResult {
 	if !alreadyIn {
 		found.GroupMembers = append(found.GroupMembers, player.FirstName)
 	}
-	result := &CommandResult{Messages: []string{fmt.Sprintf("You are now following %s.", found.FirstName)}}
+	result := &CommandResult{Messages: []string{fmt.Sprintf("You are now following %s.", found.DisplayName())}}
 	if !player.IsConcealed() {
 		result.RoomBroadcast = []string{fmt.Sprintf("%s is now following %s.", player.DisplayNameCap(), found.DisplayName())}
 	}
@@ -375,7 +474,7 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 		return avoidBlockMessage(found.FirstName)
 	}
 	if found.Following != "" {
-		return &CommandResult{Messages: []string{fmt.Sprintf("%s is already following someone.", found.FirstName)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s is already following someone.", found.DisplayName())}}
 	}
 	found.Following = player.FirstName
 	player.IsGroupLeader = true
@@ -390,9 +489,28 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 		player.GroupMembers = append(player.GroupMembers, found.FirstName)
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("%s takes %s by the hand.", player.FirstName, found.FirstName)},
+		Messages:      []string{fmt.Sprintf("%s takes %s by the hand.", player.DisplayName(), found.DisplayName())},
 		RoomBroadcast: []string{fmt.Sprintf("%s takes %s by the hand.", player.DisplayName(), found.DisplayName())},
 	}
+}
+
+// finishPreverbMoveGroup builds the result for a direction/ASCEND/DESCEND
+// IFPREVERB that fired MOVEGROUP, then performs the move. sc.RoomMsgs are
+// pre-MOVEGROUP departure echoes, so they go to the room being left rather than
+// whatever room player.RoomNumber points at after the move.
+func (e *GameEngine) finishPreverbMoveGroup(ctx context.Context, player *Player, sc *ScriptContext) *CommandResult {
+	result := &CommandResult{}
+	result.Messages = append(result.Messages, sc.Messages...)
+	result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+	if len(sc.RoomMsgs) > 0 {
+		result.OldRoom = player.RoomNumber
+		result.OldRoomMsg = append(result.OldRoomMsg, sc.RoomMsgs...)
+	}
+	if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
+		result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
+	}
+	e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
+	return result
 }
 
 // moveGroupToRoom moves all online players in srcRoom to destRoom (for MOVEGROUP script command).
@@ -419,8 +537,55 @@ func (e *GameEngine) moveGroupToRoom(ctx context.Context, srcRoom, destRoom int)
 			lookResult := e.doLook(p)
 			e.sendToPlayer(p.FirstName, lookResult.Messages)
 		}
-		e.applyEntryScripts(ctx, p, dest, &CommandResult{})
+		// applyEntryScripts writes into whatever CommandResult it's handed — a bare
+		// &CommandResult{} literal here was a throwaway nobody ever read, so any
+		// IFENTRY reaction (an ECHO PLAYER, a DAMAGEPLR message, even a second
+		// MOVEGROUP bouncing the player straight back out — see EDDIE3.SCR room 76's
+		// "your dagger is not the right one" check) was computed and then silently
+		// dropped: the player would see themselves plucked right back to where they
+		// started with no explanation at all. Capture it and actually deliver it,
+		// the same way scheduleScriptSegments already does for its own IFENTRY calls.
+		entryResult := &CommandResult{}
+		e.applyEntryScripts(ctx, p, dest, entryResult)
+		if len(entryResult.Messages) > 0 && e.sendToPlayer != nil {
+			e.sendToPlayer(p.FirstName, entryResult.Messages)
+		}
+		if len(entryResult.RoomBroadcast) > 0 {
+			if e.roomBroadcastExclude != nil {
+				e.roomBroadcastExclude(p.RoomNumber, p.FirstName, entryResult.RoomBroadcast)
+			} else if e.roomBroadcast != nil {
+				e.roomBroadcast(p.RoomNumber, entryResult.RoomBroadcast)
+			}
+		}
+		if len(entryResult.GMBroadcast) > 0 && e.gmBroadcast != nil {
+			e.gmBroadcast(entryResult.GMBroadcast)
+		}
 	}
+}
+
+// displayNameForOnlinePlayer resolves a stored real FirstName (e.g. from
+// Player.Following or Player.GroupMembers, which always track real identity
+// so group bookkeeping survives a member re-disguising) to that player's
+// current disguise-aware DisplayName, so group messages describe someone by
+// the persona they're currently wearing rather than leaking their real name.
+// Falls back to the raw name if the player can't be found online.
+func (e *GameEngine) findOnlinePlayerByName(name string) *Player {
+	if e.sessions == nil {
+		return nil
+	}
+	for _, p := range e.sessions.OnlinePlayers() {
+		if p.FirstName == name {
+			return p
+		}
+	}
+	return nil
+}
+
+func (e *GameEngine) displayNameForOnlinePlayer(name string) string {
+	if p := e.findOnlinePlayerByName(name); p != nil {
+		return p.DisplayName()
+	}
+	return name
 }
 
 func (e *GameEngine) removeFromGroup(player *Player) {
@@ -447,16 +612,80 @@ func (e *GameEngine) removeFromGroup(player *Player) {
 	}
 }
 
+// followBlockedReason reports why a group member currently can't keep up
+// with a moving leader — stuck in round time, sitting, laying down, or
+// stunned — or "" if they're free to follow.
+func followBlockedReason(p *Player) string {
+	if p.RoundTimeExpiry.After(time.Now()) {
+		return "still recovering"
+	}
+	switch p.Position {
+	case 1:
+		return "sitting down"
+	case 2:
+		return "laying down"
+	}
+	if p.Stunned {
+		return "stunned"
+	}
+	return ""
+}
+
+// moveGroupFollowers relocates a leader's online group members from
+// originalRoom to destNum, for the caller to render along with the leader's
+// own move. For an on-foot move (bypassFollowCheck false), a member who is in
+// round time, sitting, laying down, or stunned can't keep up — rather than
+// dragging them along, they're left behind and dropped from the group
+// (mirroring removeFromGroup: their Following is cleared, they come off the
+// leader's GroupMembers list, and the leader loses IsGroupLeader if that was
+// their last member). A magical mass-teleport (bypassFollowCheck true — e.g.
+// Bend Space II) sweeps every group member along regardless of that physical
+// state: the spell relocates them, they don't need to walk anywhere to keep
+// up. Returns the members who actually came along.
+func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, originalRoom, destNum int, bypassFollowCheck bool) []*Player {
+	if !leader.IsGroupLeader || len(leader.GroupMembers) == 0 || e.sessions == nil {
+		return nil
+	}
+	var moved []*Player
+	// Snapshot the member list — removeFromGroup mutates leader.GroupMembers
+	// in place, which would otherwise skip entries while ranging over it live.
+	for _, memberName := range append([]string(nil), leader.GroupMembers...) {
+		for _, p := range e.sessions.OnlinePlayers() {
+			if p.FirstName != memberName || p.RoomNumber != originalRoom || p.Dead {
+				continue
+			}
+			if !bypassFollowCheck {
+				if reason := followBlockedReason(p); reason != "" {
+					leaderDisplay := leader.DisplayName()
+					e.removeFromGroup(p)
+					if e.sendToPlayer != nil {
+						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("You are %s and fail to follow %s! You are no longer following them.", reason, leaderDisplay)})
+					}
+					break
+				}
+			}
+			p.RoomNumber = destNum
+			p.Submitting = false
+			e.disengageCombat(p)
+			e.SavePlayer(ctx, p)
+			moved = append(moved, p)
+			break
+		}
+	}
+	return moved
+}
+
 // doLeave handles the LEAVE command — stop following.
 func (e *GameEngine) doLeave(player *Player) *CommandResult {
 	if player.Following == "" {
 		return &CommandResult{Messages: []string{"You are not following anyone."}}
 	}
 	leaderName := player.Following
+	leaderDisplay := e.displayNameForOnlinePlayer(leaderName)
 	e.removeFromGroup(player)
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You stop following %s.", leaderName)},
-		RoomBroadcast: []string{fmt.Sprintf("%s stops following %s.", player.DisplayName(), leaderName)},
+		Messages:      []string{fmt.Sprintf("You stop following %s.", leaderDisplay)},
+		RoomBroadcast: []string{fmt.Sprintf("%s stops following %s.", player.DisplayName(), leaderDisplay)},
 	}
 }
 
@@ -472,7 +701,7 @@ func (e *GameEngine) doDisband(player *Player) *CommandResult {
 				if p.FirstName == memberName {
 					p.Following = ""
 					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s disbands the group.", player.FirstName)})
+						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s disbands the group.", player.DisplayName())})
 					}
 					break
 				}
@@ -487,11 +716,83 @@ func (e *GameEngine) doDisband(player *Player) *CommandResult {
 	}
 }
 
+// doSharedXP handles the SHAREDXP command — only the group leader may toggle it. While
+// active, a kill by any member of the group splits XP across the whole group (see
+// sharedXPRecipients/computeGroupXPShares in combat.go) instead of going solely to
+// whoever landed the kill. Message goes to every current member, not just the leader,
+// since the mode affects everyone's XP going forward.
+func (e *GameEngine) doSharedXP(player *Player) *CommandResult {
+	if !player.IsGroupLeader {
+		return &CommandResult{Messages: []string{"Only the leader of a group can toggle shared experience."}}
+	}
+	player.SharedXP = !player.SharedXP
+	msg := "Your group is no longer sharing experience from combat."
+	if player.SharedXP {
+		msg = "Your group will now share experience from combat."
+	}
+	if e.sendToPlayer != nil {
+		for _, memberName := range player.GroupMembers {
+			e.sendToPlayer(memberName, []string{msg})
+		}
+	}
+	return &CommandResult{Messages: []string{msg}}
+}
+
+// groupMates returns every other online player currently in player's group — the
+// leader and its other followers if player is a follower, or all of player's own
+// followers if player is the leader — excluding player itself. Returns nil if player
+// isn't in a group. Used by group-wide effects like Mass Protection (spell 130, see
+// massProtectionGroupBonus in combat.go).
+func (e *GameEngine) groupMates(player *Player) []*Player {
+	if e.sessions == nil {
+		return nil
+	}
+	var otherNames []string
+	if player.IsGroupLeader {
+		if len(player.GroupMembers) == 0 {
+			return nil
+		}
+		otherNames = player.GroupMembers
+	} else if player.Following != "" {
+		leaderName := player.Following
+		var leader *Player
+		for _, p := range e.sessions.OnlinePlayers() {
+			if p.FirstName == leaderName {
+				leader = p
+				break
+			}
+		}
+		if leader == nil {
+			return nil
+		}
+		otherNames = append([]string{leaderName}, leader.GroupMembers...)
+		for i, n := range otherNames {
+			if n == player.FirstName {
+				otherNames = append(otherNames[:i], otherNames[i+1:]...)
+				break
+			}
+		}
+	} else {
+		return nil
+	}
+
+	var mates []*Player
+	for _, name := range otherNames {
+		for _, p := range e.sessions.OnlinePlayers() {
+			if p.FirstName == name {
+				mates = append(mates, p)
+				break
+			}
+		}
+	}
+	return mates
+}
+
 // doSplit divides a currency amount evenly among all group members.
 // The player paying deducts their share for each other member; remainder stays with them.
 func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) < 2 {
-		return &CommandResult{Messages: []string{"Split how much of what? Usage: split <amount> <gold|silver|copper>"}}
+		return &CommandResult{Messages: []string{"Split how much of what? Usage: split <amount> <gold|silver|copper|kragenmarks|...>"}}
 	}
 	amount, err := strconv.Atoi(args[0])
 	if err != nil || amount <= 0 {
@@ -508,7 +809,12 @@ func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string)
 	case "gold", "silver", "copper":
 		// already normalised
 	default:
-		return &CommandResult{Messages: []string{"You can split gold, silver, or copper."}}
+		// A regional currency (currency.go), e.g. "split 30 kragenmarks".
+		if md := e.currencyByName(currency); md != nil {
+			currency = md.Name
+			break
+		}
+		return &CommandResult{Messages: []string{"You can split gold, silver, copper, or a regional currency."}}
 	}
 
 	if !player.IsGroupLeader && player.Following == "" {
@@ -597,6 +903,15 @@ func (e *GameEngine) doSplit(ctx context.Context, player *Player, args []string)
 			r.Copper += share
 			e.SavePlayer(ctx, r)
 		}
+	default:
+		md := e.currencyByName(currency)
+		if !e.spendFunds(player, md, totalToGive) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have enough %s to give %s to each of %d members.", currencyPlural(md), formatCurrency(md, share), len(recipients))}}
+		}
+		for _, r := range recipients {
+			addFunds(r, md, share)
+			e.SavePlayer(ctx, r)
+		}
 	}
 	e.SavePlayer(ctx, player)
 
@@ -631,7 +946,10 @@ func splitCurrencyDisplay(amount int, currency string) string {
 		}
 		return fmt.Sprintf("%d copper pennies", amount)
 	}
-	return fmt.Sprintf("%d %s", amount, currency)
+	if amount == 1 {
+		return fmt.Sprintf("1 %s", currency)
+	}
+	return fmt.Sprintf("%d %ss", amount, currency) // regional currency: singular name + "s"
 }
 
 func (e *GameEngine) doWho(player *Player) *CommandResult {
@@ -674,24 +992,170 @@ func (e *GameEngine) doWho(player *Player) *CommandResult {
 	return &CommandResult{Messages: msgs}
 }
 
-func (e *GameEngine) doHelp() *CommandResult {
+// helpTopicNames lists the topics HELP <topic> answers, in the original's own order —
+// also the canonical set doHelp's intro text advertises and its "no help on that" error
+// echoes back.
+var helpTopicNames = []string{"combat", "commanding", "death", "movement", "psionics", "spells", "training", "verbs"}
+
+// helpIntro is the exact text HELP with no argument printed in the original game,
+// preserved from a 1996 session capture (original/csanburn/wolf0615.txt) — typo in
+// "just try tying what you want to do!" included, since it's what players actually saw.
+var helpIntro = []string{
+	"You are playing Legends of Future Past(tm)",
+	"(C)1991-1995 Inner Circle Technologies, Inc.",
+	"",
+	"You communicate with the world by typing english sentences. If you want to do something, just try tying what you want to do!  The system understands many verbs. Here are some examples of what you could try:",
+	"",
+	"NORTH            (go north)",
+	"SOUTHWEST        (go southwest)",
+	"INVENTORY        (see what you are carrying)",
+	"LOOK             (view your surroundings)",
+	"GO GATE          (go through a gate)",
+	"CLIMB LADDER     (climb a ladder)",
+	"LOOK UNDER BED   (look at what is under a bed)",
+	"TAKE SWORD       (pick up a sword)",
+	"KILL RAT         (kill a rat)",
+	"",
+	"In your travels, you will encounter not only monsters but other characters being played by people like you!  To say something out loud so someone in the room can hear you, just start your input line with a quote character ('). Example:",
+	"",
+	"You type: 'Hi everyone!",
+	`Other people in room see: Moordread says, "Hi everyone!"`,
+	"",
+	"Some other important commands to know:",
+	"ADVICE -- Get some advice and tips on game play",
+	"ASSIST -- Call for a GameMaster's assistance",
+	"BRIEF -- Turn on brief description mode",
+	"EXPERIENCE -- See your experience and build points",
+	"FATIGUE -- See your fatigue, mana and psi",
+	"FULL -- Turn on full description mode",
+	"HEALTH -- Check your health",
+	"REPORT -- Report a bug or comment to the Legends staff",
+	"STATUS -- See your statistics, skills, etc.",
+	"WHO -- See who else is playing Legends",
+	"",
+	"Good luck!",
+	"",
+	"Help is available on the following topics:",
+	"",
+	"combat",
+	"commanding",
+	"death",
+	"movement",
+	"psionics",
+	"spells",
+	"training",
+	"verbs",
+	"",
+	`To view the help information on any of these topics, simply type "HELP <topic>."`,
+}
+
+// helpTopics holds the per-topic command references HELP <topic> prints. Only
+// "psionics" survives verbatim from an original session capture (see helpIntro's
+// comment) — the rest are reconstructed in the same terse "COMMAND <args>: description"
+// style from the commands actually implemented today, since no capture of the other
+// seven topics survived. Keep this in sync as commands are added, renamed, or retired —
+// stale entries here are worse than none.
+var helpTopics = map[string][]string{
+	"COMBAT": {
+		"Combat related commands:",
+		"",
+		"ATTACK <target>, KILL <target>:  Attack a monster or hostile player",
+		"ADVANCE <target>:                Move to engage a target in combat",
+		"RETREAT:                         Disengage and back away from combat",
+		"FLEE:                            Attempt to run from combat entirely",
+		"TARGET <target>:                 Add a target for a multi-target spell (Chain Lightning, etc.)",
+		"GUARD [target]:                  Protect a player, portal, or item from harm",
+		"BACKSTAB <target>:               A sneak attack from hiding for extra damage",
+		"DISARM <target>:                 Attempt to knock the weapon from an opponent's hand",
+		"BERSERK, DEFENSIVE, OFFENSIVE, WARY, NORMAL:  Set your combat stance",
+		"NOCK/LOAD <weapon>:              Load a ranged weapon before firing it",
+		"SPECIALIZE <weapon type>:        Focus your training on a specific weapon type",
+	},
+	"COMMANDING": {
+		"Commanding related commands:",
+		"",
+		"FOLLOW <person>:                 Join a group by following its leader",
+		"LEAVE:                           Stop following your group's leader",
+		"DISBAND:                         (leader) Disband your group, releasing all members",
+		"SPLIT <amount> <gold/silver/copper>:  Divide coin evenly among your group",
+		"SHAREDXP:                        (leader) Toggle whether your group splits combat experience",
+		"COMMAND <creature> <action>:     Direct a summoned or bonded creature",
+	},
+	"DEATH": {
+		"Death related commands:",
+		"",
+		"SUBMIT:                          Yield in combat, signaling you won't fight back",
+		"UNSUBMIT:                        Stop submitting",
+		"TEND <person>:                   Attempt to stabilize a dying or badly hurt player",
+		"CARRY <person>:                  Pick up and carry an incapacitated or submitting player",
+		"RELEASE:                         Let go of the person you're carrying",
+		"PUTDOWN:                         Set down the person you're carrying",
+	},
+	"MOVEMENT": {
+		"Movement related commands:",
+		"",
+		"N, S, E, W, NE, NW, SE, SW, UP, DOWN, OUT:  Move in a compass direction",
+		"GO <exit/portal>:                Move through a named exit, door, or portal",
+		"CLIMB <object>:                  Climb up or through something",
+		"ASCEND, DESCEND:                 Move up or down where flight or levitation applies",
+		"FLY:                             Take to the air, if you have the means",
+		"LAND:                            Come back down to the ground",
+		"HIDE:                            Attempt to conceal yourself",
+		"SNEAK <direction>:               Move stealthily without announcing your passing",
+		"SEARCH:                          Look for hidden exits, items, or passages",
+		"DIG:                             Dig at the ground, if you're carrying a tool for it",
+	},
+	"PSIONICS": {
+		"Psionics related commands:",
+		"",
+		"PSI [Discipline#]: Show current psi statistics, or ready a discipline",
+		"PROJECT <target>:  Direct a psionic discipline at a creature",
+	},
+	"SPELLS": {
+		"Spells related commands:",
+		"",
+		"CAST <spell> [target]:           Cast a spell you've already prepared",
+		"PREPARE <spell>, INVOKE <spell>: Ready a spell for casting",
+		"CHANT <words>:                   Speak a ritual phrase a spell or script is listening for",
+		"MASTER <spell>:                  Attempt to master a spell you already know",
+		"SPELL [number]:                  Show your spellbook, or a spell's details",
+	},
+	"TRAINING": {
+		"Training related commands:",
+		"",
+		"TRAIN:                           Spend build points on skills, at a guild that teaches them",
+		"LEARN <spell/skill>:             Learn a new spell or skill from a book, scroll, or trainer",
+		"TEACH <person> <spell/skill>:    Teach a spell or skill you know to someone else",
+		"UNLEARN <skill>:                 Give up a skill to reclaim its build points",
+	},
+	"VERBS": {
+		"Verbs related commands:",
+		"",
+		"The system understands many general-purpose verbs beyond the ones covered under the",
+		"other topics. Some of the more common ones:",
+		"",
+		"GET/TAKE, DROP, PUT <item> IN <container>, GIVE <item> TO <person>",
+		"OPEN, CLOSE, LOOK, EXAMINE, READ",
+		"EAT, DRINK, WEAR, REMOVE, WIELD, UNWIELD",
+		"TOUCH, PUSH, PULL, TURN, RUB, TAP, FLIP",
+		"LATCH, UNLATCH, MARK, SKIN, APPRAISE, USE",
+		"TIME, WEATHER",
+		"DATECVT <month-day-year> [time]: convert a real date to the in-game calendar",
+		"DATECVT GAME <month-day-year> [time]: convert an in-game date to a real date",
+	},
+}
+
+func (e *GameEngine) doHelp(args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{Messages: helpIntro}
+	}
+	topic := strings.ToUpper(args[0])
+	if msgs, ok := helpTopics[topic]; ok {
+		return &CommandResult{Messages: msgs}
+	}
 	return &CommandResult{Messages: []string{
-		"=== Legends of Future Past - Commands ===",
-		"Movement: N, S, E, W, NE, NW, SE, SW, UP, DOWN, OUT, GO <portal>",
-		"Looking: LOOK, LOOK <item>, LOOK IN/ON/UNDER <item>, EXAMINE <item>",
-		"Items: GET <item>, DROP <item>, INVENTORY, WIELD <weapon>, UNWIELD [item]",
-		"Wear: WEAR <item>, REMOVE <item>",
-		"Containers: OPEN <item>, CLOSE <item>, LOOK IN <item>",
-		"           GET <item> FROM <container>, GET ALL FROM <container>",
-		"           PUT <item> IN <container>, DUMP <container>",
-		"           GET ALL, GET ALL <noun>",
-		"Selling:   SELL <item>, SELL ALL <noun>",
-		"Info: STATUS, HEALTH, WEALTH, SKILLS, WHO, TIME, WEATHER",
-		"Combat: ATTACK <target>, ADVANCE <target>, RETREAT",
-		"Social: '<message> (say), ACT <action>, WHISPER <person> <msg>",
-		"Position: SIT, STAND, KNEEL, LAY",
-		"Settings: BRIEF, FULL",
-		"System: HELP, ADVICE, QUIT",
+		fmt.Sprintf("No help is available on \"%s\".", args[0]),
+		"Help is available on the following topics: " + strings.Join(helpTopicNames, ", ") + ".",
 	}}
 }
 
@@ -710,7 +1174,10 @@ func (e *GameEngine) doThink(player *Player, rawInput string) *CommandResult {
 	}
 }
 
-func (e *GameEngine) doCant(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doCant(player *Player, args []string, rawInput string) *CommandResult {
+	if msg := formActionBlockMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Cant what?"}}
 	}
@@ -718,12 +1185,17 @@ func (e *GameEngine) doCant(player *Player, args []string) *CommandResult {
 	if player.Skills[21] < 6 && player.Skills[5] < 1 && !player.IsGM {
 		return &CommandResult{Messages: []string{"You don't know how to speak in cant."}}
 	}
-	text := strings.Join(args, " ")
+	// Keep the speaker's original case (args arrive upper-cased).
+	text := extractRawArgs(rawInput, 1)
+	if text == "" {
+		text = strings.Join(args, " ")
+	}
+	// No RoomBroadcast: those who can't understand cant see nothing at all, so the
+	// speaker isn't given away. Those who can get CantMsg (delivered in api.go).
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You cant, \"%s\"", text)},
-		RoomBroadcast: []string{fmt.Sprintf("%s mutters something under their breath.", player.DisplayName())},
-		CantMsg:       text,
-		CantSender:    player.FirstName,
+		Messages:   []string{fmt.Sprintf("You cant, \"%s\"", text)},
+		CantMsg:    text,
+		CantSender: player.FirstName,
 	}
 }
 
@@ -746,7 +1218,7 @@ func (e *GameEngine) doSpeech(ctx context.Context, player *Player, args []string
 }
 
 func (e *GameEngine) doInfo(player *Player) *CommandResult {
-	return &CommandResult{Messages: []string{
+	return &CommandResult{Messages: append([]string{
 		fmt.Sprintf("Name: %s", player.FullName()),
 		fmt.Sprintf("Race: %s   Gender: %s   Level: %d", player.RaceName(), genderName(player.Gender), player.Level),
 		"",
@@ -757,7 +1229,7 @@ func (e *GameEngine) doInfo(player *Player) *CommandResult {
 		fmt.Sprintf("Mana: %d/%d   Psi: %d/%d", player.Mana, player.MaxMana, player.Psi, player.MaxPsi),
 		"",
 		fmt.Sprintf("Experience: %d   Build Points: %d", player.Experience, player.Experience/100),
-	}}
+	}, player.cyberwareLines()...)}
 }
 
 func isSelfOr(isSelf bool, selfText, otherText string) string {
@@ -786,6 +1258,12 @@ func (e *GameEngine) doPay(ctx context.Context, player *Player) *CommandResult {
 	if sc.NeedsSave {
 		e.SavePlayer(ctx, player)
 	}
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
+	// the delay is lost — e.g. room 3740's token machine gives the token via a
+	// deferred NEWITEM after the "clunk" message, which never fired without this.
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
 	result := &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs}
 	if sc.MoveTo > 0 {
 		e.applySayMove(ctx, player, sc, result)
@@ -809,6 +1287,23 @@ func (e *GameEngine) applySayMove(ctx context.Context, player *Player, sc *Scrip
 	if origRoom == 0 {
 		origRoom = player.RoomNumber
 	}
+	// Split the room broadcast at the MOVE. doMove moves everything echoed before the
+	// MOVE into sc.PreMoveMsgs and clears sc.RoomMsgs, so sc.RoomMsgs holds only what
+	// was echoed after it; the caller built result.RoomBroadcast as the spoken line (SAY;
+	// nothing for PAY) followed by sc.RoomMsgs. The speech and pre-move echoes (e.g.
+	// "...and she vanishes!") belong to the room being left; post-move echoes (e.g.
+	// AFFECT <dest> + "...appears in a swirl of wind") belong to the destination.
+	// Previously the speech went to the destination and pre-move echoes were dropped.
+	speechLines := result.RoomBroadcast
+	if n := len(result.RoomBroadcast) - len(sc.RoomMsgs); n >= 0 {
+		speechLines = result.RoomBroadcast[:n]
+	}
+	postMove := sc.RoomMsgs
+	oldRoomMsgs := append(append([]string{}, speechLines...), sc.PreMoveMsgs...)
+	if len(sc.PreMoveMsgs) == 0 {
+		oldRoomMsgs = append(oldRoomMsgs, fmt.Sprintf("%s leaves.", player.DisplayNameCap()))
+	}
+
 	player.RoomNumber = sc.MoveTo
 	e.SavePlayer(ctx, player)
 	lookResult := e.doLook(player)
@@ -818,8 +1313,11 @@ func (e *GameEngine) applySayMove(ctx context.Context, player *Player, sc *Scrip
 	result.Exits = lookResult.Exits
 	result.Items = lookResult.Items
 	result.OldRoom = origRoom
-	result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
-	result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+	result.OldRoomMsg = oldRoomMsgs
+	result.RoomBroadcast = append([]string{}, postMove...)
+	if len(postMove) == 0 {
+		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+	}
 	e.applyEntryScripts(ctx, player, dest, result)
 }
 
@@ -837,7 +1335,7 @@ func (e *GameEngine) HandlePlayerDisconnect(player *Player) {
 					if p.FirstName == memberName {
 						p.Following = ""
 						if e.sendToPlayer != nil {
-							e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s has left the Realms. The group is disbanded.", player.FirstName)})
+							e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s has left the Realms. The group is disbanded.", player.DisplayName())})
 						}
 						break
 					}
@@ -862,7 +1360,7 @@ func (e *GameEngine) HandlePlayerDisconnect(player *Player) {
 						p.IsGroupLeader = false
 					}
 					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s has left the Realms and is no longer in your group.", player.FirstName)})
+						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s has left the Realms and is no longer in your group.", player.DisplayName())})
 					}
 					break
 				}
@@ -912,7 +1410,7 @@ func (e *GameEngine) checkPortalGuard(mover *Player, portalArch int) (blocked bo
 		roll := rand.Intn(100) + cmSkill*5 + agiBonus + quickBonus
 		threshold := 50 + g.Skills[10]*5
 
-		hidden := mover.Hidden || mover.Invisible
+		hidden := mover.Hidden || mover.Invisible || mover.PhantomForm
 		moverName := mover.FirstName
 		if hidden {
 			moverName = "something"
@@ -963,7 +1461,7 @@ func (e *GameEngine) checkItemGuard(mover *Player, itemArch int, itemName string
 		roll := rand.Intn(100) + cmSkill*5 + agiBonus + quickBonus
 		threshold := 50 + g.Skills[10]*5
 
-		hidden := mover.Hidden || mover.Invisible
+		hidden := mover.Hidden || mover.Invisible || mover.PhantomForm
 		moverName := mover.FirstName
 		if hidden {
 			moverName = "something"

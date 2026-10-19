@@ -540,7 +540,7 @@ drainDone:
 
 	// Post-negotiation: send protocol-specific init data
 	if t.gmcpEnabled {
-		t.sendGMCP("Core.Hello", map[string]string{"client": "LoFP", "version": "11.5.0"})
+		t.sendGMCP("Core.Hello", map[string]string{"client": "LoFP", "version": engine.GameVersion})
 	}
 	if t.msspEnabled {
 		t.sendMSSP()
@@ -638,7 +638,9 @@ func (t *telnetConn) sendGMCPVitals(p *engine.Player) {
 }
 
 // sendGMCPStatus sends Char.Status with name, race, level, currency.
-func (t *telnetConn) sendGMCPStatus(p *engine.Player) {
+// currencies maps each regional currency the player carries to its amount
+// (e.g. {"kragenmarks": 425}); omitted when empty.
+func (t *telnetConn) sendGMCPStatus(p *engine.Player, currencies map[string]int) {
 	if !t.gmcpEnabled {
 		return
 	}
@@ -656,6 +658,7 @@ func (t *telnetConn) sendGMCPStatus(p *engine.Player) {
 		"gold":       p.Gold,
 		"silver":     p.Silver,
 		"copper":     p.Copper,
+		"currencies": currencies,
 	})
 }
 
@@ -1055,12 +1058,14 @@ func (s *Server) handleTelnetConn(rawConn net.Conn, isTLS bool) {
 
 	// GMCP login data
 	tc.mu.Lock()
-	tc.sendGMCPStatus(player)
+	tc.sendGMCPStatus(player, s.engine.CurrencyAmounts(player))
 	tc.sendGMCPStats(player)
 	tc.sendGMCPVitals(player)
 	tc.mu.Unlock()
 
-	if !player.GMInvis && !player.GMHidden {
+	// GMs log in and out frequently for admin work — skip the announcement for
+	// them regardless of GMInvis/GMHidden, not just while actively concealed.
+	if !player.GMInvis && !player.GMHidden && !player.IsGM {
 		s.broadcastGlobal(player.FirstName,
 			[]string{fmt.Sprintf("** %s has just entered the Realms.", player.FirstName)})
 		s.broadcastToRoom(player.RoomNumber, player.FirstName,
@@ -1080,6 +1085,7 @@ func (s *Server) handleTelnetConn(rawConn net.Conn, isTLS bool) {
 		tc.sendGMCPRoomInfo(enterResult, player.RoomNumber)
 		tc.mu.Unlock()
 	}
+	s.deliverReportReplies(ctx, session)
 
 	// Command loop
 	s.telnetCommandLoop(ctx, session, tc)
@@ -1096,13 +1102,14 @@ func (s *Server) handleTelnetConn(rawConn net.Conn, isTLS bool) {
 
 	if isActive {
 		s.engine.HandlePlayerDisconnect(player)
-		if !player.GMInvis && !player.GMHidden {
+		// See the matching entry-side comment above — GMs skip this announcement too.
+		if !player.GMInvis && !player.GMHidden && !player.IsGM {
 			if !session.quitSent {
 				s.broadcastGlobal(player.FirstName,
-					[]string{fmt.Sprintf("** %s has just left the Realms.", player.FirstName)})
+					[]string{fmt.Sprintf("** %s has just left the Realms.", player.DisplayNameCap())})
 			}
 			s.broadcastToRoom(player.RoomNumber, player.FirstName,
-				[]string{fmt.Sprintf("%s fades from the Realms.", player.FirstName)})
+				[]string{fmt.Sprintf("%s fades from the Realms.", player.DisplayNameCap())})
 		}
 		s.gamelog.Log(gamelog.EventGameExit, player.FullName(), accountID,
 			fmt.Sprintf("telnet from %s", ip), player.RoomNumber, "")
@@ -1556,68 +1563,75 @@ func (s *Server) telnetCommandLoop(ctx context.Context, session *Session, tc *te
 
 		session.lastActivity = time.Now()
 
-		now := time.Now()
-		isGive := strings.HasPrefix(strings.ToLower(strings.TrimSpace(input)), "give ")
-		if now.Sub(session.lastCmdTime) > time.Second {
-			session.cmdCount = 0
-			session.lastCmdTime = now
-		}
-		session.cmdCount++
-		if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
-			tc.writeLine("[Slow down! Too many commands.]")
-			continue
-		}
-
-		cutoff := now.Add(-10 * time.Second)
-		var recentCmds []time.Time
-		for _, t := range session.cmdTimes {
-			if t.After(cutoff) {
-				recentCmds = append(recentCmds, t)
-			}
-		}
-		session.cmdTimes = append(recentCmds, now)
-		if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
-			tc.writeLine("[Slow down! Too many commands.]")
-			continue
-		}
-
-		result := s.engine.ProcessCommand(ctx, session.Player, input)
-		result.PlayerState = session.Player
-		result.PromptIndicators = session.Player.PromptIndicators()
-		s.sendResult(session, result)
-
-		// GMCP updates after every command
-		tc.mu.Lock()
-		tc.sendGMCPVitals(session.Player)
-		if result.RoomName != "" {
-			tc.sendGMCPRoomInfo(result, session.Player.RoomNumber)
-		}
-		tc.mu.Unlock()
-
-		// MSDP updates
-		tc.sendMSDPUpdate(session.Player, session.Player.RoomNumber, result.RoomName)
-
-		// Chat flood protection
-		if len(result.RoomBroadcast) > 0 {
+		quit := false
+		for _, subInput := range splitCommandChain(input) {
 			now := time.Now()
-			chatCutoff := now.Add(-9 * time.Second)
-			var recent []time.Time
-			for _, t := range session.chatTimes {
-				if t.After(chatCutoff) {
-					recent = append(recent, t)
+			isGive := strings.HasPrefix(strings.ToLower(subInput), "give ")
+			if now.Sub(session.lastCmdTime) > time.Second {
+				session.cmdCount = 0
+				session.lastCmdTime = now
+			}
+			session.cmdCount++
+			if !session.Player.IsGM && !isGive && session.cmdCount > 8 {
+				tc.writeLine("[Slow down! Too many commands.]")
+				break
+			}
+
+			cutoff := now.Add(-10 * time.Second)
+			var recentCmds []time.Time
+			for _, t := range session.cmdTimes {
+				if t.After(cutoff) {
+					recentCmds = append(recentCmds, t)
 				}
 			}
-			session.chatTimes = recent
-			if len(session.chatTimes) >= 10 {
-				tc.writeLine("[You are sending messages too quickly. Please wait.]")
-				continue
+			session.cmdTimes = append(recentCmds, now)
+			if !session.Player.IsGM && !isGive && len(session.cmdTimes) > 20 {
+				tc.writeLine("[Slow down! Too many commands.]")
+				break
 			}
-			session.chatTimes = append(session.chatTimes, now)
+
+			result := s.engine.ProcessCommand(ctx, session.Player, subInput)
+			result.PlayerState = session.Player
+			result.PromptIndicators = session.Player.PromptIndicators()
+			s.sendResult(session, result)
+
+			// GMCP updates after every command
+			tc.mu.Lock()
+			tc.sendGMCPVitals(session.Player)
+			if result.RoomName != "" {
+				tc.sendGMCPRoomInfo(result, session.Player.RoomNumber)
+			}
+			tc.mu.Unlock()
+
+			// MSDP updates
+			tc.sendMSDPUpdate(session.Player, session.Player.RoomNumber, result.RoomName)
+
+			// Chat flood protection
+			if len(result.RoomBroadcast) > 0 {
+				chatNow := time.Now()
+				chatCutoff := chatNow.Add(-9 * time.Second)
+				var recent []time.Time
+				for _, t := range session.chatTimes {
+					if t.After(chatCutoff) {
+						recent = append(recent, t)
+					}
+				}
+				session.chatTimes = recent
+				if len(session.chatTimes) >= 10 {
+					tc.writeLine("[You are sending messages too quickly. Please wait.]")
+					break
+				}
+				session.chatTimes = append(session.chatTimes, chatNow)
+			}
+
+			s.dispatchCommandResult(session, result)
+
+			if result.Quit {
+				quit = true
+				break
+			}
 		}
-
-		s.dispatchCommandResult(session, result)
-
-		if result.Quit {
+		if quit {
 			return
 		}
 	}

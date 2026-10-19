@@ -107,6 +107,9 @@ interface PlayerDetail extends PlayerSummary {
   gold: number
   silver: number
   copper: number
+  // Regional currencies keyed by MONEYDEF type number (engine currency.go)
+  currencies?: Record<string, number>
+  bankCurrencies?: Record<string, number>
   briefMode: boolean
   promptMode: boolean
   hidden: boolean
@@ -200,7 +203,10 @@ interface MonsterDetail {
 
 const RaceNames: Record<number, string> = {
   1: 'Human', 2: 'Aelfen', 3: 'Highlander', 4: 'Wolfling',
-  5: 'Murg', 6: 'Drakin', 7: 'Mechanoid', 8: 'Ephemeral',
+  5: 'Murg', 6: 'Drakin', 7: 'Mechanoid', 8: 'Ephemeral', 9: 'Vampire',
+  // GMSCRIPT.DOC racial groups — monster races, and GM-set player races (@set race)
+  21: 'Extraplanar', 22: 'Undead', 23: 'Arachnid', 24: 'Kvantar', 25: 'Troll',
+  26: 'Lycanthrope', 27: 'Giant', 28: 'Construct', 29: 'Goblin', 30: 'Ogre', 31: 'Dragon',
 }
 
 const ItemTypeNames: Record<string, string> = {
@@ -244,6 +250,13 @@ interface LogEntry {
   details?: string
   roomNum?: number
   roomName?: string
+  resolved?: boolean
+  resolvedBy?: string
+  resolvedAt?: string
+  reply?: string
+  repliedBy?: string
+  repliedAt?: string
+  replyDeliveredAt?: string
 }
 
 const EventLabels: Record<string, string> = {
@@ -287,6 +300,16 @@ const CategoryColors: Record<string, string> = {
 
 type AdminTab = 'rooms' | 'players' | 'users' | 'items' | 'monsters' | 'logs' | 'events'
 
+// Regional currency names by MONEYDEF type number (original/scripts/REGIONS.SCR,
+// ADJNOUN.SCR) — keys of Player.currencies / bankCurrencies.
+const CURRENCY_NAMES: Record<string, string> = {
+  '1': 'Dollars',
+  '2': 'Kragenmarks',
+  '3': 'Danirs',
+  '4': 'Shards',
+  '5': 'Darktars',
+}
+
 export default function AdminPanel() {
   const { user } = useAuth()
   const [tab, setTab] = useState<AdminTab>('rooms')
@@ -319,6 +342,9 @@ export default function AdminPanel() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [logEventFilter, setLogEventFilter] = useState('')
   const [logPlayerFilter, setLogPlayerFilter] = useState('')
+  const [logResolvedFilter, setLogResolvedFilter] = useState('false')
+  const [replyingTo, setReplyingTo] = useState<string | null>(null)
+  const [replyDraft, setReplyDraft] = useState('')
   // Event Monitor
   const [events, setEvents] = useState<EngineEvent[]>([])
   const [eventWs, setEventWs] = useState<WebSocket | null>(null)
@@ -592,10 +618,49 @@ export default function AdminPanel() {
     const params = new URLSearchParams()
     if (logEventFilter) params.set('event', logEventFilter)
     if (logPlayerFilter) params.set('player', logPlayerFilter)
+    if (logResolvedFilter) params.set('resolved', logResolvedFilter)
     params.set('limit', '200')
     fetch(`/api/admin/logs?${params}`, { headers: authHeaders() })
       .then(r => r.json())
       .then((data: LogEntry[]) => setLogs(data || []))
+  }
+
+  // Mark (or unmark) a log entry — chiefly a player REPORT — as resolved, then
+  // refresh so it moves out of (or back into) the "Unresolved" view.
+  const setLogResolved = (id: string, resolved: boolean) => {
+    fetch(`/api/admin/logs/${id}/resolve`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ resolved }),
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then((updated: LogEntry | null) => {
+        if (!updated) return
+        setLogs(prev => {
+          // If we're filtering to a specific resolved state, an entry that no
+          // longer matches should disappear from view instead of just updating.
+          if (logResolvedFilter === 'true' && !updated.resolved) return prev.filter(e => e.id !== id)
+          if (logResolvedFilter === 'false' && updated.resolved) return prev.filter(e => e.id !== id)
+          return prev.map(e => e.id === id ? updated : e)
+        })
+      })
+  }
+
+  // Store a staff reply on a player REPORT. The player sees it on their next
+  // game entry (or right away if they're online). Empty text clears the reply.
+  const saveLogReply = (id: string, reply: string) => {
+    fetch(`/api/admin/logs/${id}/reply`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ reply }),
+    })
+      .then(r => r.ok ? r.json() : r.text().then(t => { alert(t || 'Failed to save reply'); return null }))
+      .then((updated: LogEntry | null) => {
+        if (!updated) return
+        setLogs(prev => prev.map(e => e.id === id ? updated : e))
+        setReplyingTo(null)
+        setReplyDraft('')
+      })
   }
 
   // Find account name for a given accountId
@@ -1157,6 +1222,12 @@ export default function AdminPanel() {
                       <div><span className="text-gray-500">Gold:</span> {selectedPlayer.gold}</div>
                       <div><span className="text-gray-500">Silver:</span> {selectedPlayer.silver}</div>
                       <div><span className="text-gray-500">Copper:</span> {selectedPlayer.copper}</div>
+                      {Object.entries(selectedPlayer.currencies ?? {}).filter(([, n]) => n > 0).map(([id, n]) => (
+                        <div key={`cur-${id}`}><span className="text-gray-500">{CURRENCY_NAMES[id] ?? `Currency ${id}`}:</span> {n}</div>
+                      ))}
+                      {Object.entries(selectedPlayer.bankCurrencies ?? {}).filter(([, n]) => n > 0).map(([id, n]) => (
+                        <div key={`bank-${id}`}><span className="text-gray-500">Bank {CURRENCY_NAMES[id] ?? `Currency ${id}`}:</span> {n}</div>
+                      ))}
                       <div><span className="text-gray-500">Position:</span> {['Standing','Sitting','Laying','Kneeling','Flying'][selectedPlayer.position] || selectedPlayer.position}</div>
                     </div>
                     <div className="flex gap-2 mt-2">
@@ -1353,6 +1424,16 @@ export default function AdminPanel() {
                 placeholder="Filter by player..."
                 className="bg-[#0a0a0a] border border-[#444] rounded px-2 py-1 text-gray-200 focus:border-amber-500 focus:outline-none text-xs w-48"
               />
+              <select
+                value={logResolvedFilter}
+                onChange={e => setLogResolvedFilter(e.target.value)}
+                title="Filters on the Resolved flag (set via the Player Report Done/Reopen button)"
+                className="bg-[#0a0a0a] border border-[#444] rounded px-2 py-1 text-gray-200 focus:border-amber-500 focus:outline-none text-xs"
+              >
+                <option value="false">Unresolved</option>
+                <option value="true">Resolved</option>
+                <option value="">All</option>
+              </select>
               <button
                 onClick={fetchLogs}
                 className="px-3 py-1 bg-amber-700 text-white rounded text-xs hover:bg-amber-600"
@@ -1369,11 +1450,12 @@ export default function AdminPanel() {
                     <th className="text-left px-3 py-2 w-28">Event</th>
                     <th className="text-left px-3 py-2 w-40">Player</th>
                     <th className="text-left px-3 py-2">Details</th>
+                    <th className="text-left px-3 py-2 w-32">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {logs.map((entry, i) => (
-                    <tr key={entry.id || i} className="border-b border-[#222] hover:bg-[#1a1a2e]">
+                    <tr key={entry.id || i} className={`border-b border-[#222] hover:bg-[#1a1a2e] ${entry.resolved ? 'opacity-50' : ''}`}>
                       <td className="px-3 py-1.5 text-gray-500">{formatTimestamp(entry.timestamp)}</td>
                       <td className={`px-3 py-1.5 ${EventColors[entry.event] || 'text-gray-300'}`}>
                         {EventLabels[entry.event] || entry.event}
@@ -1393,12 +1475,87 @@ export default function AdminPanel() {
                         {entry.accountId && entry.event !== 'login' && entry.event !== 'logout' && (
                           <button onClick={() => { setTab('users'); setTimeout(() => selectAccount(entry.accountId!), 100) }} className="text-blue-400 hover:underline mr-2">[user]</button>
                         )}
-                        {entry.details}
+                        <span className={entry.resolved ? 'line-through' : ''}>{entry.details}</span>
+                        {entry.event === 'report' && entry.reply && replyingTo !== entry.id && (
+                          <div className="mt-1 text-amber-300/80">
+                            ↳ {entry.reply}
+                            <span className="text-gray-600 ml-2">
+                              {entry.replyDeliveredAt
+                                ? `(seen ${formatTimestamp(entry.replyDeliveredAt)})`
+                                : '(not yet seen)'}
+                              {entry.repliedBy ? ` — ${entry.repliedBy}` : ''}
+                            </span>
+                          </div>
+                        )}
+                        {replyingTo === entry.id && (
+                          <div className="mt-1 flex flex-col gap-1">
+                            <textarea
+                              value={replyDraft}
+                              onChange={e => setReplyDraft(e.target.value)}
+                              maxLength={2000}
+                              rows={3}
+                              autoFocus
+                              placeholder={`Reply to ${entry.player} — shown on their next login`}
+                              className="bg-[#0a0a0a] border border-[#444] rounded px-2 py-1 text-gray-200 focus:border-amber-500 focus:outline-none text-xs w-full"
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => saveLogReply(entry.id, replyDraft)}
+                                disabled={!replyDraft.trim()}
+                                className="px-2 py-0.5 bg-amber-700 text-white rounded text-xs hover:bg-amber-600 disabled:opacity-40"
+                              >
+                                Send Reply
+                              </button>
+                              {entry.reply && (
+                                <button
+                                  onClick={() => { if (confirm('Remove this reply?')) saveLogReply(entry.id, '') }}
+                                  className="px-2 py-0.5 rounded border border-red-800 text-red-400 hover:bg-red-900/30 text-xs"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { setReplyingTo(null); setReplyDraft('') }}
+                                className="px-2 py-0.5 rounded border border-[#444] text-gray-400 hover:bg-[#222] text-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5">
+                        {entry.event === 'report' && (
+                          entry.resolved ? (
+                            <button
+                              onClick={() => setLogResolved(entry.id, false)}
+                              title={entry.resolvedBy ? `Resolved by ${entry.resolvedBy}${entry.resolvedAt ? ' on ' + formatTimestamp(entry.resolvedAt) : ''}` : 'Resolved'}
+                              className="px-2 py-0.5 rounded border border-green-700 text-green-400 hover:bg-green-900/30 text-xs"
+                            >
+                              ✓ Done
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setLogResolved(entry.id, true)}
+                              className="px-2 py-0.5 rounded border border-[#444] text-gray-300 hover:bg-amber-900/30 hover:border-amber-600 hover:text-amber-300 text-xs"
+                            >
+                              Mark Done
+                            </button>
+                          )
+                        )}
+                        {entry.event === 'report' && replyingTo !== entry.id && (
+                          <button
+                            onClick={() => { setReplyingTo(entry.id); setReplyDraft(entry.reply || '') }}
+                            className="ml-1 mt-1 px-2 py-0.5 rounded border border-[#444] text-gray-300 hover:bg-blue-900/30 hover:border-blue-600 hover:text-blue-300 text-xs"
+                          >
+                            {entry.reply ? 'Edit Reply' : 'Reply'}
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
                   {logs.length === 0 && (
-                    <tr><td colSpan={4} className="px-3 py-8 text-center text-gray-600">No log entries</td></tr>
+                    <tr><td colSpan={5} className="px-3 py-8 text-center text-gray-600">No log entries</td></tr>
                   )}
                 </tbody>
               </table>

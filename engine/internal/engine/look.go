@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"context"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -56,8 +58,9 @@ func (e *GameEngine) doLookFull(player *Player) *CommandResult {
 		return &CommandResult{Messages: []string{"You are in a void."}}
 	}
 	result := e.doLook(player)
-	// Always include the full description regardless of BriefMode
-	if !player.Dead && result.RoomDesc == "" {
+	// Always include the full description regardless of BriefMode — unless it's
+	// too dark to see it (doLook already said so).
+	if !player.Dead && result.RoomDesc == "" && !e.tooDarkToSee(player) {
 		result.RoomDesc = room.Description
 	}
 	return result
@@ -81,12 +84,21 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		return result
 	}
 
-	if !player.BriefMode {
+	// In an unlit DARKNESS room (darkness.go) only the name and exits show —
+	// matching the original's "[Name] / It is too dark to see anything. /
+	// Obvious exits: ..." — so the description, items, people and weather are all
+	// skipped, in the structured RoomDesc/Items fields as well as the text.
+	dark := e.tooDarkToSee(player)
+
+	if !player.BriefMode && !dark {
 		result.RoomDesc = room.Description
 	}
 
 	// List visible items
 	for _, ri := range room.Items {
+		if dark {
+			break
+		}
 		// Items PUT/NEWPUT inside a container aren't loose on the floor — they're
 		// only visible via LOOK IN/EXAMINE on the container that holds them.
 		if ri.IsPut {
@@ -94,7 +106,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		}
 		// Coin piles
 		if ri.State == "MONEY" {
-			result.Items = append(result.Items, "some coins")
+			result.Items = append(result.Items, e.coinPileRoomName(ri.Archetype))
 			continue
 		}
 		itemDef := e.items[ri.Archetype]
@@ -115,7 +127,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 
 	// Collect other players in the room
 	var playersHere []string
-	if e.sessions != nil {
+	if e.sessions != nil && !dark {
 		for _, p := range e.sessions.OnlinePlayers() {
 			if p.RoomNumber != player.RoomNumber {
 				continue
@@ -123,7 +135,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 			if p.FirstName == player.FirstName && p.LastName == player.LastName {
 				continue
 			}
-			if p.Hidden || p.Invisible || p.GMInvis {
+			if p.Hidden || p.Invisible || p.PhantomForm || p.GMInvis {
 				continue
 			}
 			posDesc := ""
@@ -191,10 +203,16 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 	if result.RoomDesc != "" {
 		msgs = append(msgs, descriptionToMessages(result.RoomDesc)...)
 	}
+	if dark {
+		msgs = append(msgs, tooDarkToSeeMsg)
+	}
 	// Players and monsters/NPCs are shown together in one sentence, matching the
 	// original format (see original/legends/shirla.cap, e.g. "You see Wolfbane and
 	// Delight."), followed by a separate items sentence.
-	peopleHere := append(playersHere, e.monsterNamesInRoom(player.RoomNumber)...)
+	var peopleHere []string
+	if !dark {
+		peopleHere = append(playersHere, e.monsterNamesInRoom(player.RoomNumber)...)
+	}
 	if len(peopleHere) > 0 {
 		msgs = append(msgs, "You see "+joinList(peopleHere)+".")
 	}
@@ -206,7 +224,7 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 		msgs = append(msgs, capitalize(joinList(result.Items))+verb)
 	}
 	// Show weather for outdoor rooms
-	if weatherLine := e.GetRoomWeather(player.RoomNumber); weatherLine != "" {
+	if weatherLine := e.GetRoomWeather(player.RoomNumber); weatherLine != "" && !dark {
 		msgs = append(msgs, weatherLine)
 	}
 	if len(exits) > 0 {
@@ -228,7 +246,7 @@ var lookDirMap = map[string]string{
 	"o": "O", "out": "O",
 }
 
-func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
 		return e.doLook(player)
 	}
@@ -237,6 +255,9 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 
 	// Check for directional look (LOOK N, LOOK NORTH, etc.)
 	if dir, ok := lookDirMap[target]; ok {
+		if e.tooDarkToSee(player) {
+			return tooDarkResult()
+		}
 		room := e.rooms[player.RoomNumber]
 		if room != nil {
 			destNum, hasExit := room.Exits[dir]
@@ -246,46 +267,28 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 			if !hasExit && dir == "D" {
 				destNum, hasExit = room.Exits["BELOW"]
 			}
-			if hasExit {
-				if dest := e.rooms[destNum]; dest != nil {
-					msgs := []string{fmt.Sprintf("[%s]", dest.Name)}
-					if dest.Description != "" {
-						msgs = append(msgs, descriptionToMessages(dest.Description)...)
-					}
-					// Show players and monsters/NPCs together in one sentence
-					var peopleHere []string
-					if e.sessions != nil {
-						for _, p := range e.sessions.OnlinePlayers() {
-							if p.RoomNumber == destNum && !p.Hidden && !p.Invisible && !p.GMInvis {
-								peopleHere = append(peopleHere, p.DisplayName())
-							}
-						}
-					}
-					peopleHere = append(peopleHere, e.monsterNamesInRoom(destNum)...)
-					if len(peopleHere) > 0 {
-						msgs = append(msgs, "You see "+joinList(peopleHere)+".")
-					}
-					// Show room items
-					var itemNames []string
-					for _, ri := range dest.Items {
-						if ri.IsPut {
-							continue
-						}
-						itemDef := e.items[ri.Archetype]
-						if itemDef == nil {
-							continue
-						}
-						itemNames = append(itemNames, e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))
-					}
-					if len(itemNames) > 0 {
-						verb := " are here."
-						if len(itemNames) == 1 {
-							verb = " is here."
-						}
-						msgs = append(msgs, capitalize(joinList(itemNames))+verb)
-					}
-					return &CommandResult{Messages: msgs}
+			if hasExit && e.rooms[destNum] != nil {
+				// Render the destination room's look without moving the player there —
+				// swap RoomNumber just long enough to reuse doLookFull's rendering (same
+				// HIDDEN/ucantsee/anti-item filtering, occupant and exit logic as an
+				// actual LOOK there), then restore it. Mirrors castScrySpell's identical
+				// trick for CAST <mark#>. Only Messages is pulled from the result —
+				// RoomName/RoomDesc/Exits/Items and the GMCP-only RoomExits/RoomTerrain/
+				// RoomRegion fields are deliberately left off the returned result, since
+				// the client's automapper and room-name UI key off those and shouldn't be
+				// told the player is standing in a room they only glanced into.
+				originalRoom := player.RoomNumber
+				player.RoomNumber = destNum
+				lookResult := e.doLookFull(player)
+				destDark := e.tooDarkToSee(player)
+				player.RoomNumber = originalRoom
+				if destDark {
+					// Peering into a dark room shows just its name — no exits
+					// (original/csanburn/badge.txt: "look sw" / "[Deep Forest]" /
+					// "It is too dark to see anything.").
+					return &CommandResult{Messages: []string{lookResult.RoomName, tooDarkToSeeMsg}}
 				}
+				return &CommandResult{Messages: lookResult.Messages}
 			}
 			return &CommandResult{Messages: []string{"You see nothing of interest in that direction."}}
 		}
@@ -294,6 +297,12 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 	// "look at me/myself" → examine self
 	if target == "me" || target == "myself" || target == "self" {
 		return e.examinePlayer(player, player)
+	}
+
+	// Every other LOOK/EXAMINE — at a player, monster, item, or IN/ON/UNDER a
+	// container — needs to see (original: "look in ches" / "It is too dark to do that.").
+	if e.tooDarkToSee(player) {
+		return tooDarkResult()
 	}
 
 	// Check if target is a player (online, in same room)
@@ -330,6 +339,33 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 			def.Container == "IN" || def.Container == "ON"
 	}
 
+	// LOOK IN <eye of scrying>, once translucent — special-cased ahead of the generic
+	// item search since revealing a vision and possibly crumbling the eye needs ctx (to
+	// persist) and a direct Inventory index, neither of which the generic
+	// examineCarriedItem path threads through. An eye that isn't translucent yet falls
+	// through to the normal search below, which produces the standard "you see nothing
+	// noteworthy in X" for a non-container item.
+	if prefix == "IN" {
+		for i := range player.Inventory {
+			ii := &player.Inventory[i]
+			if ii.Archetype != eyeOfScryingArch || ii.Val3 != eyeStateTranslucent {
+				continue
+			}
+			def := e.items[ii.Archetype]
+			if def == nil {
+				continue
+			}
+			if !matchesTarget(e.getItemNounName(def), remaining, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+				continue
+			}
+			if skip > 0 {
+				skip--
+				continue
+			}
+			return e.lookInEye(ctx, player, i, def)
+		}
+	}
+
 	// Search room items — skipped entirely when "my" was used (e.g. "look in my chest").
 	if !mine {
 		for _, ri := range room.Items {
@@ -350,6 +386,9 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 				}
 				if prefix == "IN" && isContainer(itemDef) {
 					return e.lookInRoomContainer(player, itemDef, &ri)
+				}
+				if prefix == "ON" && itemDef.Container == "ON" {
+					return e.lookOnRoomSurface(player, room, itemDef, &ri)
 				}
 				if prefix != "" {
 					return e.lookPrefixRoomItem(room, itemDef, &ri, prefix)
@@ -404,6 +443,43 @@ func (e *GameEngine) doLookAt(player *Player, args []string) *CommandResult {
 	return &CommandResult{Messages: []string{"You don't see that here."}}
 }
 
+// lookInEye handles LOOK IN <eye of scrying> once translucent (Val3 ==
+// eyeStateTranslucent, set by Scry — see tryCastSpellAtEye in spells.go). Reveals a
+// vision of the room where the last player death occurred (e.lastDeathRoom), then
+// has a 1-in-10 chance to crumble the eye to dust — matching ITEM1.SCR's
+// "IFPREVERB LOOK -1" block on item 520 exactly (RANDOM 1-10, crumble on a roll of 1).
+func (e *GameEngine) lookInEye(ctx context.Context, player *Player, idx int, def *gameworld.ItemDef) *CommandResult {
+	ii := &player.Inventory[idx]
+	name := e.formatItemName(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+
+	msgs := []string{"You gaze deep into the eye..."}
+	if e.lastDeathRoom != 0 {
+		if dest := e.rooms[e.lastDeathRoom]; dest != nil {
+			// Render the death room's look without moving the caster there — same
+			// swap-and-restore trick castScrySpell uses for the mark-vision use.
+			originalRoom := player.RoomNumber
+			player.RoomNumber = dest.Number
+			lookResult := e.doLook(player)
+			player.RoomNumber = originalRoom
+			msgs = append(msgs, lookResult.Messages...)
+		}
+	}
+
+	var roomMsgs []string
+	if !player.IsConcealed() {
+		roomMsgs = append(roomMsgs, fmt.Sprintf("%s looks deep into %s.", player.DisplayNameCap(), name))
+	}
+
+	if rand.Intn(10) == 0 {
+		msgs = append(msgs, "The eye crumbles.")
+		roomMsgs = append(roomMsgs, "The eye crumbles.")
+		player.Inventory = append(player.Inventory[:idx], player.Inventory[idx+1:]...)
+	}
+
+	e.SavePlayer(ctx, player)
+	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs, PlayerState: player}
+}
+
 // examineCarriedItem builds the EXAMINE/LOOK result for one matched item that the
 // player is carrying — held directly, worn, wielded, or nested one level inside an
 // open container. A LIQCONTAINER examined without an IN/ON/UNDER prefix implicitly
@@ -414,7 +490,9 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		if !containerIsOpen(itemDef, ii.State) {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s is closed.", capitalize(e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)))}}
 		}
-		return &CommandResult{Messages: e.potionLookInMessages(itemDef, ii.Adj1, ii.Val2, ii.Val4, ii.Tail)}
+		// lookInContainer handles both liquid models: a named LIQUID item carried
+		// inside (NEWPUT ale picked up with its mug) and the vessel's own Val2/Val4.
+		return e.lookInContainer(player, itemDef, &ii)
 	}
 	if prefix == "IN" && isContainerDef(itemDef) {
 		return e.lookInContainer(player, itemDef, &ii)
@@ -436,7 +514,7 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		msgs = []string{fmt.Sprintf("You look at your %s.", name)}
 	}
 	// Run IFPREVERB/IFVERB LOOK scripts on the item (Ref=-1 = inventory item, skip room scripts)
-	ri := &gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype, Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3, Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, ItemBits: ii.ItemBits}
+	ri := &gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype, Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3, Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue, ItemBits: ii.ItemBits}
 	// Root-level IFVAR blocks may contain nested IFVERB EXAMINE -1 blocks (e.g. the
 	// lens of worlds' SHOWROOM preview); RunPreverbScripts/RunVerbScripts only match
 	// top-level IFVERB blocks, so this walk is needed to reach those.
@@ -456,6 +534,9 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		}
 	}
 	roomMsgs := append(append([]string{}, sc0.RoomMsgs...), sc.RoomMsgs...)
+	if lines := e.weaponsmithAppraisalLines(player, itemDef, ii.Sharpness, ii.Val2, ii.Adj1, ii.Adj2, ii.Adj3, ii.HardnessMod); len(lines) > 0 {
+		msgs = append(msgs, lines...)
+	}
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
 }
 
@@ -488,11 +569,11 @@ func (e *GameEngine) findPlayerInRoom(self *Player, target string) *Player {
 		if p.FirstName == self.FirstName && p.LastName == self.LastName {
 			continue // skip self, handled separately
 		}
-		if p.Hidden || p.Invisible || p.GMInvis {
+		if p.Hidden || p.Invisible || p.PhantomForm || p.GMInvis {
 			continue
 		}
 		matched := p.NameMatches(target)
-		if !matched && !p.WolfForm && !(p.Disguised && p.ActiveDisguise.Name != "") {
+		if !matched && !p.WolfForm && !p.MistForm && !p.SlimeForm && !(p.Disguised && p.ActiveDisguise.Name != "") {
 			// Real full name only resolves when not presenting as someone/something
 			// else — a disguised or wolf-form player can't be found by their true name.
 			fullName := strings.ToLower(p.FirstName + " " + p.LastName)
@@ -521,6 +602,37 @@ func (e *GameEngine) findMonsterInRoomIncludeDead(player *Player, target string)
 }
 
 func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeDead bool) (*MonsterInstance, *gameworld.MonsterDef) {
+	return e.findMonsterInRoomPreferring(player, target, includeDead, 0)
+}
+
+// findHostileMonsterInRoom resolves the target of a hostile action (ATTACK, ADVANCE,
+// offensive spells and psionics). It differs from findMonsterInRoom in two ways:
+//
+//   - Without an explicit ordinal, a name shared by the player's own summoned or
+//     controlled creature resolves to the OTHER creature — reported: "attack
+//     zovembie" with a controlled zovembie guarding you hit your own zovembie
+//     unless you typed "zovembie 2".
+//   - If the only match (or an explicit ordinal) is the player's own creature, the
+//     action is refused with refusal (TargetNotFound set, so a spell isn't burned),
+//     rather than turning the player's weapon or spell on their own servant.
+//
+// When refusal is non-nil, inst and def are nil and the caller should return refusal.
+func (e *GameEngine) findHostileMonsterInRoom(player *Player, target string) (inst *MonsterInstance, def *gameworld.MonsterDef, refusal *CommandResult) {
+	inst, def = e.findMonsterInRoomPreferring(player, target, false, player.SummonedCreatureID)
+	if inst != nil && player.SummonedCreatureID != 0 && inst.ID == player.SummonedCreatureID {
+		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+		return nil, nil, &CommandResult{
+			Messages:       []string{fmt.Sprintf("The %s is under your control! (Use COMMAND BEGONE to dismiss it.)", name)},
+			TargetNotFound: true,
+		}
+	}
+	return inst, def, nil
+}
+
+// findMonsterInRoomPreferring is findMonsterInRoomEx's implementation. When
+// avoidID is non-zero and the target carries no explicit ordinal, the instance
+// with that ID is only returned if no other monster matches the name.
+func (e *GameEngine) findMonsterInRoomPreferring(player *Player, target string, includeDead bool, avoidID int) (*MonsterInstance, *gameworld.MonsterDef) {
 	if e.monsterMgr == nil {
 		return nil, nil
 	}
@@ -533,7 +645,13 @@ func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeD
 	target = strings.ToLower(strings.TrimSpace(target))
 	// Ordinal prefix/suffix so "attack 2 skeleton" / "attack second skeleton" /
 	// "attack skeleton 2" target the 2nd matching monster instead of the 1st.
+	rawTarget := target
 	target, skip := parseOrdinal(target)
+	if target != rawTarget {
+		avoidID = 0 // an explicit ordinal means exactly the creature named
+	}
+	var avoided *MonsterInstance
+	var avoidedDef *gameworld.MonsterDef
 	// Strip leading articles so "a skeleton" matches "skeleton"
 	for _, article := range []string{"a ", "an ", "the ", "some "} {
 		if strings.HasPrefix(target, article) {
@@ -549,10 +667,51 @@ func (e *GameEngine) findMonsterInRoomEx(player *Player, target string, includeD
 		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 		noun := strings.ToLower(def.Name)
 		if strings.HasPrefix(name, target) || strings.HasPrefix(noun, target) {
+			if avoidID != 0 && monsters[i].ID == avoidID {
+				avoided, avoidedDef = &monsters[i], def
+				continue
+			}
 			if skip > 0 {
 				skip--
 				continue
 			}
+			return &monsters[i], def
+		}
+	}
+	if avoided != nil {
+		return avoided, avoidedDef
+	}
+	return nil, nil
+}
+
+// findSummonedCreatureInRoom finds a summoned or controlled creature (anyone's pet, not
+// just the caster's own — so an ally can support it) by name in the player's room. Used
+// by buff spells (Strength, Agility, Haste, Mystic Armor) as the fallback target when the
+// name isn't a player — see resolveBuffTarget. Restricted to IsSummoned so these spells
+// can't be cast on a wild hostile monster.
+func (e *GameEngine) findSummonedCreatureInRoom(player *Player, target string) (*MonsterInstance, *gameworld.MonsterDef) {
+	if e.monsterMgr == nil {
+		return nil, nil
+	}
+	monsters := e.monsterMgr.MonstersInRoom(player.RoomNumber)
+	target = strings.ToLower(strings.TrimSpace(target))
+	for _, article := range []string{"a ", "an ", "the ", "some "} {
+		if strings.HasPrefix(target, article) {
+			target = strings.TrimPrefix(target, article)
+			break
+		}
+	}
+	for i := range monsters {
+		if !monsters[i].IsSummoned {
+			continue
+		}
+		def := e.monsters[monsters[i].DefNumber]
+		if def == nil {
+			continue
+		}
+		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+		noun := strings.ToLower(def.Name)
+		if strings.HasPrefix(name, target) || strings.HasPrefix(noun, target) {
 			return &monsters[i], def
 		}
 	}
@@ -631,6 +790,10 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 	msgs := []string{}
 	if isSelf {
 		msgs = append(msgs, "You examine yourself.")
+	} else if target.MistForm {
+		msgs = append(msgs, "You look at some mist.")
+	} else if target.SlimeForm {
+		msgs = append(msgs, "You look at a slime.")
 	} else if target.WolfForm {
 		msgs = append(msgs, "You look at a wolf.")
 	} else if target.Disguised {
@@ -648,7 +811,11 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 	// HairColor (black if bald), everything human-specific (build, skin, gear)
 	// is skipped. Human descriptions (custom or generated) resume once they
 	// transform back.
-	if target.WolfForm {
+	if target.MistForm {
+		msgs = append(msgs, "A swirling cloud of wispy grey mist hangs in the air, formless and drifting.")
+	} else if target.SlimeForm {
+		msgs = append(msgs, "A shapeless, glistening mass of slime oozes slowly across the ground.")
+	} else if target.WolfForm {
 		ageWord := ageDescriptor(target.Age, target.Race)
 		furColor := target.HairColor
 		if target.HairStyle == "bald" {
@@ -703,6 +870,124 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 	}
 	if isSelf {
 		heOrSheLC = "you"
+	}
+
+	// Equipment — a wolf isn't wearing or wielding anything, skip entirely. Listed
+	// before health/wounds below, matching the original session-capture order
+	// (worn items, then active effects, then health/wounds) rather than the
+	// reverse.
+	if !target.WolfForm && !target.MistForm && !target.SlimeForm && target.Wielded != nil {
+		wDef := e.items[target.Wielded.Archetype]
+		if wDef != nil {
+			name := e.formatItemName(wDef, target.Wielded.Adj1, target.Wielded.Adj2, target.Wielded.Adj3, target.Wielded.Tail)
+			if isSelf {
+				msgs = append(msgs, fmt.Sprintf("You are wielding %s.", name))
+			} else {
+				msgs = append(msgs, fmt.Sprintf("%s wielding %s.", pronoun, name))
+			}
+		}
+	}
+	if !target.WolfForm && !target.MistForm && !target.SlimeForm && target.OffHand != nil {
+		ohDef := e.items[target.OffHand.Archetype]
+		if ohDef != nil {
+			ohName := e.formatItemName(ohDef, target.OffHand.Adj1, target.OffHand.Adj2, target.OffHand.Adj3, target.OffHand.Tail)
+			if ohDef.Type == "SHIELD" {
+				if isSelf {
+					msgs = append(msgs, fmt.Sprintf("You are carrying %s as a shield.", ohName))
+				} else {
+					msgs = append(msgs, fmt.Sprintf("%s carrying %s as a shield.", pronoun, ohName))
+				}
+			} else {
+				if isSelf {
+					msgs = append(msgs, fmt.Sprintf("You are wielding %s in your off hand.", ohName))
+				} else {
+					msgs = append(msgs, fmt.Sprintf("%s wielding %s in their off hand.", pronoun, ohName))
+				}
+			}
+		}
+	}
+
+	if !target.WolfForm && !target.MistForm && !target.SlimeForm {
+		// Build set of worn slots to determine undergarment visibility
+		wornSlots := map[string]bool{}
+		for _, w := range target.Worn {
+			wornSlots[w.WornSlot] = true
+		}
+		var wornNames []string
+		for _, worn := range target.Worn {
+			if outerSlots, isUnder := undergarmentHiddenBy[worn.WornSlot]; isUnder {
+				covered := false
+				for _, outer := range outerSlots {
+					if wornSlots[outer] {
+						covered = true
+						break
+					}
+				}
+				if covered {
+					continue
+				}
+			}
+			wDef := e.items[worn.Archetype]
+			if wDef != nil {
+				wornNames = append(wornNames, e.formatItemName(wDef, worn.Adj1, worn.Adj2, worn.Adj3, worn.Tail))
+			}
+		}
+		if len(wornNames) > 0 {
+			if isSelf {
+				msgs = append(msgs, fmt.Sprintf("You are wearing %s.", joinList(wornNames)))
+			} else {
+				msgs = append(msgs, fmt.Sprintf("%s wearing %s.", pronoun, joinList(wornNames)))
+			}
+		}
+	}
+
+	// Active spell/psi effects — shown right after equipment, before health/wounds.
+	mysticArmorActive := target.MysticArmorBonus > 0 && !target.MysticArmorExpiry.IsZero() && time.Now().Before(target.MysticArmorExpiry)
+	if mysticArmorActive {
+		msgs = append(msgs, fmt.Sprintf("%s outlined in glowing armor.", pronoun))
+	}
+	genericAura := false
+	for _, b := range target.TimedDefenseBuffs {
+		if time.Now().After(b.Expiry) {
+			continue
+		}
+		switch b.SpellID {
+		case 105: // Globe of Protection
+			msgs = append(msgs, fmt.Sprintf("%s surrounded by a prismatic globe.", pronoun))
+		case 130: // Mass Protection
+			msgs = append(msgs, fmt.Sprintf("%s the center of a large, white sphere of light.", pronoun))
+		case 326: // Spectral Shield
+			msgs = append(msgs, fmt.Sprintf("%s protected by a ghostly, hovering shield.", pronoun))
+		case 229: // Wizard's Armor
+			msgs = append(msgs, fmt.Sprintf("%s surrounded by a flickering curtain of yellow light.", pronoun))
+		case 234: // Spell Shield
+			msgs = append(msgs, fmt.Sprintf("%s surrounded by an antimagical field.", pronoun))
+		case 235: // Cloak Mind — deliberately silent; the point is the target doesn't look warded
+		default:
+			genericAura = true
+		}
+	}
+	if genericAura {
+		msgs = append(msgs, fmt.Sprintf("A shimmering magical aura surrounds %s.", isSelfOr(isSelf, "you", heOrSheLC)))
+	}
+	if target.StrengthBuffID > 0 && !target.StrengthBuffExpiry.IsZero() && time.Now().Before(target.StrengthBuffExpiry) {
+		if isSelf {
+			msgs = append(msgs, "You radiate with magical strength.")
+		} else {
+			msgs = append(msgs, fmt.Sprintf("%s radiates with magical strength.", heOrShe))
+		}
+	}
+	if target.Position == 4 && target.Race != RaceDrakin {
+		msgs = append(msgs, fmt.Sprintf("%s hovering in the air.", pronoun))
+	}
+	if target.Invisible {
+		// Only visible to self or GMs
+		if isSelf {
+			msgs = append(msgs, "You are invisible.")
+		}
+	}
+	if target.PhantomForm && isSelf {
+		msgs = append(msgs, "You are in phantom form.")
 	}
 
 	// Health description
@@ -825,113 +1110,6 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 		e.monsterMgr.mu.RUnlock()
 	}
 
-	// Active spell/psi effects
-	mysticArmorActive := target.MysticArmorBonus > 0 && !target.MysticArmorExpiry.IsZero() && time.Now().Before(target.MysticArmorExpiry)
-	if mysticArmorActive {
-		msgs = append(msgs, fmt.Sprintf("%s outlined in glowing armor.", pronoun))
-	}
-	genericAura := false
-	for _, b := range target.TimedDefenseBuffs {
-		if time.Now().After(b.Expiry) {
-			continue
-		}
-		switch b.SpellID {
-		case 105: // Globe of Protection
-			msgs = append(msgs, fmt.Sprintf("%s surrounded by a prismatic globe.", pronoun))
-		case 130: // Mass Protection
-			msgs = append(msgs, fmt.Sprintf("%s the center of a large, white sphere of light.", pronoun))
-		case 326: // Spectral Shield
-			msgs = append(msgs, fmt.Sprintf("%s protected by a ghostly, hovering shield.", pronoun))
-		default:
-			genericAura = true
-		}
-	}
-	if genericAura {
-		msgs = append(msgs, fmt.Sprintf("A shimmering magical aura surrounds %s.", isSelfOr(isSelf, "you", heOrSheLC)))
-	}
-	if target.StrengthBuffID > 0 && !target.StrengthBuffExpiry.IsZero() && time.Now().Before(target.StrengthBuffExpiry) {
-		if isSelf {
-			msgs = append(msgs, "You radiate with magical strength.")
-		} else {
-			msgs = append(msgs, fmt.Sprintf("%s radiates with magical strength.", heOrShe))
-		}
-	}
-	if target.Position == 4 && target.Race != RaceDrakin {
-		msgs = append(msgs, fmt.Sprintf("%s hovering in the air.", pronoun))
-	}
-	if target.Invisible {
-		// Only visible to self or GMs
-		if isSelf {
-			msgs = append(msgs, "You are invisible.")
-		}
-	}
-
-	// Equipment — a wolf isn't wearing or wielding anything, skip entirely.
-	if !target.WolfForm && target.Wielded != nil {
-		wDef := e.items[target.Wielded.Archetype]
-		if wDef != nil {
-			name := e.formatItemName(wDef, target.Wielded.Adj1, target.Wielded.Adj2, target.Wielded.Adj3, target.Wielded.Tail)
-			if isSelf {
-				msgs = append(msgs, fmt.Sprintf("You are wielding %s.", name))
-			} else {
-				msgs = append(msgs, fmt.Sprintf("%s wielding %s.", pronoun, name))
-			}
-		}
-	}
-	if !target.WolfForm && target.OffHand != nil {
-		ohDef := e.items[target.OffHand.Archetype]
-		if ohDef != nil {
-			ohName := e.formatItemName(ohDef, target.OffHand.Adj1, target.OffHand.Adj2, target.OffHand.Adj3, target.OffHand.Tail)
-			if ohDef.Type == "SHIELD" {
-				if isSelf {
-					msgs = append(msgs, fmt.Sprintf("You are carrying %s as a shield.", ohName))
-				} else {
-					msgs = append(msgs, fmt.Sprintf("%s carrying %s as a shield.", pronoun, ohName))
-				}
-			} else {
-				if isSelf {
-					msgs = append(msgs, fmt.Sprintf("You are wielding %s in your off hand.", ohName))
-				} else {
-					msgs = append(msgs, fmt.Sprintf("%s wielding %s in their off hand.", pronoun, ohName))
-				}
-			}
-		}
-	}
-
-	if !target.WolfForm {
-		// Build set of worn slots to determine undergarment visibility
-		wornSlots := map[string]bool{}
-		for _, w := range target.Worn {
-			wornSlots[w.WornSlot] = true
-		}
-		var wornNames []string
-		for _, worn := range target.Worn {
-			if outerSlots, isUnder := undergarmentHiddenBy[worn.WornSlot]; isUnder {
-				covered := false
-				for _, outer := range outerSlots {
-					if wornSlots[outer] {
-						covered = true
-						break
-					}
-				}
-				if covered {
-					continue
-				}
-			}
-			wDef := e.items[worn.Archetype]
-			if wDef != nil {
-				wornNames = append(wornNames, e.formatItemName(wDef, worn.Adj1, worn.Adj2, worn.Adj3, worn.Tail))
-			}
-		}
-		if len(wornNames) > 0 {
-			if isSelf {
-				msgs = append(msgs, fmt.Sprintf("You are wearing %s.", joinList(wornNames)))
-			} else {
-				msgs = append(msgs, fmt.Sprintf("%s wearing %s.", pronoun, joinList(wornNames)))
-			}
-		}
-	}
-
 	// Player-set custom appearance line (APPEARANCE command) — suppressed in
 	// wolf form, same as @line1-3 above.
 	if target.Appearance != "" && !target.WolfForm {
@@ -969,21 +1147,48 @@ func (e *GameEngine) formatItemNameNoArticle(def *gameworld.ItemDef, adj1, adj2,
 
 func (e *GameEngine) formatItemName(def *gameworld.ItemDef, adj1, adj2, adj3 int, tail ...string) string {
 	var parts []string
-	if adj1 > 0 {
+	// Skip an instance adjective that would visibly repeat a word already in the
+	// archetype's own name — either its fixed Adjective/Adjective2 (added below via
+	// getItemNounName) or its noun itself. E.g. crafting a "leather helmet"
+	// (ADJECTIVE 180 "leather") out of plain "leather" material writes that same
+	// adjective ID into the instance's Adj3 (see buildWeaveCraftAdjs — it always pins
+	// the material's category there, since at least one room script reads ITEMADJ3 to
+	// tell cotton from wool, so that write can't just be skipped upstream); crafting
+	// "boiled leather" (noun "leather", ADJECTIVE "boiled") the same way would
+	// otherwise read "a leather boiled leather" — same redundancy, different word
+	// pair. This only changes the displayed name; the instance field itself is
+	// untouched, so anything reading it directly still sees the real value.
+	bareNoun := e.nouns[def.NameID]
+	isArchetypeAdj := func(id int) bool {
+		if id <= 0 {
+			return false
+		}
+		if id == def.Adjective || id == def.Adjective2 {
+			return true
+		}
+		if name, ok := e.adjectives[id]; ok && bareNoun != "" && strings.EqualFold(name, bareNoun) {
+			return true
+		}
+		return false
+	}
+	if adj1 > 0 && !isArchetypeAdj(adj1) {
 		if name, ok := e.adjectives[adj1]; ok {
 			parts = append(parts, name)
 		}
 	}
-	if adj2 > 0 {
+	if adj2 > 0 && !isArchetypeAdj(adj2) {
 		if name, ok := e.adjectives[adj2]; ok {
 			parts = append(parts, name)
 		}
 	}
-	if adj3 > 0 {
+	if adj3 > 0 && !isArchetypeAdj(adj3) {
 		if name, ok := e.adjectives[adj3]; ok {
 			parts = append(parts, name)
 		}
 	}
+	// getItemNounName already folds in this archetype's fixed Adjective/
+	// Adjective2 (e.g. "round" on a round shield), so it lands after any
+	// instance adjectives (crafted-in material, dye, encrusted gems) here.
 	nounName := e.getItemNounName(def)
 	parts = append(parts, nounName)
 
@@ -1012,11 +1217,36 @@ func (e *GameEngine) formatItemName(def *gameworld.ItemDef, adj1, adj2, adj3 int
 	return strings.ToLower(article) + " " + name
 }
 
+// getItemNounName returns this archetype's displayed name: its noun, prefixed
+// by its fixed Adjective/Adjective2 if it has any (see ItemDef.Adjective) —
+// e.g. "shield" for a plain archetype, but "tower shield" or "large round
+// shield" for one with a baked-in shape adjective. This is the noun nearly
+// every command in the engine matches player input against (see
+// matchesTarget's callers), so centralizing the archetype adjective here
+// rather than at each call site is what lets "TAP tower shield" work
+// everywhere a bare noun match already did, with no per-command changes.
+// Every pre-existing item has Adjective == 0, so this is a no-op for them.
 func (e *GameEngine) getItemNounName(def *gameworld.ItemDef) string {
+	noun := fmt.Sprintf("item#%d", def.Number)
 	if name, ok := e.nouns[def.NameID]; ok {
-		return name
+		noun = name
 	}
-	return fmt.Sprintf("item#%d", def.Number)
+	var parts []string
+	if def.Adjective > 0 {
+		if name := e.getAdjName(def.Adjective); name != "" {
+			parts = append(parts, strings.ToLower(name))
+		}
+	}
+	if def.Adjective2 > 0 {
+		if name := e.getAdjName(def.Adjective2); name != "" {
+			parts = append(parts, strings.ToLower(name))
+		}
+	}
+	if len(parts) == 0 {
+		return noun
+	}
+	parts = append(parts, noun)
+	return strings.Join(parts, " ")
 }
 
 // adjByName returns the adjective ID for a given name (case-insensitive), or 0 if not found.
@@ -1063,6 +1293,24 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 		result.RoomBroadcast = append(result.RoomBroadcast, sc0.RoomMsgs...)
 	}
 
+	// Run IFPREVERB LOOK scripts on the item (e.g. room 3741's subway panel reporting
+	// the current light state via PVAL53 — examineCarriedItem already does this for
+	// carried items, but the room-item path never called it, so room-scoped
+	// "IFPREVERB LOOK <ref>" blocks silently never fired).
+	scPre := e.RunPreverbScripts(player, room, "LOOK", ri, def)
+	if scPre.Blocked && len(scPre.Messages) > 0 {
+		// CLEARVERB means the script's text replaces the default description rather
+		// than trailing after it — e.g. a campfire whose look changes with story
+		// state (HALLOWEEN2026.SCR), or a menu that answers "You'll have to read
+		// that." instead of "It is nondescript." followed by that line.
+		result.Messages = append(append([]string{}, sc0.Messages...), scPre.Messages...)
+	} else if len(scPre.Messages) > 0 {
+		result.Messages = append(result.Messages, scPre.Messages...)
+	}
+	if len(scPre.RoomMsgs) > 0 {
+		result.RoomBroadcast = append(result.RoomBroadcast, scPre.RoomMsgs...)
+	}
+
 	// Run IFVERB LOOK scripts on the item (can add SHOWROOM output, etc.)
 	sc := e.RunVerbScripts(player, room, "LOOK", ri, def)
 	if len(sc.Messages) > 0 {
@@ -1073,10 +1321,14 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 	}
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
 	// the delay is lost.
-	for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, sc.DeferredSegments} {
+	for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, scPre.DeferredSegments, sc.DeferredSegments} {
 		if len(segs) > 0 {
 			e.scheduleScriptSegments(player, segs)
 		}
+	}
+
+	if lines := e.weaponsmithAppraisalLines(player, def, ri.Sharpness, ri.Val2, ri.Adj1, ri.Adj2, ri.Adj3, ri.HardnessMod); len(lines) > 0 {
+		result.Messages = append(result.Messages, lines...)
 	}
 
 	return result
@@ -1086,6 +1338,12 @@ func (e *GameEngine) readRoomItem(room *gameworld.Room, def *gameworld.ItemDef, 
 	refStr := fmt.Sprintf("%d", ri.Ref)
 	if desc, ok := room.ItemDescriptions["READ:"+refStr]; ok {
 		return &CommandResult{Messages: descriptionToMessages(desc)}
+	}
+	// Player-written text (WRITE <item> WITH <text> — see doWriteNote) takes over
+	// once a WRITEABLE item has actually been written on; a map-authored READ:
+	// override above still wins if one happens to exist for this room instance.
+	if ri.WrittenText != "" {
+		return &CommandResult{Messages: []string{ri.WrittenText}}
 	}
 	return &CommandResult{Messages: []string{"There is nothing written on it."}}
 }
@@ -1153,6 +1411,12 @@ func parseOrdinal(target string) (string, int) {
 	if num, err := strconv.Atoi(first); err == nil && num >= 1 {
 		return parts[1], num - 1
 	}
+	// Check digit-suffix ordinals: "2nd gate", "1st slot", "3rd box", etc.
+	if stripped := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(first, "st"), "nd"), "rd"), "th"); stripped != first {
+		if num, err := strconv.Atoi(stripped); err == nil && num >= 1 {
+			return parts[1], num - 1
+		}
+	}
 	// Check trailing number: "counter 2" means 2nd counter
 	lastSpace := strings.LastIndex(target, " ")
 	if lastSpace > 0 {
@@ -1193,6 +1457,19 @@ func stripMyPrefix(target string) (string, bool) {
 // "red panties", "icy broadsword", or "icy elkyri broadsword" all match correctly.
 func matchesTarget(nounName, target string, adjNames ...string) bool {
 	t := strings.ToLower(target)
+	// Strip a leading article — many items display with one baked in via their
+	// ARTICLE field (e.g. "some water", formatItemName's ARTICLE SOME case), so a
+	// player typing back exactly what they saw ("drink some water") would otherwise
+	// never match the noun "water". A handful of callers (findMonsterInRoomEx,
+	// findSummonedCreatureInRoom, etc.) already strip this themselves before calling
+	// in; doing it here too covers the many callers — DRINK, GET, EAT, WEAR, and
+	// most other item-targeting commands — that don't.
+	for _, article := range []string{"a ", "an ", "the ", "some "} {
+		if rest, ok := strings.CutPrefix(t, article); ok {
+			t = rest
+			break
+		}
+	}
 	noun := strings.ToLower(nounName)
 
 	// Collect non-empty adjective names in order.
@@ -1239,7 +1516,20 @@ func nounMatches(noun, t string) bool {
 	}
 	if len(t) > 2 && t[len(t)-1] == 's' {
 		stem := t[:len(t)-1]
-		if stem == noun || strings.HasPrefix(noun, stem) {
+		if stem == noun {
+			return true
+		}
+		// The fuzzy prefix check below needs its own minimum length on the
+		// stem (post-'s'-stripping), not just on the original target — "bas"
+		// passes len(t) > 2, but its stem "ba" is only 2 characters, which
+		// would prefix-match almost anything ("backpack", "bag", "ball", ...).
+		// Per a reported bug: SELL BAS was selling a backpack instead of a
+		// basinet, because "bas" -> stem "ba" is a prefix of "backpack" —
+		// even though "bas" is not a shortened/pluralized form of "backpack"
+		// at all. Requiring the stem itself to be 3+ characters keeps this
+		// path only for genuine abbreviated-plural guesses ("hels" -> "hel"),
+		// matching the same minimum abbreviation length used everywhere else.
+		if len(stem) > 2 && strings.HasPrefix(noun, stem) {
 			return true
 		}
 	}
@@ -1291,4 +1581,18 @@ func isWeapon(itemType string) bool {
 		return true
 	}
 	return false
+}
+
+// weaponsmithAppraisalLines returns extra EXAMINE lines revealing a weapon's
+// non-magical bonus (Sharpness), magical bonus (Val2), and Weapon Clash
+// hardness rating (weaponHardnessFor) — visible only to a player with
+// Weaponsmithing skill (8), matching the manual's description of weaponsmiths
+// as the ones who judge a weapon's material make-up and craftsmanship. Returns
+// nil for non-weapons or a player with no Weaponsmithing training.
+func (e *GameEngine) weaponsmithAppraisalLines(player *Player, def *gameworld.ItemDef, sharpness, val2, adj1, adj2, adj3, hardnessMod int) []string {
+	if player == nil || def == nil || !isWeapon(def.Type) || player.Skills[8] < 1 {
+		return nil
+	}
+	hardness := e.weaponHardnessFor(def, adj1, adj2, adj3, val2, hardnessMod)
+	return []string{fmt.Sprintf("Your Weaponsmithing expertise reveals: non-magical bonus %+d, magical bonus %+d, hardness rating %d.", sharpness, val2, hardness)}
 }

@@ -295,7 +295,11 @@ func weightDescriptor(weight, race int) string {
 // to the race's range, so it reflects the character's actual stats rather than
 // needing its own stored/random field.
 func buildDescriptor(strength, race int) string {
-	r := RaceStatRanges[race][0]
+	ranges, ok := RaceStatRanges[race]
+	if !ok {
+		ranges = RaceStatRanges[RaceHuman] // GM-set races (Undead, Troll...) have no stat ranges of their own
+	}
+	r := ranges[0]
 	words := []string{"slender", "wiry", "of average build", "robust", "powerfully built"}
 	return words[tierIndex(strength, r[0], r[1], []int{25, 50, 75, 90})]
 }

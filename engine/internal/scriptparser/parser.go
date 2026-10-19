@@ -518,9 +518,13 @@ func (p *fileParser) parseMacro(fields []string) {
 		}
 		mf := strings.Fields(mline)
 		mc := strings.ToUpper(mf[0])
+		// Also stop at the other file-level definition directives (MADJDEF etc.) — the
+		// macro body used to silently swallow them (KAHLUA.SCR's "MADJDEF 150 armed"
+		// right after MACRO 19 never got registered).
 		if mc == "NUMBER" || mc == "INUMBER" || mc == "MNUMBER" || mc == "CEVENT" ||
 			mc == "MACRO" || mc == "MLIST" || mc == "FORAGEDEF" || mc == "MINDEF" ||
-			mc == "MONEYDEF" || mc == "REGIONDEF" {
+			mc == "MONEYDEF" || mc == "REGIONDEF" || mc == "MADJDEF" || mc == "ADJDEF" ||
+			mc == "NOUNDEF" || mc == "BREAKMOD" || mc == "ORGDEF" {
 			break
 		}
 		if mc == "VARIABLE" {
@@ -535,12 +539,15 @@ func (p *fileParser) parseMacro(fields []string) {
 			macro.Scripts = append(macro.Scripts, block)
 			continue
 		}
-		if mc == "ECHO" || mc == "AFFECT" || mc == "RANDOM" || mc == "EQUAL" || mc == "ADD" || mc == "SUB" ||
-			mc == "NEWITEM" || mc == "REMOVEITEM" || mc == "GENMON" || mc == "KILLMON" || mc == "GMMSG" || mc == "CALLPACK" {
-			macro.Scripts = append(macro.Scripts, gameworld.ScriptBlock{
-				Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: mc, Args: mf[1:]}},
-			})
-		}
+		// Any other bare line is an action, same as inside an IF block
+		// (parseScriptBlock). This used to be a 12-command whitelist that silently
+		// dropped UNLOCK/OPEN/etc. — RIDDLE.SCR's elkyri door riddle CALLs DEEP2.SCR's
+		// MACRO 27, whose top-level "UNLOCK 4 / OPEN 4" never ran, so a correct answer
+		// echoed "The doors swing open" but the door stayed shut. Unknown commands
+		// (e.g. stray comment text in KREE.SCR) are ignored by execAction.
+		macro.Scripts = append(macro.Scripts, gameworld.ScriptBlock{
+			Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: mc, Args: mf[1:]}},
+		})
 		p.pos++
 	}
 	p.result.Macros = append(p.result.Macros, macro)
@@ -651,6 +658,10 @@ func (p *fileParser) parseRoom(fields []string) {
 			if len(fields) >= 2 {
 				room.Region, _ = strconv.Atoi(fields[1])
 			}
+		case "DROPLOC":
+			if len(fields) >= 2 {
+				room.DropLoc, _ = strconv.Atoi(fields[1])
+			}
 		case "FORGE", "LOOM", "FLETCHER", "MINEA", "MINEB", "MINEC",
 			"BUY_ARMOR", "BUY_SKINS", "BUY_JEWELRY", "SUBMERGED",
 			"MOVEMENT_ASTRAL", "HEALER", "BANK":
@@ -662,6 +673,16 @@ func (p *fileParser) parseRoom(fields []string) {
 			block := p.parseScriptBlock(fields)
 			room.Scripts = append(room.Scripts, block)
 			continue
+		case "ECHO", "AFFECT", "RANDOM", "EQUAL", "ADD", "SUB",
+			"NEWITEM", "REMOVEITEM", "GENMON", "KILLMON", "GMMSG", "CALLPACK":
+			// Bare top-level action (e.g. "EQUAL abflag 0" resetting a flag before the
+			// IFVERB block below re-checks it). Same handling as parseCEvent/parseMacro --
+			// without this the statement is silently dropped, so a flag set to 1 by a
+			// successful script action (e.g. OUTDOOR.SCR room 706's "jump boulder") never
+			// resets and the IFVERB block it guards can never fire again.
+			room.Scripts = append(room.Scripts, gameworld.ScriptBlock{
+				Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: cmd, Args: fields[1:]}},
+			})
 		case "ORGDEF":
 			if def, ok := parseOrgDef(fields); ok {
 				p.result.OrgDefs = append(p.result.OrgDefs, def)
@@ -761,6 +782,14 @@ func (p *fileParser) parseItem(fields []string) {
 			if len(fields) >= 2 {
 				item.Substance = strings.ToUpper(fields[1])
 			}
+		case "ADJECTIVE":
+			if len(fields) >= 2 {
+				item.Adjective, _ = strconv.Atoi(fields[1])
+			}
+		case "ADJECTIVE2":
+			if len(fields) >= 2 {
+				item.Adjective2, _ = strconv.Atoi(fields[1])
+			}
 		case "*DESCRIPTION_START":
 			// Item-level examine description
 			desc := p.readDescription()
@@ -789,7 +818,7 @@ func (p *fileParser) parseItem(fields []string) {
 		// Flags
 		case "CRAFTABLE", "DYEABLE", "ENCRUSTABLE", "DYE", "FLIPABLE",
 			"HIDDEN", "LATCHABLE", "LIGHTABLE", "LOCKABLE", "OPENABLE",
-			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2":
+			"REAGENT", "SKIN", "TURNABLE", "SEALED", "MATERIAL2", "SHIELDGRIP", "WRITEABLE", "INTANGIBLE":
 			item.Flags = append(item.Flags, cmd)
 		case "IFVERB", "IFPREVERB", "IFVERB2", "IFPREVERB2",
 			"IFITEM", "IFTOUCH", "IFVAR", "IFNOITEM",
@@ -797,6 +826,16 @@ func (p *fileParser) parseItem(fields []string) {
 			block := p.parseScriptBlock(fields)
 			item.Scripts = append(item.Scripts, block)
 			continue
+		case "ECHO", "AFFECT", "RANDOM", "EQUAL", "ADD", "SUB",
+			"NEWITEM", "REMOVEITEM", "GENMON", "KILLMON", "GMMSG", "CALLPACK":
+			// Bare top-level action (e.g. item 747's dice: "RANDOM dieone 1 6 0"
+			// ahead of "IFPREVERB ROLL -1" rolls fresh values before the block's
+			// IFVAR checks read them). Same handling as parseRoom — without this
+			// the statement is silently dropped and every IFVAR check downstream
+			// sees the variable at its zero default.
+			item.Scripts = append(item.Scripts, gameworld.ScriptBlock{
+				Type: "ACTION", Actions: []gameworld.ScriptAction{{Command: cmd, Args: fields[1:]}},
+			})
 		case "VARIABLE":
 			if len(fields) >= 2 {
 				p.result.Variables = append(p.result.Variables, gameworld.Variable{Name: fields[1]})
@@ -855,6 +894,12 @@ func (p *fileParser) parseMonster(fields []string) {
 			}
 		case "HUMAN", "ANIMAL", "AVINE":
 			mon.BodyType = cmd
+		case "PART":
+			if len(fields) >= 2 {
+				if v, err := strconv.Atoi(fields[1]); err == nil {
+					mon.Parts = append(mon.Parts, v)
+				}
+			}
 		case "BODY":
 			if len(fields) >= 2 {
 				mon.Body, _ = strconv.Atoi(fields[1])
@@ -917,6 +962,11 @@ func (p *fileParser) parseMonster(fields []string) {
 			mon.Eternal = true
 		case "DISCORPORATE":
 			mon.Discorporate = true
+		case "PVAL":
+			if len(fields) >= 3 {
+				mon.DeathPValNum, _ = strconv.Atoi(fields[1])
+				mon.DeathPValValue, _ = strconv.Atoi(fields[2])
+			}
 		case "POISON":
 			if len(fields) >= 3 {
 				mon.PoisonChance, _ = strconv.Atoi(fields[1])
@@ -1177,6 +1227,21 @@ func (p *fileParser) parseRoomItem(fields []string, isPut bool) gameworld.RoomIt
 			item.Val4, _ = strconv.Atoi(f[5:])
 		} else if strings.HasPrefix(upper, "VAL5=") {
 			item.Val5, _ = strconv.Atoi(f[5:])
+		} else if strings.HasPrefix(upper, "ITEMBIT") && strings.Contains(upper, "=") {
+			// ITEMBITn=1 sets bit n directly on this instance at placement time —
+			// e.g. ITEMBIT19=1 marks a room container persistent (see
+			// engine/internal/engine/persistent_containers.go). Bits set this way
+			// are re-applied on every boot along with the rest of the ITEM line,
+			// unlike a runtime EQUAL ITEMBITn inside a script block, which needs
+			// an item-targeted context (IFPREVERB <verb> <ref>) to have any effect.
+			eq := strings.IndexByte(upper, '=')
+			idx, err := strconv.Atoi(upper[len("ITEMBIT"):eq])
+			if err == nil && idx >= 0 && idx <= 19 {
+				v, _ := strconv.Atoi(f[eq+1:])
+				if v != 0 {
+					item.ItemBits |= 1 << idx
+				}
+			}
 		} else {
 			switch upper {
 			case "OPEN", "CLOSED", "LOCKED", "UNLOCKED", "LIT", "UNLIT",

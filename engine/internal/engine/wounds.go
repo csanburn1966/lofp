@@ -122,7 +122,7 @@ func woundBleedDrainPerMinute(level int) int {
 // wound, not a level-2 one, matching the original's per-hit (not
 // cumulative) wound severity. Different locations/damage types remain
 // separate wounds and their bleed drains do stack (see regen.go). canBleed
-// is false for undead (RACE 22 monsters, Player.Undead) — they have no
+// is false for undead (RACE 22 monsters, Player.IsUndead) — they have no
 // blood to lose, so their wounds never bleed regardless of type/severity.
 func applyWoundToList(wounds []Wound, location, damageType string, level int, canBleed bool) []Wound {
 	for i := range wounds {

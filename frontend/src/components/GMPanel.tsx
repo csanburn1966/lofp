@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../App'
+import GMNumberRanges from './GMNumberRanges'
 
 interface ScriptMeta {
   filename: string
@@ -8,7 +9,26 @@ interface ScriptMeta {
   size: number
   uploadedBy: string
   uploadedAt: string
+  draft?: boolean
   parseStats: { rooms: number; items: number; monsters: number; nouns: number; variables: number }
+}
+
+interface WithdrawStats {
+  rooms: number
+  items: number
+  monsters: number
+  macros: number
+  cevents: number
+  despawned: number
+}
+
+const withdrawnText = (w?: WithdrawStats | null) => {
+  if (!w) return ''
+  const parts = [`${w.rooms} rooms`, `${w.items} items`, `${w.monsters} monsters`]
+  if (w.cevents) parts.push(`${w.cevents} timed events`)
+  let text = ` Restored from the previous live version: ${parts.join(', ')}.`
+  if (w.despawned) text += ` ${w.despawned} creature(s) despawned.`
+  return text
 }
 
 interface ScriptVersion {
@@ -39,6 +59,7 @@ export default function GMPanel({ characterName }: Props) {
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [view, setView] = useState<'scripts' | 'ranges'>('scripts')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const authHeaders = (): Record<string, string> => {
@@ -57,7 +78,7 @@ export default function GMPanel({ characterName }: Props) {
 
   useEffect(() => { loadScripts() }, [])
 
-  const selectScript = (filename: string) => {
+  const selectScript = (filename: string, keepStatus = false) => {
     fetch(`/api/gm/scripts/${encodeURIComponent(filename)}`, { headers: authHeaders() })
       .then(r => r.json())
       .then((data: ScriptFull) => {
@@ -68,7 +89,7 @@ export default function GMPanel({ characterName }: Props) {
         setEditorFilename(data.filename)
         setEditing(true)
         setIsNew(false)
-        setStatus(null)
+        if (!keepStatus) setStatus(null)
         setSidebarOpen(false)
       })
   }
@@ -85,7 +106,9 @@ export default function GMPanel({ characterName }: Props) {
     setSidebarOpen(false)
   }
 
-  const saveScript = () => {
+  const isLive = !!selected && !selected.draft
+
+  const saveScript = (draft: boolean) => {
     const filename = editorFilename.trim()
     if (!filename) {
       setStatus({ type: 'error', message: 'Filename is required' })
@@ -95,6 +118,8 @@ export default function GMPanel({ characterName }: Props) {
       setStatus({ type: 'error', message: 'Script content is required' })
       return
     }
+    if (draft && isLive && !confirm(`"${filename}" is live. Saving it as a draft removes it from the game until it is activated again. Continue?`)) return
+    if (!draft && !isLive && !confirm(`Apply "${filename}" to the live game now? Players will see the changes immediately.`)) return
     setSaving(true)
     setStatus(null)
     fetch(`/api/gm/scripts/${encodeURIComponent(filename)}`, {
@@ -104,6 +129,7 @@ export default function GMPanel({ characterName }: Props) {
         name: editorName || filename,
         content: editorContent,
         priority: editorPriority,
+        draft,
       }),
     })
       .then(async r => {
@@ -113,14 +139,17 @@ export default function GMPanel({ characterName }: Props) {
           return
         }
         const stats = data.stats
+        const counts = `${stats.rooms} rooms, ${stats.items} items, ${stats.monsters} monsters`
         setStatus({
           type: 'success',
-          message: `Saved & applied: ${stats.rooms} rooms, ${stats.items} items, ${stats.monsters} monsters`,
+          message: (draft
+            ? `Saved as draft — not applied to the game (defines ${counts}).`
+            : `Saved & applied: ${counts}.`) + withdrawnText(data.withdrawn),
         })
         setIsNew(false)
         loadScripts()
         // Reload the script to get updated data
-        selectScript(filename)
+        selectScript(filename, true)
       })
       .catch(err => setStatus({ type: 'error', message: err.message }))
       .finally(() => setSaving(false))
@@ -128,7 +157,8 @@ export default function GMPanel({ characterName }: Props) {
 
   const deleteScript = () => {
     if (!selected) return
-    if (!confirm(`Delete script "${selected.filename}"? This cannot be undone.`)) return
+    const liveNote = isLive ? ' It is live, so its changes will also be removed from the game.' : ''
+    if (!confirm(`Delete script "${selected.filename}"? This cannot be undone.${liveNote}`)) return
     fetch(`/api/gm/scripts/${encodeURIComponent(selected.filename)}`, {
       method: 'DELETE',
       headers: authHeaders(),
@@ -139,6 +169,37 @@ export default function GMPanel({ characterName }: Props) {
         setSidebarOpen(true)
         loadScripts()
       })
+  }
+
+  // Switch between draft and live without changing the stored content.
+  const setDraft = (draft: boolean) => {
+    if (!selected) return
+    const unsaved = editorContent !== selected.content
+    if (draft) {
+      if (!confirm(`Disable "${selected.filename}"? It becomes a draft and its rooms, items, monsters and timed events are removed from the game until it is activated again.`)) return
+    } else {
+      const note = unsaved ? '\n\nNote: your unsaved edits are NOT included — the last saved version is what goes live. Use "Save & Apply" to apply your edits.' : ''
+      if (!confirm(`Activate "${selected.filename}"? It will be applied to the live game now.${note}`)) return
+    }
+    setSaving(true)
+    setStatus(null)
+    fetch(`/api/gm/scripts/${encodeURIComponent(selected.filename)}/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ draft }),
+    })
+      .then(async r => {
+        const data = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          setStatus({ type: 'error', message: data.error || 'Update failed' })
+          return
+        }
+        setStatus({ type: 'success', message: (data.message || 'Updated') + (draft ? '.' + withdrawnText(data.withdrawn) : '.') })
+        loadScripts()
+        selectScript(selected.filename, true)
+      })
+      .catch(err => setStatus({ type: 'error', message: err.message }))
+      .finally(() => setSaving(false))
   }
 
   const restoreVersion = (index: number) => {
@@ -155,9 +216,9 @@ export default function GMPanel({ characterName }: Props) {
           setStatus({ type: 'error', message: data.error || 'Restore failed' })
           return
         }
-        setStatus({ type: 'success', message: 'Version restored and applied' })
+        setStatus({ type: 'success', message: (data.message || 'Version restored') + '.' + withdrawnText(data.withdrawn) })
         loadScripts()
-        selectScript(selected.filename)
+        selectScript(selected.filename, true)
       })
       .catch(err => setStatus({ type: 'error', message: err.message }))
       .finally(() => setSaving(false))
@@ -187,16 +248,29 @@ export default function GMPanel({ characterName }: Props) {
     <div className="flex flex-col h-full font-mono text-sm">
       {/* Tab bar */}
       <div className="flex items-center gap-2 px-3 py-2 bg-[#111] border-b border-[#333]">
-        <button
-          className="sm:hidden text-gray-400 hover:text-white px-2 py-1"
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-        >
-          ☰
-        </button>
-        <span className="text-amber-400 font-bold">GM Scripts</span>
-        <span className="text-gray-600 text-xs ml-auto">Character: {characterName}</span>
+        {view === 'scripts' && (
+          <button
+            className="sm:hidden text-gray-400 hover:text-white px-2 py-1"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+          >
+            ☰
+          </button>
+        )}
+        {([['scripts', 'GM Scripts'], ['ranges', 'Number Ranges']] as const).map(([v, label]) => (
+          <button
+            key={v}
+            onClick={() => setView(v)}
+            className={`px-2 py-1 rounded font-bold ${view === v ? 'text-amber-400 bg-[#1a1a2e]' : 'text-gray-500 hover:text-gray-300'}`}
+          >
+            {label}
+          </button>
+        ))}
+        <span className="text-gray-600 text-xs ml-auto hidden sm:inline">Character: {characterName}</span>
       </div>
 
+      {view === 'ranges' ? (
+        <GMNumberRanges authHeaders={authHeaders} characterName={characterName} />
+      ) : (
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — script list */}
         <div className={`${sidebarOpen ? 'flex' : 'hidden'} sm:flex flex-col w-full sm:w-72 border-r border-[#333] bg-[#0d0d0d] overflow-y-auto`}>
@@ -219,7 +293,12 @@ export default function GMPanel({ characterName }: Props) {
                 selected?.filename === s.filename ? 'bg-[#1a1a2e] border-l-2 border-l-amber-500' : ''
               }`}
             >
-              <div className="text-amber-400 text-sm truncate">{s.name || s.filename}</div>
+              <div className="flex items-center gap-2">
+                <span className="text-amber-400 text-sm truncate">{s.name || s.filename}</span>
+                <span className={`ml-auto shrink-0 px-1.5 rounded text-[10px] font-bold ${s.draft ? 'bg-[#333] text-gray-300' : 'bg-green-900 text-green-300'}`}>
+                  {s.draft ? 'DRAFT' : 'LIVE'}
+                </span>
+              </div>
               <div className="text-gray-600 text-xs truncate">{s.filename}</div>
               <div className="flex justify-between text-gray-600 text-xs mt-1">
                 <span>P:{s.priority}</span>
@@ -272,7 +351,15 @@ export default function GMPanel({ characterName }: Props) {
                     className="bg-[#0a0a0a] border border-[#333] rounded px-2 py-1 text-gray-200 text-sm w-20"
                   />
                 </div>
-                <div className="flex gap-2 ml-auto">
+                {!isNew && selected && (
+                  <div className="flex flex-col gap-1">
+                    <label className="text-gray-500 text-xs">Status</label>
+                    <span className={`px-2 py-1 rounded text-xs font-bold ${selected.draft ? 'bg-[#333] text-gray-300' : 'bg-green-900 text-green-300'}`}>
+                      {selected.draft ? 'DRAFT — not in game' : 'LIVE'}
+                    </span>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2 ml-auto">
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -287,12 +374,31 @@ export default function GMPanel({ characterName }: Props) {
                     Upload .scr
                   </button>
                   <button
-                    onClick={saveScript}
+                    onClick={() => saveScript(true)}
                     disabled={saving}
+                    title="Store the script without applying it to the game"
+                    className="px-3 py-1.5 bg-[#444] hover:bg-[#555] text-gray-200 rounded text-sm disabled:opacity-50"
+                  >
+                    {saving ? 'Saving...' : 'Save as Draft'}
+                  </button>
+                  <button
+                    onClick={() => saveScript(false)}
+                    disabled={saving}
+                    title="Store the script and apply it to the live game"
                     className="px-3 py-1.5 bg-green-700 hover:bg-green-600 text-white rounded text-sm disabled:opacity-50"
                   >
                     {saving ? 'Saving...' : 'Save & Apply'}
                   </button>
+                  {!isNew && selected && (
+                    <button
+                      onClick={() => setDraft(!selected.draft)}
+                      disabled={saving}
+                      title={selected.draft ? 'Apply the saved version to the live game' : 'Remove from the game and keep as a draft'}
+                      className={`px-3 py-1.5 rounded text-sm text-white disabled:opacity-50 ${selected.draft ? 'bg-blue-700 hover:bg-blue-600' : 'bg-amber-800 hover:bg-amber-700'}`}
+                    >
+                      {selected.draft ? 'Activate' : 'Disable'}
+                    </button>
+                  )}
                   {!isNew && (
                     <button
                       onClick={deleteScript}
@@ -352,6 +458,7 @@ A vast hall stretches before you.
           )}
         </div>
       </div>
+      )}
     </div>
   )
 }

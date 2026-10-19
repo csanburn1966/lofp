@@ -17,12 +17,38 @@ const (
 	RaceDrakin     = 6
 	RaceMechanoid  = 7
 	RaceEphemeral  = 8
+	RaceVampire    = 9
 )
 
+// Racial groups (GMSCRIPT.DOC "RACE #", the same numbers monsters use). In the
+// original a GM could set a player's RACE to one of these, or to Vampire, to
+// override their birth race during role play — e.g. a character who becomes
+// undead (see Player.IsUndead). Never offered at character creation, which is
+// limited to the eight playable races (PlayableRaces, ValidateCharacterInput).
+const (
+	RaceExtraplanar = 21
+	RaceUndead      = 22
+	RaceArachnid    = 23
+	RaceKvantar     = 24
+	RaceTroll       = 25
+	RaceLycanthrope = 26
+	RaceGiant       = 27
+	RaceConstruct   = 28
+	RaceGoblin      = 29
+	RaceOgre        = 30
+	RaceDragon      = 31
+)
+
+// RaceNames names every race a player can have: the playable races plus the
+// GM-only ones above (settable with "@set race").
 var RaceNames = map[int]string{
 	RaceHuman: "Human", RaceAelfen: "Aelfen", RaceHighlander: "Highlander",
 	RaceWolfling: "Wolfling", RaceMurg: "Murg", RaceDrakin: "Drakin",
-	RaceMechanoid: "Mechanoid", RaceEphemeral: "Ephemeral",
+	RaceMechanoid: "Mechanoid", RaceEphemeral: "Ephemeral", RaceVampire: "Vampire",
+	RaceExtraplanar: "Extraplanar", RaceUndead: "Undead", RaceArachnid: "Arachnid",
+	RaceKvantar: "Kvantar", RaceTroll: "Troll", RaceLycanthrope: "Lycanthrope",
+	RaceGiant: "Giant", RaceConstruct: "Construct", RaceGoblin: "Goblin",
+	RaceOgre: "Ogre", RaceDragon: "Dragon",
 }
 
 // Stat ranges per race: [min, max] for each of 7 stats
@@ -62,6 +88,17 @@ type InventoryItem struct {
     // base and any adjective BREAKMODs. GM-editable via @editem; kept as its own field
     // rather than a Val slot since Val1-5 are all already claimed for other weapon uses.
     HardnessMod int    `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+    // CraftedValue is the copper sell value stamped by completeCraft (Wood Lore,
+    // Jewelry, Weaving — crafting.go) for a freshly-made item. It deliberately does
+    // NOT reuse Val1 the way GMSCRIPT.DOC's generic sell-value convention normally
+    // would (see project_item_val_fields memory): some craftable items' own original
+    // scripts already repurpose Val1 for unrelated per-instance state — e.g. item
+    // 968's harp uses ITEMVAL1 as its current tune (1-5, cycled by CONCENTRATE) —
+    // and stamping a sell price into Val1 there would corrupt that state (and vice
+    // versa, make the "sell value" drift every time the item's script touches Val1).
+    // computeSellValue checks this before falling back to Val1, so crafted items
+    // still sell for a fair price without the original script needing to change.
+    CraftedValue int  `bson:"craftedValue,omitempty" json:"craftedValue,omitempty"`
     // ItemBits holds the 0-19 boolean flags documented as ITEMBIT(#) in MANUAL.DOC — a
     // per-instance bitmask distinct from VAL1-5 (each of which already has its own
     // documented meaning; see project_item_val_fields memory). Bit N corresponds to
@@ -69,6 +106,13 @@ type InventoryItem struct {
     ItemBits  int    `bson:"itemBits,omitempty" json:"itemBits,omitempty"`
     State     string `bson:"state,omitempty" json:"state,omitempty"`
     Tail      string `bson:"tail,omitempty" json:"tail,omitempty"`
+    // WrittenText is player-supplied content stamped by WRITE on a WRITEABLE item
+    // (e.g. item 940's plain paper note) and shown back by READ. Deliberately a
+    // separate field from Tail, which is a short display-name suffix (ENGRAVE's
+    // inscriptions) — WrittenText can be a full short letter and is never folded
+    // into the item's name, only shown when someone reads it. See updates.html
+    // changelog #69: "Players can now WRITE on items scripted as WRITEABLE."
+    WrittenText string `bson:"writtenText,omitempty" json:"writtenText,omitempty"`
     WornSlot  string `bson:"wornSlot,omitempty" json:"wornSlot,omitempty"`
     // Container contents — populated when this item is an open container.
     Contents  []InventoryItem `bson:"contents,omitempty" json:"contents,omitempty"`
@@ -85,6 +129,18 @@ type InventoryItem struct {
     // a weapon with all three adj slots already full at cast time keeps its existing
     // adjectives untouched (same convention as castEnchantmentSpell).
     BladeSpellAdjApplied bool `bson:"bladeSpellAdjApplied,omitempty" json:"bladeSpellAdjApplied,omitempty"`
+    // SigilSpellID/SigilOwner track a sigil trap (Imprison Rune 227, Thunder/Inferno/Ice
+    // Glyph 125/124/126, Death Scythe 322 — see castSigilSpell in spells.go). SigilSpellID
+    // is the trap spell imprinted by CAST; SigilOwner is empty until the first TOUCH (or
+    // OPEN of a closed/locked item) claims it, after which only that player may handle the
+    // item safely — anyone else triggers the trap once and it disarms (SigilSpellID reset
+    // to 0), matching the existing chest-trap convention (see checkTrap).
+    SigilSpellID int    `bson:"sigilSpellID,omitempty" json:"sigilSpellID,omitempty"`
+    SigilOwner   string `bson:"sigilOwner,omitempty" json:"sigilOwner,omitempty"`
+    // SigilCaster is the real FirstName of the player who inscribed the sigil with CAST
+    // (castSigilSpell) — distinct from SigilOwner, which is whoever later claims it by
+    // touch. Used by Truename (castTruenameSpell) to reveal who created the glyph.
+    SigilCaster  string `bson:"sigilCaster,omitempty" json:"sigilCaster,omitempty"`
 }
 
 // TimedDefenseBuff tracks one active defense spell with a bonus and expiry.
@@ -109,6 +165,13 @@ type Player struct {
 	AccountID  string            `bson:"accountId,omitempty" json:"accountId,omitempty"`
 	FirstName  string            `bson:"firstName" json:"firstName"`
 	LastName   string            `bson:"lastName" json:"lastName"`
+	// Truename is a made-up secret name (MAGIC.TXT spell 408, Truename — "Invasive
+	// spell tell's you the person's soulname") — never the player's real
+	// FirstName/LastName. Left blank until first needed, then lazily rolled unique
+	// and persisted by ensureTruename/rollUniqueTruename in spells.go — by casting
+	// Truename on the player, or by the player creating something (a
+	// summoned/controlled creature, a sigil/glyph) that carries their truename.
+	Truename   string            `bson:"truename,omitempty" json:"truename,omitempty"`
 	Race       int               `bson:"race" json:"race"`
 	Gender     int               `bson:"gender" json:"gender"`
 	Level      int               `bson:"level" json:"level"`
@@ -155,7 +218,25 @@ type Player struct {
 	// Status conditions
 	Bleeding     bool    `bson:"bleeding" json:"bleeding"` // derived: recomputed from Wounds after every add/remove
 	Wounds       []Wound `bson:"wounds,omitempty" json:"wounds,omitempty"`
-	Stunned      bool `bson:"stunned" json:"stunned"`
+	// Stunned is transient like StunExpiry: when it was persisted, a player saved
+	// mid-stun came back Stunned with a zero StunExpiry that nothing ever expired,
+	// locking them out of every non-allowlisted command (incl. DEPART) for good.
+	Stunned      bool `bson:"-" json:"stunned"`
+	// StunExpiry is when a melee-crit stun (see monsterAttackPlayer) wears off —
+	// cleared by regenTick, mirroring MonsterInstance.StunExpiry. Transient: a
+	// stun surviving a disconnect/relog wouldn't make sense to resume.
+	StunExpiry time.Time `bson:"-" json:"-"`
+	// EphemeralPhysicalUntil is when an Ephemeral drawn onto the physical plane by
+	// offensive action fades back to ethereal; EphemeralSubstantial is whether the
+	// "becomes more substantial" transition has been announced (so the fade is
+	// announced exactly once). See ephemeral.go. Transient — a relog starts ethereal.
+	EphemeralPhysicalUntil time.Time `bson:"-" json:"-"`
+	EphemeralSubstantial   bool      `bson:"-" json:"-"`
+	// KnockedDown mirrors MonsterInstance.KnockedDown — a melee-crit stagger (see
+	// monsterAttackPlayer) that also forces Position to 2 (laying), matching
+	// LEGENDS.DOC: "a -50 penalty is imposed on your defense until you stand up
+	// again." Cleared by STAND, same as the Position it forces.
+	KnockedDown bool `bson:"knockedDown,omitempty" json:"knockedDown,omitempty"`
 	Diseased     bool `bson:"diseased" json:"diseased"`
 	DiseaseLevel int  `bson:"diseaseLevel,omitempty" json:"diseaseLevel,omitempty"`
 	Poisoned     bool `bson:"poisoned" json:"poisoned"`
@@ -168,6 +249,8 @@ type Player struct {
 	Undead      bool `bson:"undead,omitempty" json:"undead,omitempty"`
 	WolfForm    bool `bson:"wolfForm,omitempty" json:"wolfForm,omitempty"`
 	SlimeForm   bool `bson:"slimeForm,omitempty" json:"slimeForm,omitempty"`
+	MistForm    bool `bson:"mistForm,omitempty" json:"mistForm,omitempty"`
+	PhantomForm bool `bson:"phantomForm,omitempty" json:"phantomForm,omitempty"` // Phantom Form (248): invisible like Invisibility, but See Hidden shows "a shimmering grey form" instead of the real name
 	Disguised   bool `bson:"disguised,omitempty" json:"disguised,omitempty"`
 	RoundTime       int       `bson:"roundTime" json:"roundTime"`
 	RoundTimeExpiry time.Time `bson:"-" json:"-"` // transient: when roundtime ends
@@ -178,14 +261,32 @@ type Player struct {
 	// Combat
 	Stance        int           `bson:"-" json:"-"`          // StanceNormal..StanceBerserk
 	CombatTarget  *CombatTarget `bson:"-" json:"-"`          // current combat target
-	Targets       []int         `bson:"-" json:"-"`          // TARGET command: up to 6 monster instance IDs for multi-target spells
+	Targets       []int         `bson:"-" json:"-"`          // TARGET command: up to 9 monster instance IDs for multi-target spells (see maxTargets in target.go)
 	DefenseBonus  int           `bson:"-" json:"-"`          // from spells/psi
 	PreparedPsi   int           `bson:"-" json:"-"`          // prepared psi discipline ID
 	ActivePsi     map[int]bool `bson:"-" json:"-"`          // currently maintained psi disciplines
 	BackstabNext  bool          `bson:"-" json:"-"`          // next attack is a backstab
+
+	// Melee engagement (ADVANCE/RETREAT — see advance.go). A melee-range weapon
+	// can only be used against a target the player has advanced on, or that has
+	// itself closed to melee with the player (see isEngagedInMelee). Room-scoped
+	// and transient like CombatTarget above — never persisted, always empty on
+	// login, and cleared whenever the player actually changes rooms.
+	AdvancedOnMonsters []int    `bson:"-" json:"-"` // monster instance IDs this player has advanced on
+	AdvancedOnPlayers  []string `bson:"-" json:"-"` // player FirstNames this player has advanced on
+	AdvancedByPlayers  []string `bson:"-" json:"-"` // player FirstNames who have advanced on this player
+
+	// RoomEntrySeq is bumped by scheduleEntryAggro on every room entry, so a pending
+	// entry-aggro timer can tell whether it still belongs to the player's *current*
+	// visit (a timer from an earlier visit to the same room must not fire the
+	// instant they walk back in).
+	RoomEntrySeq int `bson:"-" json:"-"`
 	TelepathyActive bool      `bson:"telepathyActive,omitempty" json:"telepathyActive,omitempty"`
 	TelepathyExpiry time.Time `bson:"telepathyExpiry,omitempty" json:"telepathyExpiry,omitempty"`
-	Emotional       bool      `bson:"emotional,omitempty" json:"emotional,omitempty"`
+	// Cyberware: implants installed at CyberTech (cyberware.go).
+	Cyberware []CyberImplant `bson:"cyberware,omitempty" json:"cyberware,omitempty"`
+	// Unemoted: a mechanoid on the analytical half of their brain (UNEMOTE) — see mechanoid.go.
+	Unemoted bool `bson:"unemoted,omitempty" json:"unemoted,omitempty"`
 
 	// Temporary strength buff (Strength I/II/III spells)
 	StrengthBuffID     int       `bson:"strengthBuffId,omitempty" json:"strengthBuffId,omitempty"`
@@ -209,6 +310,23 @@ type Player struct {
 	HasteExpiry time.Time `bson:"hasteExpiry,omitempty" json:"hasteExpiry,omitempty"`
 	SlowExpiry  time.Time `bson:"slowExpiry,omitempty" json:"slowExpiry,omitempty"`
 
+	// Paranoia (spell 226): 20-minute timer. Each real minute it's active, regenTick
+	// has a 50% chance to send the player one random unsettling echo (see
+	// paranoiaEchoes in regen.go).
+	ParanoiaExpiry time.Time `bson:"paranoiaExpiry,omitempty" json:"paranoiaExpiry,omitempty"`
+
+	// Silence (spell 219): fixed 1-minute duration. Recasting resets it back to a
+	// full minute rather than stacking/extending like most other enchantment
+	// timers. Blocks say/'/yell/sing/recite (see isSilenced call sites) and, since
+	// casting requires speech, all spellcasting too.
+	SilencedExpiry time.Time `bson:"silencedExpiry,omitempty" json:"silencedExpiry,omitempty"`
+
+	// Imprison (spell 231): fixed 5-minute duration, force bubble. While active the
+	// target cannot attack anyone (doAttackMonster) or cast any spell on anyone,
+	// including themselves (doCastSpell) — so they can't even attempt to dispel it;
+	// it must be removed by another caster targeting them, or simply wait it out.
+	ImprisonedExpiry time.Time `bson:"imprisonedExpiry,omitempty" json:"imprisonedExpiry,omitempty"`
+
 	// Fly spell timer (spell 224) — CanFly from this spell only lasts until FlyExpiry.
 	// Zero value means flight (if any) came from a race ability or maintained psi power instead.
 	FlyExpiry time.Time `bson:"flyExpiry,omitempty" json:"flyExpiry,omitempty"`
@@ -223,6 +341,21 @@ type Player struct {
 	// Skills[33] itself, so SKILLS display/prerequisites still reflect real training.
 	CamouflageBonus  int       `bson:"camouflageBonus,omitempty" json:"camouflageBonus,omitempty"`
 	CamouflageExpiry time.Time `bson:"camouflageExpiry,omitempty" json:"camouflageExpiry,omitempty"`
+
+	// Light (113) / Night Vision (520) spell timers — see darkness.go. Light makes
+	// the player a light source for any DARKNESS room they're in; Night Vision lets
+	// them see in one. Faded with a message by regenTick.
+	LightSpellExpiry  time.Time `bson:"lightSpellExpiry,omitempty" json:"lightSpellExpiry,omitempty"`
+	NightVisionExpiry time.Time `bson:"nightVisionExpiry,omitempty" json:"nightVisionExpiry,omitempty"`
+
+	// Temporary Divine Blessing buff (spell 347): +3 effective weapon skill
+	// ranks (whichever skill applies to the player's current weapon, or
+	// Martial Arts if unarmed — see playerAttackRating in combat.go). Unlike
+	// most timed buffs, recasting doesn't stack or extend the duration; it
+	// resets straight back to the full 1 minute (per magic.txt: Divine
+	// Blessing, True Aim, Haste and Slow don't stack like other buffs).
+	DivineBlessingBonus  int       `bson:"divineBlessingBonus,omitempty" json:"divineBlessingBonus,omitempty"`
+	DivineBlessingExpiry time.Time `bson:"divineBlessingExpiry,omitempty" json:"divineBlessingExpiry,omitempty"`
 
 	// Resist Weather (spell 506): while active, ignores the Hurricane knockdown
 	// chance (regen.go) and the weather-based to-hit penalty (combat.go weatherMod).
@@ -255,6 +388,21 @@ type Player struct {
 	// Spell preparation reagent (transient — which item arch was verified at PREPARE time)
 	PreparedSpellReagentArch int `bson:"-" json:"-"`
 
+	// PreparedMoonstoneBonus: true when the spell currently prepared (any spell with no
+	// mandatory reagent of its own) was prepared with a moonstone as an optional catalyst
+	// — see shemri.txt "PRE 121 WITH MY MOON". Grants +25 to the CAST success roll, then
+	// is cleared the moment that prepared spell resolves (or is lost/released), same as
+	// PreparedSpellReagentArch.
+	PreparedMoonstoneBonus bool `bson:"-" json:"-"`
+
+	// PreparedWormScaleBonus: true when Siryx's Terrible Tentacles (134) was prepared
+	// with a worm scale (item 507, skinned from the "worm" monster) as an optional
+	// catalyst — not part of the original 1990s data, new. Grants +25 to the magic
+	// resist roll against each target Tentacles tries to grab (see castTentaclesSpell),
+	// mirroring PreparedMoonstoneBonus's +25 CAST-success bonus. Cleared the moment the
+	// prepared spell resolves (or is lost/released), same as PreparedMoonstoneBonus.
+	PreparedWormScaleBonus bool `bson:"-" json:"-"`
+
 	// Crafting state (transient)
 	CraftingItem  string `bson:"-" json:"-"` // what they're making (e.g., "greatsword")
 	CraftingMetal string `bson:"-" json:"-"` // what material (e.g., "copper", "hide")
@@ -276,6 +424,15 @@ type Player struct {
 
 	// Guard: who/what this player is guarding (transient, room-specific)
 	GuardTargets []string `bson:"-" json:"-"` // player FirstNames being guarded
+	// RobAttempts records the absolute game day (see robGameDay) of this player's
+	// last ROB/PICKPOCKET attempt on each target, keyed by robTargetKey — one
+	// attempt per target per game day (legerdemain.go). Persisted so relogging
+	// doesn't reset it; entries from earlier days are pruned on each write.
+	RobAttempts map[string]int `bson:"robAttempts,omitempty" json:"-"`
+	// LoginNotices are messages queued by LoadPlayer (e.g. falling out of the sky
+	// because a Fly spell expired while logged out — see skyfall.go) and shown
+	// ahead of the room look by EnterRoom.
+	LoginNotices []string `bson:"-" json:"-"`
 	GuardPortals []int    `bson:"-" json:"-"` // portal item archetypes being guarded (CM level 3+)
 	GuardItems   []int    `bson:"-" json:"-"` // item archetypes on the ground being guarded
 
@@ -283,6 +440,7 @@ type Player struct {
 	Following     string   `bson:"-" json:"-"` // who this player is following
 	GroupMembers  []string `bson:"-" json:"-"` // if this player is a leader, who's in their group
 	IsGroupLeader bool     `bson:"-" json:"-"`
+	SharedXP      bool     `bson:"-" json:"-"` // leader-set: SHAREDXP command toggle — group splits combat XP (combat.go sharedXPRecipients)
 
 	// Social blocking (persistent): AVOID/UNAVOID/ALLOW/UNALLOW. AvoidList
 	// blocks physical interactive emotes (KISS, NIBBLE, etc.) and HOLD from
@@ -326,6 +484,11 @@ type Player struct {
 	BankGold   int `bson:"bankGold,omitempty" json:"bankGold,omitempty"`
 	BankSilver int `bson:"bankSilver,omitempty" json:"bankSilver,omitempty"`
 	BankCopper int `bson:"bankCopper,omitempty" json:"bankCopper,omitempty"`
+	// Currencies / BankCurrencies hold regional money (currency.go), keyed by
+	// MONEYDEF type number (2 = kragenmark, 4 = shard, 5 = darktar, ...) — the
+	// counterpart of Gold/Silver/Copper and BankGold/BankSilver/BankCopper.
+	Currencies     map[int]int `bson:"currencies,omitempty" json:"currencies,omitempty"`
+	BankCurrencies map[int]int `bson:"bankCurrencies,omitempty" json:"bankCurrencies,omitempty"`
 
 	// Safety deposit box (up to 20 items)
 	BankItems []InventoryItem `bson:"bankItems,omitempty" json:"bankItems,omitempty"`
@@ -347,6 +510,15 @@ type Player struct {
 
 	// Internal variables (INTNUM0-99, flags, etc.)
 	IntNums map[int]int `bson:"intNums" json:"intNums"`
+
+	// AwardFlags tracks one-time AWARD script actions (AWARD <id> <xp>) already granted
+	// to this player, keyed by the award's id. A dedicated map rather than reusing
+	// IntNums — scripts across the game reuse the same small integers AWARD uses (4, 57,
+	// 61, etc.) as ordinary INTNUM story variables for entirely unrelated purposes (e.g.
+	// INTNUM57 holds a 1-10 totem choice in the Tiewaz storyline, INTNUM61 gates a sword
+	// on the value 79), so keying AWARD's one-time gate off IntNums would silently
+	// corrupt those. See doAward.
+	AwardFlags map[int]bool `bson:"awardFlags,omitempty" json:"awardFlags,omitempty"`
 
 	// Transient flags (reset on room entry)
 	Flag1 int `bson:"-" json:"-"`
@@ -395,6 +567,7 @@ type Player struct {
 	GMTrace    bool `bson:"-" json:"-"`                                     // @trace: show script debug output
 	GMHat      bool `bson:"gmHat,omitempty" json:"gmHat,omitempty"`        // visible as GM on WHO list
 	GMHidden   bool `bson:"gmHidden,omitempty" json:"gmHidden,omitempty"`  // hidden from WHO list
+	GMChannel  bool `bson:"gmChannel,omitempty" json:"-"`                  // listening on the private @GM channel
 	GMInvis      bool   `bson:"gmInvis,omitempty" json:"gmInvis,omitempty"`    // invisible to players
 	GMEditTarget string `bson:"-" json:"-"` // @edpl target name for subsequent @set commands
 
@@ -441,7 +614,7 @@ type DisguisePersona struct {
 
 // bareDisplayName is DisplayName lowercased with any leading article ("a ",
 // "an ") stripped — the matching-friendly form of the player's current
-// apparent identity, used by NameMatches/NameEquals below.
+// apparent identity, used by NameMatches below.
 func (p *Player) bareDisplayName() string {
 	name := strings.ToLower(p.DisplayName())
 	if s, ok := strings.CutPrefix(name, "a "); ok {
@@ -460,13 +633,6 @@ func (p *Player) bareDisplayName() string {
 // has despite DisplayName's leading article.
 func (p *Player) NameMatches(query string) bool {
 	return strings.HasPrefix(p.bareDisplayName(), strings.ToLower(query))
-}
-
-// NameEquals reports whether query is an exact case-insensitive match of the
-// player's current apparent identity — the disguise-aware replacement for
-// exact-match targeting (e.g. COMMAND FOLLOW/GUARD/ATTACK <name> in summons.go).
-func (p *Player) NameEquals(query string) bool {
-	return p.bareDisplayName() == strings.ToLower(query)
 }
 
 // EffectiveAppearance returns the player's apparent race/gender/age/height/
@@ -526,6 +692,16 @@ func effectiveStealthSkill(p *Player) int {
 		skill += p.CamouflageBonus
 	}
 	return skill
+}
+
+// divineBlessingBonus returns the player's active Divine Blessing (spell 347)
+// weapon skill bonus, or 0 if it isn't active. See playerAttackRating in
+// combat.go for where this is applied.
+func divineBlessingBonus(p *Player) int {
+	if p.DivineBlessingBonus > 0 && !p.DivineBlessingExpiry.IsZero() && time.Now().Before(p.DivineBlessingExpiry) {
+		return p.DivineBlessingBonus
+	}
+	return 0
 }
 
 // Pronoun returns "he" or "she".
@@ -610,7 +786,7 @@ func (p *Player) PromptIndicators() string {
 	if p.RoundTime > 0 {
 		codes = append(codes, 'R')
 	}
-	if p.Hidden || p.GMInvis {
+	if p.Hidden || p.GMInvis || p.Invisible || p.PhantomForm {
 		codes = append(codes, 'H')
 	}
 	if p.Unconscious {
@@ -627,6 +803,14 @@ func (p *Player) RaceName() string {
 	return RaceNameByID(p.Race)
 }
 
+// IsUndead reports whether the player is undead: RACE Undead (22) or Vampire (9),
+// or the legacy Undead flag. Undead have no active life force (GMSCRIPT.DOC
+// immunity #7), so they don't bleed and are immune to poison and disease;
+// healing magic sears them, and undead-only spells work for them.
+func (p *Player) IsUndead() bool {
+	return p.Undead || p.Race == RaceUndead || p.Race == RaceVampire
+}
+
 // RaceNameByID returns the race name for a given race ID.
 func RaceNameByID(race int) string {
 	if name, ok := RaceNames[race]; ok {
@@ -641,11 +825,46 @@ func (p *Player) IsFlying() bool {
 }
 
 // IsConcealed reports whether the player's presence should be kept off other
-// players' echoes — stealthed (Hidden), under the Invisibility spell, or a GM
-// using @hide or @invis. Used to suppress movement/follow/portal echoes
-// entirely and to anonymize speech as "Something" instead of the player's name.
+// players' echoes — stealthed (Hidden), under the Invisibility/Phantom Form
+// spells, or a GM using @hide or @invis. Used to suppress movement/follow/
+// portal echoes entirely and to anonymize speech as "Something" instead of
+// the player's name.
 func (p *Player) IsConcealed() bool {
-	return p.Hidden || p.Invisible || p.GMHidden || p.GMInvis
+	return p.Hidden || p.Invisible || p.PhantomForm || p.GMHidden || p.GMInvis
+}
+
+// IsFormLocked reports whether Mist Form (232) or Slime Form (245) currently
+// prevents this player from attacking, defending, casting, speaking, wearing/
+// removing items, using magic items, or emoting — see formActionBlockMessage
+// for the message to show when a blocked action is attempted. Only TRANSFORM
+// ends either form.
+func (p *Player) IsFormLocked() bool {
+	return p.MistForm || p.SlimeForm
+}
+
+// formActionBlockMessage returns the message to show when a player in Mist Form
+// or Slime Form attempts an action those forms block (attack, cast, speak, wear/
+// remove, use magic items, emote), or "" if neither form is active.
+func formActionBlockMessage(p *Player) string {
+	if p.MistForm {
+		return "Not while you are in mist form."
+	}
+	if p.SlimeForm {
+		return "Not while you are in slime form."
+	}
+	return ""
+}
+
+// IsSilenced reports whether the Silence spell (219) currently prevents this
+// player from speaking or casting.
+func (p *Player) IsSilenced() bool {
+	return !p.SilencedExpiry.IsZero() && time.Now().Before(p.SilencedExpiry)
+}
+
+// IsImprisoned reports whether the Imprison spell (231) currently traps this
+// player in a force bubble, preventing them from attacking or casting.
+func (p *Player) IsImprisoned() bool {
+	return !p.ImprisonedExpiry.IsZero() && time.Now().Before(p.ImprisonedExpiry)
 }
 
 // DisplayName returns the name other players should see when this player acts
@@ -656,6 +875,12 @@ func (p *Player) IsConcealed() bool {
 // custom level-10+ persona name; or their real FirstName otherwise. See
 // DisplayNameCap for sentence-initial use.
 func (p *Player) DisplayName() string {
+	if p.MistForm {
+		return "some mist"
+	}
+	if p.SlimeForm {
+		return "a slime"
+	}
 	if p.WolfForm {
 		return "a wolf"
 	}
@@ -676,6 +901,12 @@ func (p *Player) DisplayName() string {
 // LastName set) for a custom level-10+ persona; or the player's real
 // FullName() otherwise.
 func (p *Player) DisplayFullName() string {
+	if p.MistForm {
+		return "some mist"
+	}
+	if p.SlimeForm {
+		return "a slime"
+	}
 	if p.WolfForm {
 		return "a wolf"
 	}
