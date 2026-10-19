@@ -262,7 +262,7 @@ func (e *GameEngine) gmHelp() *CommandResult {
 		"@additem <archnum> [valN=x] [adjN=x] - Add item to current room",
 		"@announce <mode> <msg> - Announce (1=global 2=mindlink)",
 		"@close <item>          - Close item silently",
-		"@cyberware <plr> [add <kind> <tier> | remove <kind>] - List, install or remove a player's cyberware (arm, leg, ear, armor, telepathor, reflexor, eye; alpha-omega)",
+		"@cyberware <plr> [add <kind> <tier> | remove <kind|all>] - List, install or remove a player's cyberware (arm, leg, ear, armor, telepathor, reflexor, eye; alpha-omega)",
 		"@delete <item>         - Delete an item from the room",
 		"@dupe [#] <item>       - Duplicate an item you're carrying onto the ground",
 		"@echoplr <name> <text> - Echo text to a player",
@@ -1084,8 +1084,8 @@ func (e *GameEngine) gmChannel(ctx context.Context, player *Player, args []strin
 		text = strings.Join(args, " ")
 	}
 	return &CommandResult{
-		Messages:        []string{fmt.Sprintf("@GM You say, %s", text)},
-		GMChannelMsg:    []string{fmt.Sprintf("@GM %s says, %s", player.FirstName, text)},
+		Messages:        []string{fmt.Sprintf("@GM You SAY: %s", text)},
+		GMChannelMsg:    []string{fmt.Sprintf("@GM %s SAYS: %s", player.FirstName, text)},
 		GMChannelSender: player.FirstName,
 	}
 }

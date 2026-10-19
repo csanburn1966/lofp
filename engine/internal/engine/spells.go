@@ -709,6 +709,9 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't cast spells while dead."}}
 	}
+	if !player.IsGM && len(player.Cyberware) > 0 {
+		return &CommandResult{Messages: []string{cyberNoMagicMsg}}
+	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := time.Until(player.RoundTimeExpiry).Seconds()
 		return &CommandResult{Messages: []string{fmt.Sprintf("You are still recovering from your last action. (%.0f seconds remaining)", remaining+0.5)}}
@@ -886,6 +889,10 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't cast spells while dead."}}
+	}
+	if !player.IsGM && len(player.Cyberware) > 0 {
+		player.PreparedSpell = 0
+		return &CommandResult{Messages: []string{cyberNoMagicMsg}}
 	}
 	// Imprison (231) blocks all casting, even on yourself — that's the whole point:
 	// you can't self-dispel it. Only another caster targeting you can end it early.

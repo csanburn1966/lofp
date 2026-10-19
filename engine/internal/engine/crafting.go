@@ -3611,6 +3611,47 @@ func buildWeaveCraftAdjs(matItem InventoryItem, matDef *gameworld.ItemDef) (adj1
 	return adj1, adj2, matDef.Parameter1
 }
 
+// hideMaterialAdjs are the weaving materials (identified by their PARAMETER1
+// adjective, since every loom material is SUBSTANCE CLOTH in the data) that are
+// animal hides rather than woven fabric.
+var hideMaterialAdjs = map[string]bool{
+	"leather": true, "hide": true, "suede": true, "doeskin": true,
+	"fur": true, "skin": true, "lizardskin": true,
+}
+
+func (e *GameEngine) isHideMaterial(matDef *gameworld.ItemDef) bool {
+	return hideMaterialAdjs[strings.ToLower(e.getAdjName(matDef.Parameter1))]
+}
+
+// weaveMaterialMismatch refuses a loom material that contradicts what the item
+// is made of: HIDE-substance armor (supple leather, boiled gauntlets...) needs a
+// hide, and the cloth armor pieces (archetype adjective "cloth") need a fabric —
+// otherwise the material adjective produces "cotton supple leather". The original
+// CLOTH garments take any loom material ("leather jacket", "silk jacket"), so
+// they're left alone. Returns "" when the material is fine.
+func (e *GameEngine) weaveMaterialMismatch(craftName string, matDef *gameworld.ItemDef) string {
+	var craftDef *gameworld.ItemDef
+	for _, def := range e.items {
+		if containsFlag(def.Flags, "CRAFTABLE") && e.getItemNounName(def) == craftName {
+			if id, _, _ := craftSkillRequirement(def); id == 15 {
+				craftDef = def
+				break
+			}
+		}
+	}
+	if craftDef == nil {
+		return ""
+	}
+	matName := e.getAdjName(matDef.Parameter1)
+	if craftDef.Substance == "HIDE" && !e.isHideMaterial(matDef) {
+		return fmt.Sprintf("You can't make %s from %s; it needs a hide, such as leather, hide, suede, doeskin, fur or skin.", craftName, matName)
+	}
+	if strings.EqualFold(e.getAdjName(craftDef.Adjective), "cloth") && e.isHideMaterial(matDef) {
+		return fmt.Sprintf("You can't make %s from %s; it needs a woven fabric, such as cotton, wool, linen or silk.", craftName, matName)
+	}
+	return ""
+}
+
 // craftSkillRequirement returns which skill (and level) a CRAFTABLE item's own data
 // gates it behind. Mirrors the type/substance branching in doCraft's no-args listing
 // and craft-start validation (crafting.go, "Items you can craft" and the CRAFT <item>
@@ -3838,6 +3879,9 @@ func (e *GameEngine) doWorkWeaving(ctx context.Context, player *Player, args []s
 		idx, matItem, matDef, errMsg := e.findCraftMaterial(player, target, 15)
 		if idx < 0 {
 			return &CommandResult{Messages: []string{errMsg}}
+		}
+		if msg := e.weaveMaterialMismatch(player.CraftingItem, matDef); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
 		}
 
 		adj1, adj2, adj3 := buildWeaveCraftAdjs(matItem, matDef)

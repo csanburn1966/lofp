@@ -67,7 +67,14 @@ const (
 	ansiMagenta   = "\033[35m"
 	ansiBoldWhite = "\033[1;37m"
 	ansiBold      = "\033[1m"
+	ansiBoldMagenta = "\033[1;35m"
 )
+
+// gmChannelPrefix starts every @GM channel line; clients color those lines so
+// they stand out from game text (web client: Terminal.tsx 'gm' lines).
+const gmChannelPrefix = "@GM "
+
+func isGMChannelLine(msg string) bool { return strings.HasPrefix(msg, gmChannelPrefix) }
 
 // telnetConn implements ClientConn for raw TCP/telnet connections.
 type telnetConn struct {
@@ -149,6 +156,9 @@ func (t *telnetConn) SendResult(result *engine.CommandResult) error {
 
 // colorizeMessage applies ANSI colors and MXP markup to a message line.
 func (t *telnetConn) colorizeMessage(msg string) string {
+	if isGMChannelLine(msg) {
+		return ansiBoldMagenta + msg + ansiReset
+	}
 	// Room name lines: [Name]
 	if strings.HasPrefix(msg, "[") && strings.HasSuffix(msg, "]") {
 		return ansiBoldCyan + msg + ansiReset
@@ -191,6 +201,8 @@ func (t *telnetConn) SendBroadcast(messages []string) error {
 	for _, msg := range messages {
 		if strings.HasPrefix(msg, "**") {
 			buf.WriteString(ansiBoldWhite + msg + ansiReset + "\r\n")
+		} else if isGMChannelLine(msg) {
+			buf.WriteString(ansiBoldMagenta + msg + ansiReset + "\r\n")
 		} else {
 			buf.WriteString(msg + "\r\n")
 		}

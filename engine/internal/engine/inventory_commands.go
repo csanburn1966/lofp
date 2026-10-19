@@ -4554,6 +4554,9 @@ func applyHerbSpell(player *Player, spellNum int) string {
 		player.Perception += gain
 		return fmt.Sprintf("Your senses become keener and more attuned. [Perception +%d]", gain)
 	case 332: // Coriam Seed — Empathy
+		if len(player.Cyberware) > 0 {
+			return "You feel a faint tingle that dies against the cold metal in your body. " + cyberNoMagicMsg
+		}
 		if player.Empathy >= herbStatCap {
 			return "You feel a faint tingle, but your body has reached its natural limit with this herb."
 		}

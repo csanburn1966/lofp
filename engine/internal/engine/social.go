@@ -488,9 +488,14 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 	if !alreadyIn {
 		player.GroupMembers = append(player.GroupMembers, found.FirstName)
 	}
+	// A wolf-form Wolfling has no hand to take.
+	grip := "by the hand"
+	if found.WolfForm {
+		grip = "by the scruff of the neck"
+	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("%s takes %s by the hand.", player.DisplayName(), found.DisplayName())},
-		RoomBroadcast: []string{fmt.Sprintf("%s takes %s by the hand.", player.DisplayName(), found.DisplayName())},
+		Messages:      []string{fmt.Sprintf("You take %s %s.", found.DisplayName(), grip)},
+		RoomBroadcast: []string{fmt.Sprintf("%s takes %s %s.", player.DisplayNameCap(), found.DisplayName(), grip)},
 	}
 }
 

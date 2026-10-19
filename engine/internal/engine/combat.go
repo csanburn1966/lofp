@@ -1598,7 +1598,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		if dmg <= 0 {
 			dmg = 1
 		}
-		dtype := damageTypeForWeapon(weaponDef, e)
+		dtype := playerDamageType(player, weaponDef, e)
 		woundLevel := woundLevelFromDamage(dmg, inst.MaxHP)
 		e.addMonsterWound(inst.ID, part, dtype, woundLevel)
 		// Message construction deferred until after damageMonster below so a killing
@@ -1624,7 +1624,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			case "fire", "cold", "lightning":
 				critDtype = "burn"
 			default:
-				critDtype = damageTypeForWeapon(weaponDef, e)
+				critDtype = playerDamageType(player, weaponDef, e)
 			}
 			critLevel := woundLevelFromDamage(critDmg, inst.MaxHP)
 			e.addMonsterWound(inst.ID, critPart, critDtype, critLevel)
@@ -1851,7 +1851,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			if ohDmg <= 0 {
 				ohDmg = 1
 			}
-			ohDtype := damageTypeForWeapon(offHandDef, e)
+			ohDtype := playerDamageType(player, offHandDef, e)
 			ohWoundLevel := woundLevelFromDamage(ohDmg, inst.MaxHP)
 			e.addMonsterWound(inst.ID, ohPart, ohDtype, ohWoundLevel)
 			// Message construction deferred until after damageMonster below — see the
@@ -1875,7 +1875,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 				case "fire", "cold", "lightning":
 					ohCritDtype = "burn"
 				default:
-					ohCritDtype = damageTypeForWeapon(offHandDef, e)
+					ohCritDtype = playerDamageType(player, offHandDef, e)
 				}
 				ohCritLevel := woundLevelFromDamage(ohCritDmg, inst.MaxHP)
 				e.addMonsterWound(inst.ID, ohCritPart, ohCritDtype, ohCritLevel)

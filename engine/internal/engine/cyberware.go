@@ -174,6 +174,11 @@ func (p *Player) hasTelepathor() bool { return p.cyberTier(cyberTelepathor) > 0 
 // timed effect (Ephemerals, a Telepathor). Mindlink's expiry and Dispel leave it alone.
 func (p *Player) hasInnateTelepathy() bool { return p.IsEphemeral() || p.hasTelepathor() }
 
+// cyberNoMagicMsg is why an implanted character can't cast (legends/bugs.txt:
+// "spells being inactive upon purchase of cyberware") or grow Empathy back with
+// Coriam Seeds. Removing every implant (@cyberware <player> remove all) lifts both.
+const cyberNoMagicMsg = "The cybernetics in your body leave you deaf to the flow of mana."
+
 // cyberArmorBlocks reports whether Cyberplate Armor rules out wearing def. The
 // plating covers chest, back, shoulders, torso, arms and legs; head, hands and
 // feet stay free for helms, gloves, gauntlets and boots. Body armor and bracers
@@ -239,6 +244,7 @@ func (e *GameEngine) installCyberware(p *Player, k *cyberKindDef, tier int) []st
 		}
 	}
 	p.Cyberware = append(p.Cyberware, applyCyberStats(p, k, tier))
+	p.PreparedSpell = 0
 	sort.Slice(p.Cyberware, func(a, b int) bool {
 		return cyberKindByName(p.Cyberware[a].Kind).archetype < cyberKindByName(p.Cyberware[b].Kind).archetype
 	})
@@ -394,7 +400,7 @@ func (e *GameEngine) migrateCyberwareItems(p *Player) bool {
 //	@cyberware <player> add <kind> <tier>        install (tier: alpha..omega or 1-4)
 //	@cyberware <player> remove <kind>            take one out, undoing its stats
 func (e *GameEngine) gmCyberware(ctx context.Context, args []string) *CommandResult {
-	usage := "Usage: @cyberware <player> [add <arm|leg|ear|armor|telepathor|reflexor|eye> <alpha|beta|gamma|omega> | remove <kind>]"
+	usage := "Usage: @cyberware <player> [add <arm|leg|ear|armor|telepathor|reflexor|eye> <alpha|beta|gamma|omega> | remove <kind|all>]"
 	if len(args) < 1 {
 		return &CommandResult{Messages: []string{usage}}
 	}
@@ -411,6 +417,19 @@ func (e *GameEngine) gmCyberware(ctx context.Context, args []string) *CommandRes
 	}
 	if len(args) < 3 {
 		return &CommandResult{Messages: []string{usage}}
+	}
+	if verb := strings.ToLower(args[1]); (verb == "remove" || verb == "rem" || verb == "del") && strings.EqualFold(args[2], "all") {
+		if len(target.Cyberware) == 0 {
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s has no cyberware.", target.FullName())}}
+		}
+		for len(target.Cyberware) > 0 {
+			e.removeCyberware(target, target.Cyberware[0].Kind)
+		}
+		e.SavePlayer(ctx, target)
+		if e.sendToPlayer != nil {
+			e.sendToPlayer(target.FirstName, []string{"The last of the cold metal is gone from your body, and you feel the flow of mana around you once more."})
+		}
+		return &CommandResult{Messages: []string{fmt.Sprintf("Removed all of %s's cyberware; Empathy and Mana restored and spellcasting allowed again.", target.FullName())}}
 	}
 	k := cyberKindByName(strings.ToLower(args[2]))
 	if k == nil {

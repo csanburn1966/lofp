@@ -47,6 +47,9 @@ func (s *sshConn) SendResult(result *engine.CommandResult) error {
 		}
 	}
 	for _, msg := range result.Messages {
+		if isGMChannelLine(msg) {
+			msg = ansiBoldMagenta + msg + ansiReset
+		}
 		buf.WriteString(msg + "\r\n")
 	}
 	if result.Error != "" {
@@ -64,6 +67,8 @@ func (s *sshConn) SendBroadcast(messages []string) error {
 	for _, msg := range messages {
 		if strings.HasPrefix(msg, "**") {
 			buf.WriteString(ansiBoldWhite + msg + ansiReset + "\r\n")
+		} else if isGMChannelLine(msg) {
+			buf.WriteString(ansiBoldMagenta + msg + ansiReset + "\r\n")
 		} else {
 			buf.WriteString(msg + "\r\n")
 		}

@@ -238,6 +238,17 @@ func damageTypeForWeapon(weaponDef *gameworld.ItemDef, e *GameEngine) string {
 	}
 }
 
+// playerDamageType is damageTypeForWeapon for a player's own attack. A nil
+// weaponDef there means bare-handed: fists crush (no bleeding), while wolf-form
+// claws slash. damageTypeForWeapon's nil default of "slash" stays for monsters,
+// whose weaponless attacks are natural bites and claws.
+func playerDamageType(player *Player, weaponDef *gameworld.ItemDef, e *GameEngine) string {
+	if weaponDef == nil && !player.WolfForm {
+		return "crush"
+	}
+	return damageTypeForWeapon(weaponDef, e)
+}
+
 // damageTypeForSpecAttack maps a monster's SpecDmgType (stored uppercase by
 // the script parser: HEAT, COLD, ELECTRIC, SLASH, CRUSH) to a wound damage
 // type. Heat/cold/electric are all described as burns per design.

@@ -1549,7 +1549,7 @@ func (e *GameEngine) doSkin(ctx context.Context, player *Player, args []string) 
 		if !player.IsGM && rand.Intn(100) >= skinSuccessChance(sage, wood)+unemoteSkillBonus(player) {
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("You fail to skin %s%s, ruining it.", article, displayName)},
-				RoomBroadcast: []string{fmt.Sprintf("%s fails to skin %s%s.", player.FirstName, article, displayName)},
+				RoomBroadcast: []string{fmt.Sprintf("%s fails to skin %s%s.", player.DisplayNameCap(), article, displayName)},
 			}
 		}
 
@@ -1612,7 +1612,7 @@ func (e *GameEngine) doSkin(ctx context.Context, player *Player, args []string) 
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      skinMsgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s skins %s%s.", player.FirstName, articleFor(displayName, def.Unique), displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s skins %s%s.", player.DisplayNameCap(), articleFor(displayName, def.Unique), displayName)},
 		}
 	}
 

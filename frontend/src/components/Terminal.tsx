@@ -55,7 +55,7 @@ const isTouchDevice = () => typeof window !== 'undefined' && ('ontouchstart' in 
 
 export default function Terminal({ character, onQuit, wsRefOut, onCaptureStatus }: Props) {
   const { user } = useContext(AuthContext)
-  const [lines, setLines] = useState<Array<{ text: string; type: 'output' | 'input' | 'system' | 'room' | 'item' | 'error' | 'broadcast' }>>([])
+  const [lines, setLines] = useState<Array<{ text: string; type: 'output' | 'input' | 'system' | 'room' | 'item' | 'error' | 'broadcast' | 'gm' }>>([])
   const [input, setInput] = useState('')
   const [connected, setConnected] = useState(false)
   const [playerState, setPlayerState] = useState<PlayerState | null>(null)
@@ -67,7 +67,7 @@ export default function Terminal({ character, onQuit, wsRefOut, onCaptureStatus 
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const addLines = useCallback((msgs: string[], type: 'output' | 'system' | 'room' | 'item' | 'error' | 'broadcast' = 'output') => {
+  const addLines = useCallback((msgs: string[], type: 'output' | 'system' | 'room' | 'item' | 'error' | 'broadcast' | 'gm' = 'output') => {
     setLines(prev => [...prev, ...msgs.map(text => ({ text, type }))])
   }, [])
 
@@ -98,7 +98,8 @@ export default function Terminal({ character, onQuit, wsRefOut, onCaptureStatus 
           if (result.error) addLines([result.error], 'error')
           if (result.messages) {
             result.messages.forEach(m => {
-              if (m.startsWith('[') && m.endsWith(']')) addLines([m], 'room')
+              if (m.startsWith('@GM ')) addLines([m], 'gm')
+              else if (m.startsWith('[') && m.endsWith(']')) addLines([m], 'room')
               else if (m.startsWith('You see ')) addLines([m], 'item')
               else if (m.startsWith('Obvious exits:')) addLines([m], 'system')
               else addLines([m], 'output')
@@ -116,7 +117,7 @@ export default function Terminal({ character, onQuit, wsRefOut, onCaptureStatus 
         } else if (msg.type === 'broadcast') {
           const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data
           if (data.messages) {
-            data.messages.forEach((m: string) => addLines([m], 'broadcast'))
+            data.messages.forEach((m: string) => addLines([m], m.startsWith('@GM ') ? 'gm' : 'broadcast'))
           }
         } else if (msg.type === 'capture_status') {
           const data = typeof msg.data === 'string' ? JSON.parse(msg.data) : msg.data
@@ -218,6 +219,7 @@ export default function Terminal({ character, onQuit, wsRefOut, onCaptureStatus 
     item: 'text-green-400',
     error: 'text-red-400',
     broadcast: 'text-sky-300',
+    gm: 'text-fuchsia-400 font-semibold',
   }
 
   return (

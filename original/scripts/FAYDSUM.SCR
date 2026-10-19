@@ -582,7 +582,7 @@ NAME Broadway
 MONSTER_GROUP 1
 CALL 33
 *DESCRIPTION_START
-Broadway goes past a rubble pile to the south. You gaze over the rubble at the Poor Quarter, whose hovels and ruined buildings emanate despair.
+Broadway goes past a rubble pile to the south. You gaze over the rubble at the Poor Quarter, whose hovels and ruined buildings emanate despair. Beyond a row of wooden bins to the southeast, enormous heaps of refuse loom over the rooftops, and a plume of black smoke rises from them.
 *DESCRIPTION_END
 OUTDOOR_OTHER
 FIXED_LIGHT
@@ -590,6 +590,7 @@ ITEM 9 693 ADJ1=10
 
 EXIT NE 228
 EXIT W 230
+EXIT SE 945
 ITEM 0 213 VAL2=283
 ITEM 1 1416 ADJ1=355
 EXIT ABOVE 2152
