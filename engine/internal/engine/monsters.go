@@ -1159,6 +1159,11 @@ func (e *GameEngine) monsterTick(tick int) {
 							continue
 						}
 						delete(inst.PendingAggro, p.FirstName)
+						// A summoned creature on COMMAND GUARD steps in: the monster
+						// engages it rather than the player.
+						if e.blockAdvanceWithSummonedGuard(inst, def, p) {
+							break
+						}
 						inst.Target = p.FirstName
 						// "A stone ogre advances towards Wolfbane." — the monster's own
 						// version of the player ADVANCE command's room broadcast (see

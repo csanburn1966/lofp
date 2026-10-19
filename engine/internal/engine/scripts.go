@@ -322,7 +322,24 @@ func verbsMatch(a, b string) bool {
 		return true
 	}
 	isLookOrExamine := func(v string) bool { return v == "LOOK" || v == "EXAMINE" }
-	return isLookOrExamine(a) && isLookOrExamine(b)
+	if isLookOrExamine(a) && isLookOrExamine(b) {
+		return true
+	}
+	// Directions: scripts write both IFPREVERB D -1 and IFPREVERB DOWN -1.
+	da, okA := scriptDirections[a]
+	db, okB := scriptDirections[b]
+	return okA && okB && da == db
+}
+
+// scriptDirections maps every spelling of a direction verb to its short form,
+// for verbsMatch.
+var scriptDirections = map[string]string{
+	"N": "N", "NORTH": "N", "S": "S", "SOUTH": "S",
+	"E": "E", "EAST": "E", "W": "W", "WEST": "W",
+	"NE": "NE", "NORTHEAST": "NE", "NW": "NW", "NORTHWEST": "NW",
+	"SE": "SE", "SOUTHEAST": "SE", "SW": "SW", "SOUTHWEST": "SW",
+	"U": "U", "UP": "U", "D": "D", "DOWN": "D",
+	"O": "O", "OUT": "O",
 }
 
 // RunVerbScripts executes IFVERB blocks for a specific verb and item.

@@ -2138,6 +2138,94 @@ func (e *GameEngine) elementalGuardIntercept(attackerInst *MonsterInstance, atta
 	return true, []string{attackLine, hitLine}, ""
 }
 
+// monsterIsRanged reports whether a monster attacks with a missile weapon.
+// Ranged attacks go past summoned guards (see elementalGuardIntercept).
+func (e *GameEngine) monsterIsRanged(def *gameworld.MonsterDef) bool {
+	for _, w := range def.Weapons {
+		if itemDef := e.items[w.Archetype]; itemDef != nil {
+			t := itemDef.Type
+			if t == "BOW_WEAPON" || t == "HANDGUN" || t == "RIFLE" || t == "THROWN_WEAPON" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// summonedGuardFor returns a living summoned creature in player's room that is
+// guarding player (COMMAND GUARD), skipping exceptID, or nil. Caller holds monsterMgr.mu.
+func (e *GameEngine) summonedGuardFor(player *Player, exceptID int) *MonsterInstance {
+	for i := range e.monsterMgr.instances {
+		g := &e.monsterMgr.instances[i]
+		if g.ID != exceptID && g.IsSummoned && g.Alive && g.RoomNumber == player.RoomNumber &&
+			containsString(g.GuardingPlayers, player.FirstName) && e.monsters[g.DefNumber] != nil {
+			return g
+		}
+	}
+	return nil
+}
+
+// engageSummonedGuard points hostile inst at guard instead of the player it
+// was after — a monster-vs-monster fight (summonedAttackMonster), so the
+// player is not engaged in melee — and the guard fights back if it was idle.
+// Caller holds monsterMgr.mu.
+func (e *GameEngine) engageSummonedGuard(inst, guard *MonsterInstance) {
+	inst.Target = ""
+	inst.MonsterTargetID = guard.ID
+	if guard.Target == "" && guard.MonsterTargetID == 0 {
+		guard.MonsterTargetID = inst.ID
+	}
+}
+
+// blockAdvanceWithSummonedGuard handles a hostile about to advance on player
+// while a summoned creature guards them: the guard steps in, the hostile
+// engages the guard instead (engageSummonedGuard), and the room is told.
+// Returns false if there is no guard to block (or the hostile is ranged).
+// Caller holds monsterMgr.mu.
+func (e *GameEngine) blockAdvanceWithSummonedGuard(inst *MonsterInstance, def *gameworld.MonsterDef, player *Player) bool {
+	if e.monsterIsRanged(def) {
+		return false
+	}
+	g := e.summonedGuardFor(player, inst.ID)
+	if g == nil {
+		return false
+	}
+	e.engageSummonedGuard(inst, g)
+	gDef := e.monsters[g.DefNumber]
+	gName := strings.ToLower(FormatMonsterName(gDef, e.monAdjs))
+	gArt := articleFor(gName, gDef.Unique)
+	name := FormatMonsterName(def, e.monAdjs)
+	article := capArticle(articleFor(name, def.Unique))
+	if e.sendToPlayer != nil {
+		e.sendToPlayer(player.FirstName, []string{fmt.Sprintf("%s%s advances towards you, but %s%s blocks its way!", article, name, gArt, gName)})
+	}
+	e.broadcastCombatRoom(inst.RoomNumber, player, []string{fmt.Sprintf("%s%s advances towards %s, but %s%s blocks its way!", article, name, player.DisplayName(), gArt, gName)})
+	return true
+}
+
+// shockSummoner stuns the player whose summoned creature was just destroyed.
+func (e *GameEngine) shockSummoner(name string) {
+	if e.sessions == nil {
+		return
+	}
+	for _, p := range e.sessions.OnlinePlayers() {
+		if p.FirstName == name {
+			stunSecs := 2 + rand.Intn(4)
+			p.RoundTimeExpiry = time.Now().Add(time.Duration(stunSecs) * time.Second)
+			// A real stun, not just round time — ADVANCE/RETREAT/FLEE
+			// gate on Stunned, not RoundTimeExpiry.
+			p.Stunned = true
+			p.StunExpiry = p.RoundTimeExpiry
+			p.SummonedCreatureID = 0
+			e.setWatching(name, 0)
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(name, []string{"The loss of your summoned creature sends a wave of psychic shock through you!"})
+			}
+			return
+		}
+	}
+}
+
 // ---- Monster attacks Player ----
 
 // monsterAttackPlayer resolves a monster's attack against player. The returned
@@ -2167,40 +2255,26 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 
 	// Summoned elemental guard: intercept melee attacks on the guarded player.
 	// Ranged attacks bypass the guard.
-	if e.monsterMgr != nil {
-		isRanged := false
-		for _, w := range def.Weapons {
-			if itemDef := e.items[w.Archetype]; itemDef != nil {
-				t := itemDef.Type
-				if t == "BOW_WEAPON" || t == "HANDGUN" || t == "RIFLE" || t == "THROWN_WEAPON" {
-					isRanged = true
-					break
-				}
+	if e.monsterMgr != nil && !e.monsterIsRanged(def) {
+		// A monster already locked onto the player (it closed in before the guard
+		// order, say) turns to fight the guard: from here on it's engaged with the
+		// creature, not the player, so the player isn't held in melee by it.
+		e.monsterMgr.mu.Lock()
+		if inst.Target == player.FirstName {
+			if g := e.summonedGuardFor(player, inst.ID); g != nil {
+				e.engageSummonedGuard(inst, g)
+				gName := strings.ToLower(FormatMonsterName(e.monsters[g.DefNumber], e.monAdjs))
+				aName := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+				roomMsgs = append(roomMsgs, fmt.Sprintf("%s%s turns to face %s%s.", capArticle(articleFor(aName, def.Unique)), aName, articleFor(gName, e.monsters[g.DefNumber].Unique), gName))
 			}
 		}
-		if !isRanged {
-			if intercepted, iMsgs, summonerStun := e.elementalGuardIntercept(inst, def, player); intercepted {
-				roomMsgs = append(roomMsgs, iMsgs...)
-				if summonerStun != "" && e.sessions != nil {
-					for _, p := range e.sessions.OnlinePlayers() {
-						if p.FirstName == summonerStun {
-							stunSecs := 2 + rand.Intn(4)
-							p.RoundTimeExpiry = time.Now().Add(time.Duration(stunSecs) * time.Second)
-							// A real stun, not just round time — ADVANCE/RETREAT/FLEE
-							// gate on Stunned, not RoundTimeExpiry.
-							p.Stunned = true
-							p.StunExpiry = p.RoundTimeExpiry
-							p.SummonedCreatureID = 0
-							e.setWatching(summonerStun, 0)
-							if e.sendToPlayer != nil {
-								e.sendToPlayer(summonerStun, []string{"The loss of your summoned creature sends a wave of psychic shock through you!"})
-							}
-							break
-						}
-					}
-				}
-				return playerMsgs, roomMsgs, nil
+		e.monsterMgr.mu.Unlock()
+		if intercepted, iMsgs, summonerStun := e.elementalGuardIntercept(inst, def, player); intercepted {
+			roomMsgs = append(roomMsgs, iMsgs...)
+			if summonerStun != "" {
+				e.shockSummoner(summonerStun)
 			}
+			return playerMsgs, roomMsgs, nil
 		}
 	}
 
@@ -4078,6 +4152,7 @@ func (e *GameEngine) summonedAttackMonster(inst *MonsterInstance, def *gameworld
 	roll := rand.Intn(100) + 1
 
 	var msgs []string
+	shockName := ""
 	if roll < toHit {
 		msgs = []string{attackLine, fmt.Sprintf("[ToHit: %d, Roll: %d] Miss!", toHit, roll)}
 	} else {
@@ -4111,6 +4186,13 @@ func (e *GameEngine) summonedAttackMonster(inst *MonsterInstance, def *gameworld
 				target.Alive = false
 				target.DeathTime = time.Now()
 				inst.MonsterTargetID = 0
+				// A summoned guard killed by the hostile it was holding off
+				// (engageSummonedGuard) shocks its summoner, same as when it
+				// dies intercepting a blow (elementalGuardIntercept).
+				if target.IsSummoned && target.SummonerName != "" {
+					target.GuardingPlayers = nil
+					shockName = target.SummonerName
+				}
 				texD := targetDef.TextOverrides["TEXD"]
 				suffix := " It is destroyed!"
 				if texD != "" {
@@ -4147,6 +4229,11 @@ func (e *GameEngine) summonedAttackMonster(inst *MonsterInstance, def *gameworld
 		roomNum := inst.RoomNumber
 		e.monsterMgr.mu.Unlock()
 		e.localRoomBroadcast(roomNum, msgs)
+		e.monsterMgr.mu.Lock()
+	}
+	if shockName != "" {
+		e.monsterMgr.mu.Unlock()
+		e.shockSummoner(shockName)
 		e.monsterMgr.mu.Lock()
 	}
 }
@@ -4510,17 +4597,21 @@ func (e *GameEngine) monsterCheckAggro(player *Player, roomNum int) {
 
 	for i := range e.monsterMgr.instances {
 		inst := &e.monsterMgr.instances[i]
-		if inst.RoomNumber != roomNum || !inst.Alive || inst.Sedated || inst.Target != "" || inst.IsSummoned {
+		if inst.RoomNumber != roomNum || !inst.Alive || inst.Sedated || inst.Target != "" || inst.MonsterTargetID > 0 || inst.IsSummoned {
 			continue
 		}
 		def := e.monsters[inst.DefNumber]
 		if def == nil || def.Strategy < 301 || def.Guardian {
 			continue
 		}
-		inst.Target = player.FirstName
 		if containsInt(player.AdvancedOnMonsters, inst.ID) {
+			inst.Target = player.FirstName
 			break // player already closed to melee with it — nothing to announce
 		}
+		if e.blockAdvanceWithSummonedGuard(inst, def, player) {
+			break
+		}
+		inst.Target = player.FirstName
 		name := FormatMonsterName(def, e.monAdjs)
 		article := capArticle(articleFor(name, def.Unique))
 		// Same "advances towards" wording as monsters.go's periodic hostile-aggro

@@ -48,7 +48,6 @@ IFVERB FLIP 2
 	IFVAR ORG = 40
 		ECHO PLAYER You activate the security device.
 		ECHO OTHERS %N activates the contraption.
-		GMMSG %N needs NSHADES.SCR compiled at this time.
 		SPELL 406 100
 		SPELL 405 100
 	ENDIF
@@ -67,7 +66,6 @@ PUT 1 550 VAL2=409
 IFSAY open
 	IFVAR intnum55 = 4
 		NEWITEM 9 72 VAL2=197
-    GMMSG %N needs NSHADES.SCR compiled at this time.
 		ECHO ALL An opening shimmers into view.
 	ENDIF
 ENDIF

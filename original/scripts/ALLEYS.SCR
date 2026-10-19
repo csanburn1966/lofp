@@ -2382,7 +2382,8 @@ and murg laborers are using pitchforks to sort through the refuse.  Those
 items which can burn are being pushed down into a shallow depression; a thick
 plume of black smoke rises from a sooty bonfire constantly being stoked and
 tended.  An apprentice mage is sitting in one corner, picking out several
-orbs and wands that have been discarded around town.
+orbs and wands that have been discarded around town.  Between two of the
+bins, the narrow mouth of a chute slopes down into darkness.
 *DESCRIPTION_END
 OUTDOOR_OTHER
 FIXED_LIGHT
@@ -2421,7 +2422,7 @@ IFPREVERB GO 5
   CLEARVERB
   ECHO PLAYER You might be able to slide down.
 ENDIF
-IFPREVERB D -1
+IFPREVERB DOWN -1
   CLEARVERB
   IFVAR SITTING = 1
     DISBAND

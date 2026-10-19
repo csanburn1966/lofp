@@ -137,7 +137,7 @@ ENDIF
 IFVERB GO 9
 	ECHO PLAYER As you step into the passage it closes behind you.
 	ECHO OTHERS As %n steps into the passage, it closes behind %i.
-	REMOVEITEM 5
+	REMOVEITEM 9
 	MOVE 194
 	AFFECT 194
 	ECHO OTHERS %N arrives.
@@ -169,25 +169,25 @@ IFVERB pull 5
 	ECHO PLAYER You see a staircase underneath the rug!
 ENDIF
 IFVERB TURN 2
-	IFITEM 5
+	IFITEM 7
 		ECHO ALL The hole closes leaving no trace.
 		EQUAL TWISTER 0
-		REMOVEITEM 5
+		REMOVEITEM 7
 	ENDIF
 ENDIF
 IFVERB TURN 2
 	IFITEM 2 CLOSED
 		ADD TWISTER 1
 		IFVAR TWISTER = 3
-			NEWITEM 5 336
+			NEWITEM 7 336
 			ECHO ALL You hear a grinding noise and a hole opens behind the chair.
 		ENDIF
 	ENDIF
 ENDIF
-IFVERB GO 5
+IFVERB GO 7
 	ECHO PLAYER As you step into the hole it closes behind you.
 	ECHO OTHERS As %n steps into the hole, the wall closes behind %h.
-	REMOVEITEM 5
+	REMOVEITEM 7
 	MOVE 198
 	AFFECT 198
 	ECHO OTHERS %N arrives.
@@ -196,8 +196,8 @@ IFVERB GO 5
 ENDIF
 IFENTRY
 	EQUAL TWISTER 0
-	IFITEM 5
-		REMOVEITEM 5
+	IFITEM 7
+		REMOVEITEM 7
 		ECHO OTHGROUP The hole closes leaving no trace for %n to see.
 	ENDIF
 ENDIF

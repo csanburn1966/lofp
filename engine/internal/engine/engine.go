@@ -907,7 +907,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			sc := &ScriptContext{Player: player, Room: room, Engine: e, activeVerb: canonicalVerb, activeRef: "-1"}
 			for _, block := range room.Scripts {
 				if block.Type == "IFPREVERB" && len(block.Args) >= 2 {
-					if strings.ToUpper(block.Args[0]) == canonicalVerb && block.Args[1] == "-1" {
+					// Scripts name directions either way — IFPREVERB DOWN -1 or
+					// IFPREVERB D -1 (38 short-form blocks, e.g. the Mullock Heaps
+					// chute) — so match on the direction, not the spelling.
+					if verbsMatch(strings.ToUpper(block.Args[0]), canonicalVerb) && block.Args[1] == "-1" {
 						sc.execBlock(block)
 					}
 				}

@@ -793,7 +793,6 @@ IFVERB KNOCK 0
 ENDIF
 IFVERB KNOCK 0
 	ADD TAPPING 1
-	GMMSG %N needs NSHADES.SCR compiled at this time.
 	IFVAR TAPPING = 3
 		ECHO OTHERS As %n knocks the wall for a third time, a section of shelves swings open to reveal a passage!
 		ECHO PLAYER As you knock the wall for a third time, a section of shelves swings open to reveal a passage!
@@ -812,8 +811,6 @@ IFITEM 5
   	AFFECT 194
 	  CLEARVERB
 	ENDIF
-ELSE
-	GMMSG %N needs NSHADES.SCR compiled at this time.
 ENDIF
 ;
 NUMBER 195
