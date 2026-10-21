@@ -218,6 +218,7 @@ func (e *GameEngine) ApplyParsedData(parsed *gameworld.ParsedData) ScriptApplySt
 	for i := range parsed.MonsterAdjs {
 		e.monAdjs[parsed.MonsterAdjs[i].ID] = parsed.MonsterAdjs[i].Name
 	}
+	e.recordVocabSources(parsed)
 	for i := range parsed.BreakMods {
 		e.breakMods[parsed.BreakMods[i].AdjID] = parsed.BreakMods[i].Modifier
 	}

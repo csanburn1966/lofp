@@ -116,7 +116,7 @@ type MonsterInstance struct {
 	// Summoned creature fields (transient)
 	SummonerName    string    `json:"-"` // name of the player who summoned this creature
 	IsSummoned      bool      `json:"-"` // true if summoned, not a regular world spawn
-	IsFamiliar      bool      `json:"-"` // true if a familiar (cat/raven/bird/viper) — can WATCH WILL
+	IsFamiliar      bool      `json:"-"` // true if a familiar (cat/raven/bird/viper) — can WATCH
 	WatchMode       bool      `json:"-"` // familiar is watching a room and forwarding events to summoner
 	FollowTarget    string    `json:"-"` // name of player this creature follows when they move; "" = not following
 	GuardingPlayers []string  `json:"-"` // names of players being guarded (for COMMAND GUARD)

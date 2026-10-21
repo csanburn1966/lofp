@@ -21,14 +21,17 @@ interface NumberConflict {
   others: string[]
 }
 
+type Kind = 'room' | 'item' | 'monster' | 'adjective' | 'monadj' | 'noun'
+
 interface KindRanges {
-  kind: 'room' | 'item' | 'monster'
+  kind: Kind
   count: number
   min: number
   max: number
   blocks: NumberBlock[]
   gaps: NumberGap[]
   conflicts?: NumberConflict[]
+  names?: Record<string, string> // vocabulary kinds only: number -> word
 }
 
 interface Report {
@@ -39,7 +42,7 @@ interface Report {
 // Advisory only — the server never enforces these, so GMs can still share numbers.
 interface Reservation {
   id: string
-  kind: KindRanges['kind']
+  kind: Kind
   start: number
   end: number
   gm: string
@@ -63,7 +66,14 @@ interface Props {
   characterName: string
 }
 
-const KIND_LABEL: Record<KindRanges['kind'], string> = { room: 'Rooms', item: 'Items', monster: 'Monsters' }
+const KINDS: Kind[] = ['room', 'item', 'monster', 'adjective', 'monadj', 'noun']
+const KIND_LABEL: Record<Kind, string> = {
+  room: 'Rooms', item: 'Items', monster: 'Monsters',
+  adjective: 'Adjectives', monadj: 'Monster Adjectives', noun: 'Nouns',
+}
+// The script directive that defines each vocabulary kind.
+const VOCAB_DIRECTIVE: Partial<Record<Kind, string>> = { adjective: 'ADJDEF', monadj: 'MADJDEF', noun: 'NOUNDEF' }
+const WORD_LIMIT = 500
 const BUCKET = 100
 
 const rangeText = (a: number, b: number) => (a === b ? `${a}` : `${a}–${b}`)
@@ -99,7 +109,8 @@ export default function GMNumberRanges({ authHeaders, characterName }: Props) {
   const [report, setReport] = useState<Report | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const [kind, setKind] = useState<KindRanges['kind']>('room')
+  const [kind, setKind] = useState<Kind>('room')
+  const [wordFilter, setWordFilter] = useState('')
   const [wantSize, setWantSize] = useState(100)
   const [floor, setFloor] = useState(0)
   const [minGap, setMinGap] = useState(10)
@@ -186,6 +197,19 @@ export default function GMNumberRanges({ authHeaders, characterName }: Props) {
 
   const data = report?.kinds.find(k => k.kind === kind)
 
+  // Vocabulary kinds: every number with its word and defining file, filtered by
+  // number (exact) or word (substring).
+  const words = useMemo(() => {
+    if (!data?.names) return []
+    const sourceOf = (n: number) => data.blocks.find(b => b.start <= n && n <= b.end)?.source || ''
+    const q = wordFilter.trim().toLowerCase()
+    return Object.entries(data.names)
+      .map(([n, word]) => ({ n: Number(n), word }))
+      .filter(w => !q || String(w.n) === q || w.word.toLowerCase().includes(q))
+      .sort((a, b) => a.n - b.n)
+      .map(w => ({ ...w, source: sourceOf(w.n) }))
+  }, [data, wordFilter])
+
   // Used count per 100-number bucket, for the occupancy strip.
   const buckets = useMemo(() => {
     if (!data || data.count === 0) return []
@@ -249,7 +273,7 @@ export default function GMNumberRanges({ authHeaders, characterName }: Props) {
     <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-5">
       {/* Kind selector */}
       <div className="flex flex-wrap items-center gap-2">
-        {(['room', 'item', 'monster'] as const).map(k => {
+        {KINDS.map(k => {
           const kd = report?.kinds.find(x => x.kind === k)
           return (
             <button
@@ -281,8 +305,37 @@ export default function GMNumberRanges({ authHeaders, characterName }: Props) {
               Counts include the live world and {report!.drafts.length} draft GM script{report!.drafts.length === 1 ? '' : 's'}
               {report!.drafts.length > 0 ? ` (${report!.drafts.join(', ')})` : ''}.
               {kind === 'item' && ' ANTI.SCR placeholder items count as free.'}
+              {VOCAB_DIRECTIVE[kind] && ` Defined with ${VOCAB_DIRECTIVE[kind]} <number> <word>.`}
             </div>
           </div>
+
+          {/* Word list (vocabulary kinds) */}
+          {data.names && (
+            <div>
+              <div className="flex flex-wrap items-center gap-3 mb-2">
+                <div className="text-amber-400 font-bold">{KIND_LABEL[kind]}</div>
+                <input
+                  value={wordFilter}
+                  onChange={e => setWordFilter(e.target.value)}
+                  placeholder="search word or number"
+                  className="bg-[#0a0a0a] border border-[#333] rounded px-2 py-1 text-gray-200 text-sm w-48"
+                />
+                <span className="text-gray-600 text-xs">
+                  {words.length > WORD_LIMIT ? `first ${WORD_LIMIT} of ${words.length}` : `${words.length}`} shown
+                </span>
+              </div>
+              <div className="border border-[#333] rounded max-h-96 overflow-y-auto">
+                {words.slice(0, WORD_LIMIT).map(w => (
+                  <div key={w.n} className="flex flex-wrap items-center gap-x-3 px-3 py-1 border-b border-[#222] text-sm">
+                    <span className="text-gray-400 w-16 shrink-0 text-right">{w.n}</span>
+                    <span className="text-gray-200">{w.word}</span>
+                    <span className="text-gray-600 text-xs ml-auto truncate">{w.source}</span>
+                  </div>
+                ))}
+                {words.length === 0 && <div className="px-3 py-2 text-gray-600">No matching {KIND_LABEL[kind].toLowerCase()}</div>}
+              </div>
+            </div>
+          )}
 
           {/* Conflicts */}
           {data.conflicts && data.conflicts.length > 0 && (

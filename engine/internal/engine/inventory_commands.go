@@ -2384,7 +2384,10 @@ func (e *GameEngine) doEat(ctx context.Context, player *Player, args []string) *
 			var extraRoomMsgs []string
 			if spellNum == 403 { // Mindlink — each bite refreshes the 1-hour window
 				player.TelepathyActive = true
-				player.TelepathyExpiry = time.Now().Add(1 * time.Hour)
+				// Never shortens a longer window stacked up by recasting the spell (applyMindlink).
+				if exp := time.Now().Add(1 * time.Hour); exp.After(player.TelepathyExpiry) {
+					player.TelepathyExpiry = exp
+				}
 				msgs = append(msgs, "You feel your mind open to the thoughts of others.")
 			} else if msg := applyHerbSpell(player, spellNum); msg != "" {
 				msgs = append(msgs, msg)
@@ -2692,28 +2695,58 @@ func (e *GameEngine) computeSellValue(itemDef *gameworld.ItemDef, ii *InventoryI
 		}
 		return sellValue
 	}
+	sellValue := e.itemWorth(itemDef, ii.Adj3, ii.Val1, ii.Val2, ii.CraftedValue) / 2
+	if sellValue < 1 {
+		sellValue = 1
+	}
+	return sellValue
+}
+
+// itemWorth is an item's full (pre-halving) copper value — what SELL halves and
+// what the ITEMWORTH script variable reports, so a GM buy-back script (e.g. the
+// room 9006 weavers' cabinet in witchystuff.scr) prices an item the same way a
+// shop would, whether it was crafted, foraged, found by SEARCH, or made by a
+// script's NEWITEM. A negative CraftedValue is a "no resale value" stamp (e.g.
+// the cabinet's NEWPUT CRAFTEDVALUE=-1 on what it has already bought) and makes
+// the worth 0. Unlike computeSellValue, this never writes a rolled gem value back.
+func (e *GameEngine) itemWorth(itemDef *gameworld.ItemDef, adj3, val1, val2, craftedValue int) int {
+	if craftedValue < 0 {
+		return 0
+	}
+	if itemDef == nil {
+		if craftedValue > 0 {
+			return craftedValue
+		}
+		return max(val1, 0)
+	}
+	if base, ok := gemArchetypeSellBase[itemDef.Number]; ok {
+		if val1 > 0 {
+			return val1
+		}
+		qualMult := 1.0
+		if val2 > 0 {
+			qualMult = float64(val2) / 100.0
+		}
+		return max(int(float64(base)*qualMult), 1)
+	}
 	// CraftedValue (completeCraft) takes priority over Val1 — some craftable
 	// items' own scripts repurpose Val1 for unrelated per-instance state (e.g.
 	// item 968's harp uses ITEMVAL1 as its current tune), so their fair sell
 	// value is tracked separately rather than fighting over the same field. See
 	// InventoryItem.CraftedValue's doc comment.
-	sellValue := ii.CraftedValue
-	if sellValue <= 0 {
-		sellValue = ii.Val1
+	worth := craftedValue
+	if worth <= 0 {
+		worth = val1
 	}
-	if sellValue <= 0 {
+	if worth <= 0 {
 		// Foraged items picked up before doForageReal stamped CraftedValue (and
 		// store-bought non-MATERIAL herbs, which doBuy doesn't stamp).
-		sellValue = e.forageItemValue(itemDef.Number, ii.Adj3)
+		worth = e.forageItemValue(itemDef.Number, adj3)
 	}
-	if sellValue <= 0 {
-		sellValue = itemDef.Weight + 1
+	if worth <= 0 {
+		worth = itemDef.Weight + 1
 	}
-	sellValue = sellValue / 2
-	if sellValue < 1 {
-		sellValue = 1
-	}
-	return sellValue
+	return worth
 }
 
 func (e *GameEngine) doAppraise(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -2985,7 +3018,10 @@ func (e *GameEngine) drinkItem(ctx context.Context, player *Player, ii *Inventor
 	var extraRoomMsgs []string
 	if spellNum == 403 {
 		player.TelepathyActive = true
-		player.TelepathyExpiry = time.Now().Add(1 * time.Hour)
+		// Never shortens a longer window stacked up by recasting the spell (applyMindlink).
+		if exp := time.Now().Add(1 * time.Hour); exp.After(player.TelepathyExpiry) {
+			player.TelepathyExpiry = exp
+		}
 		msgs = append(msgs, "You feel your mind open to the thoughts of others.")
 	} else if msg := applyHerbSpell(player, spellNum); msg != "" {
 		msgs = append(msgs, msg)

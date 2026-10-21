@@ -534,7 +534,7 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		}
 	}
 	roomMsgs := append(append([]string{}, sc0.RoomMsgs...), sc.RoomMsgs...)
-	if lines := e.weaponsmithAppraisalLines(player, itemDef, ii.Sharpness, ii.Val2, ii.Adj1, ii.Adj2, ii.Adj3, ii.HardnessMod); len(lines) > 0 {
+	if lines := e.weaponsmithAppraisalLines(player, itemDef, ii.Sharpness, ii.Val2, ii.Adj1, ii.Adj2, ii.Adj3, ii.HardnessMod+temperingHardness(ii.Tempered, ii.TemperedUntil)); len(lines) > 0 {
 		msgs = append(msgs, lines...)
 	}
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
@@ -1327,7 +1327,7 @@ func (e *GameEngine) examineRoomItem(player *Player, room *gameworld.Room, def *
 		}
 	}
 
-	if lines := e.weaponsmithAppraisalLines(player, def, ri.Sharpness, ri.Val2, ri.Adj1, ri.Adj2, ri.Adj3, ri.HardnessMod); len(lines) > 0 {
+	if lines := e.weaponsmithAppraisalLines(player, def, ri.Sharpness, ri.Val2, ri.Adj1, ri.Adj2, ri.Adj3, ri.HardnessMod+temperingHardness(ri.Tempered, ri.TemperedUntil)); len(lines) > 0 {
 		result.Messages = append(result.Messages, lines...)
 	}
 

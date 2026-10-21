@@ -43,6 +43,9 @@ type RoomItem struct {
 	// HardnessMod is a per-instance modifier to a weapon's Weapon Clash break-resistance
 	// (see weaponHardness in engine/combat.go), GM-editable via @editem.
 	HardnessMod int        `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+	// Tempered / TemperedUntil mirror engine.InventoryItem's — see its doc comment.
+	Tempered      bool  `bson:"tempered,omitempty" json:"tempered,omitempty"`
+	TemperedUntil int64 `bson:"temperedUntil,omitempty" json:"temperedUntil,omitempty"`
 	// CraftedValue mirrors engine.InventoryItem.CraftedValue — see its doc comment.
 	// Carried here so a crafted item dropped on the floor keeps its fair sell value.
 	CraftedValue int       `bson:"craftedValue,omitempty" json:"craftedValue,omitempty"`
@@ -281,20 +284,23 @@ type ScriptAction struct {
 
 // NounDef maps noun IDs to names.
 type NounDef struct {
-	ID   int    `bson:"id" json:"id"`
-	Name string `bson:"name" json:"name"`
+	ID         int    `bson:"id" json:"id"`
+	Name       string `bson:"name" json:"name"`
+	SourceFile string `bson:"sourceFile,omitempty" json:"sourceFile,omitempty"`
 }
 
 // AdjDef maps adjective IDs to names.
 type AdjDef struct {
-	ID   int    `bson:"id" json:"id"`
-	Name string `bson:"name" json:"name"`
+	ID         int    `bson:"id" json:"id"`
+	Name       string `bson:"name" json:"name"`
+	SourceFile string `bson:"sourceFile,omitempty" json:"sourceFile,omitempty"`
 }
 
 // MonsterAdjDef maps monster adjective IDs to names.
 type MonsterAdjDef struct {
-	ID   int    `bson:"id" json:"id"`
-	Name string `bson:"name" json:"name"`
+	ID         int    `bson:"id" json:"id"`
+	Name       string `bson:"name" json:"name"`
+	SourceFile string `bson:"sourceFile,omitempty" json:"sourceFile,omitempty"`
 }
 
 // BreakModDef maps an item adjective ID to a hardness/break-chance modifier

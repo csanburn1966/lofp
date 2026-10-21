@@ -881,6 +881,7 @@ Spell      Level      Name
 220        1          Dancing Blade
 221        6          Dancing Sword
 222        23         Bend Space II
+223        28         Tempering
 224        11         Fly
 225        14         Invisibility
 226        3          Paranoia
@@ -890,6 +891,7 @@ Spell      Level      Name
 230        21         Disjunction
 231        19         Imprison
 232        20         Mist Form
+233        27         Disenchant
 234        13         Spell Shield
 235        22         Cloak Mind
 243        26         Charge Wand

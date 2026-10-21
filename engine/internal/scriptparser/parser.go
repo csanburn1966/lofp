@@ -336,7 +336,7 @@ func (p *fileParser) parse() {
 		case "NOUNDEF":
 			if len(fields) >= 3 {
 				id, _ := strconv.Atoi(fields[1])
-				result := gameworld.NounDef{ID: id, Name: strings.Join(fields[2:], " ")}
+				result := gameworld.NounDef{ID: id, Name: strings.Join(fields[2:], " "), SourceFile: p.filename}
 				p.result.Nouns = append(p.result.Nouns, result)
 			}
 			p.pos++
@@ -345,7 +345,7 @@ func (p *fileParser) parse() {
 				id, _ := strconv.Atoi(fields[1])
 				// Handle case like "ADJDEF 1aelfen" (no space)
 				name := strings.Join(fields[2:], " ")
-				p.result.Adjectives = append(p.result.Adjectives, gameworld.AdjDef{ID: id, Name: name})
+				p.result.Adjectives = append(p.result.Adjectives, gameworld.AdjDef{ID: id, Name: name, SourceFile: p.filename})
 			} else if len(fields) == 2 {
 				// Try to parse "ADJDEF 1aelfen" format
 				s := fields[1]
@@ -355,7 +355,7 @@ func (p *fileParser) parse() {
 				}
 				if i > 0 && i < len(s) {
 					id, _ := strconv.Atoi(s[:i])
-					p.result.Adjectives = append(p.result.Adjectives, gameworld.AdjDef{ID: id, Name: s[i:]})
+					p.result.Adjectives = append(p.result.Adjectives, gameworld.AdjDef{ID: id, Name: s[i:], SourceFile: p.filename})
 				}
 			}
 			p.pos++
@@ -371,7 +371,7 @@ func (p *fileParser) parse() {
 		case "MADJDEF":
 			if len(fields) >= 3 {
 				id, _ := strconv.Atoi(fields[1])
-				p.result.MonsterAdjs = append(p.result.MonsterAdjs, gameworld.MonsterAdjDef{ID: id, Name: strings.Join(fields[2:], " ")})
+				p.result.MonsterAdjs = append(p.result.MonsterAdjs, gameworld.MonsterAdjDef{ID: id, Name: strings.Join(fields[2:], " "), SourceFile: p.filename})
 			}
 			p.pos++
 		case "VARIABLE":

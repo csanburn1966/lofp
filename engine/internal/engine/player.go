@@ -88,6 +88,13 @@ type InventoryItem struct {
     // base and any adjective BREAKMODs. GM-editable via @editem; kept as its own field
     // rather than a Val slot since Val1-5 are all already claimed for other weapon uses.
     HardnessMod int    `bson:"hardnessMod,omitempty" json:"hardnessMod,omitempty"`
+    // Tempered / TemperedUntil are Tempering (spell 223, castTemperingSpell): Tempered
+    // is the permanent version (cast with a polished large/huge diamond), TemperedUntil
+    // the unix-seconds expiry of the temporary one. Either gives +temperingHardnessBonus
+    // to weaponHardness; they never stack. Separate from HardnessMod so GM @editem
+    // values and the spell's bonus can't clobber each other.
+    Tempered      bool  `bson:"tempered,omitempty" json:"tempered,omitempty"`
+    TemperedUntil int64 `bson:"temperedUntil,omitempty" json:"temperedUntil,omitempty"`
     // CraftedValue is the copper sell value stamped by completeCraft (Wood Lore,
     // Jewelry, Weaving — crafting.go) for a freshly-made item. It deliberately does
     // NOT reuse Val1 the way GMSCRIPT.DOC's generic sell-value convention normally
@@ -402,6 +409,12 @@ type Player struct {
 	// mirroring PreparedMoonstoneBonus's +25 CAST-success bonus. Cleared the moment the
 	// prepared spell resolves (or is lost/released), same as PreparedMoonstoneBonus.
 	PreparedWormScaleBonus bool `bson:"-" json:"-"`
+
+	// PreparedTemperingDiamond: true when Tempering (223) was prepared WITH a qualifying
+	// diamond (see isTemperingDiamond), making the cast permanent. Unlike the mandatory
+	// reagents, the diamond is only verified at PREPARE — it's consumed by
+	// castTemperingSpell on a successful cast, never on a failed or fumbled one.
+	PreparedTemperingDiamond bool `bson:"-" json:"-"`
 
 	// Crafting state (transient)
 	CraftingItem  string `bson:"-" json:"-"` // what they're making (e.g., "greatsword")

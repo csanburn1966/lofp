@@ -1117,6 +1117,7 @@ func (e *GameEngine) doChant(ctx context.Context, player *Player, args []string)
 		player.PreparedSpellReagentArch = 0 // scroll casting never requires a reagent
 		player.PreparedMoonstoneBonus = false
 		player.PreparedWormScaleBonus = false
+		player.PreparedTemperingDiamond = false
 		scrollRT := applyRoundTime(player, 3)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(scrollRT) * time.Second)
 		e.SavePlayer(ctx, player)

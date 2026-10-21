@@ -258,6 +258,20 @@ func simplifiedDamageTier(dmg int) string {
 // in the absence of the original engine's own split, if any.
 const strengthenSteelBonus = 15
 
+// temperingHardnessBonus is the break-resistance Tempering (spell 223) adds to a
+// weapon or shield, whether the permanent (diamond) or temporary (1 hour) version.
+const temperingHardnessBonus = 50
+
+// temperingHardness returns an item's Tempering bonus: temperingHardnessBonus if
+// it's permanently tempered or its temporary tempering hasn't expired yet, else 0.
+// The two never stack.
+func temperingHardness(tempered bool, temperedUntil int64) int {
+	if tempered || temperedUntil > time.Now().Unix() {
+		return temperingHardnessBonus
+	}
+	return 0
+}
+
 // isSteelWeapon reports whether item carries the "steel" adjective in any of
 // its three adjective slots — the qualifying condition for both Strengthen
 // Steel (discipline 7) and Transform Steel (discipline 16), which only affect
@@ -287,7 +301,7 @@ func (e *GameEngine) weaponHardness(player *Player, wielded *InventoryItem, weap
 	if wielded == nil {
 		return weaponDef.Weight*3 + weaponDef.Parameter1*2
 	}
-	hardness := e.weaponHardnessFor(weaponDef, wielded.Adj1, wielded.Adj2, wielded.Adj3, wielded.Val2, wielded.HardnessMod)
+	hardness := e.weaponHardnessFor(weaponDef, wielded.Adj1, wielded.Adj2, wielded.Adj3, wielded.Val2, wielded.HardnessMod+temperingHardness(wielded.Tempered, wielded.TemperedUntil))
 	if player != nil && player.ActivePsi[7] && e.isSteelWeapon(wielded) {
 		hardness += strengthenSteelBonus
 	}

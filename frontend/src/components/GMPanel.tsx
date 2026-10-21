@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../App'
 import GMNumberRanges from './GMNumberRanges'
+import GMReports from './GMReports'
 
 interface ScriptMeta {
   filename: string
@@ -59,7 +60,8 @@ export default function GMPanel({ characterName }: Props) {
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [view, setView] = useState<'scripts' | 'ranges'>('scripts')
+  const [view, setView] = useState<'scripts' | 'reports' | 'ranges'>('scripts')
+  const [unresolvedReports, setUnresolvedReports] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const authHeaders = (): Record<string, string> => {
@@ -76,7 +78,14 @@ export default function GMPanel({ characterName }: Props) {
       .catch(() => setScripts([]))
   }
 
-  useEffect(() => { loadScripts() }, [])
+  useEffect(() => {
+    loadScripts()
+    // Unresolved player REPORT count for the Reports tab badge.
+    fetch('/api/gm/reports?resolved=false&limit=500', { headers: authHeaders() })
+      .then(r => r.ok ? r.json() : null)
+      .then((data: unknown[] | null) => { if (data) setUnresolvedReports(data.length) })
+      .catch(() => {})
+  }, [])
 
   const selectScript = (filename: string, keepStatus = false) => {
     fetch(`/api/gm/scripts/${encodeURIComponent(filename)}`, { headers: authHeaders() })
@@ -256,13 +265,16 @@ export default function GMPanel({ characterName }: Props) {
             ☰
           </button>
         )}
-        {([['scripts', 'GM Scripts'], ['ranges', 'Number Ranges']] as const).map(([v, label]) => (
+        {([['scripts', 'GM Scripts'], ['reports', 'Reports'], ['ranges', 'Number Ranges']] as const).map(([v, label]) => (
           <button
             key={v}
             onClick={() => setView(v)}
             className={`px-2 py-1 rounded font-bold ${view === v ? 'text-amber-400 bg-[#1a1a2e]' : 'text-gray-500 hover:text-gray-300'}`}
           >
             {label}
+            {v === 'reports' && !!unresolvedReports && (
+              <span className="ml-1.5 px-1.5 rounded-full bg-red-700 text-white text-[10px] align-middle">{unresolvedReports}</span>
+            )}
           </button>
         ))}
         <span className="text-gray-600 text-xs ml-auto hidden sm:inline">Character: {characterName}</span>
@@ -270,6 +282,8 @@ export default function GMPanel({ characterName }: Props) {
 
       {view === 'ranges' ? (
         <GMNumberRanges authHeaders={authHeaders} characterName={characterName} />
+      ) : view === 'reports' ? (
+        <GMReports authHeaders={authHeaders} onUnresolvedCount={setUnresolvedReports} />
       ) : (
       <div className="flex flex-1 overflow-hidden">
         {/* Sidebar — script list */}

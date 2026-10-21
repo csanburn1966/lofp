@@ -9,6 +9,54 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.1.0 &mdash; October 19, 2026</h2>
+            <p className="text-gray-400 mb-3">Guarding is reworked: <code className="text-amber-300">GUARD</code> no longer switches itself off, the new <code className="text-amber-300">UNGUARD</code> command stops it, and a guarding elemental now steps in front of monsters and fights them for you. The way into the sewers beneath Fayd is open again, scripted exits written with short directions (such as <code className="text-amber-300">D</code> or <code className="text-amber-300">NE</code>) now work across the world, and the Night Shades&rsquo; hideout is part of the game. GMs can export a character from the live server and import it into their own.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Guarding</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">GUARD &lt;target&gt;</code> only starts guarding. Using it on someone or something you already guard tells you so, instead of quietly stopping</li>
+                  <li>New <code className="text-amber-300">UNGUARD &lt;target&gt;</code> stops guarding a person, doorway or item. <code className="text-amber-300">UNGUARD</code> on its own stops guarding everything, and <code className="text-amber-300">GUARD</code> on its own lists what you&rsquo;re guarding</li>
+                  <li>Summoned creatures work the same way: <code className="text-amber-300">COMMAND &lt;creature&gt; GUARD ME</code> starts, and <code className="text-amber-300">COMMAND &lt;creature&gt; UNGUARD ME</code> (or <code className="text-amber-300">UNGUARD &lt;name&gt;</code>) stops</li>
+                  <li>A guarding elemental now blocks monsters that come for you: &ldquo;The ogre advances towards you, but the earth elemental blocks its way!&rdquo; The monster fights the elemental, not you, so you&rsquo;re free to move, cast or retreat</li>
+                  <li>A monster already fighting you turns to face your elemental when it steps in, and if the elemental falls, the shock still stuns you</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: World</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The Mullock Heaps are back on the map, southeast of Broadway. Sit by the chute between the bins and slide down into the sewers beneath Fayd</li>
+                  <li>Scripted exits written with a short direction now work, as they did in the original game. Among them: the knife gang in the alleys, the Thief&rsquo;s shop back room, the crawlway, the mountain trail, the PeeWee ladder and some deadly traps. Explore carefully</li>
+                  <li>The Night Shades&rsquo; hideout is now part of the world. Knocking on the hidden panel in their safe house leads the way in</li>
+                  <li>Robotic cleaners no longer wander out of the mall into the Caldis Forest and Blackthorn</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Combat, Crafting and Cyberware</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Bare-handed punches now do crushing damage and no longer cause bleeding. A Wolfling in wolf form still claws</li>
+                  <li>The loom refuses mismatched materials: leather armor needs a hide (leather, suede, doeskin, fur and so on), and cloth armor needs a woven fabric. Ordinary garments still take any material</li>
+                  <li>Any cyberware implant now stops you casting spells, and Coriam Seeds can no longer restore Empathy while an implant is installed</li>
+                  <li>A Wolfling in wolf form who <code className="text-amber-300">HOLD</code>s someone takes them by the scruff of the neck, not by the hand</li>
+                  <li>Skinning messages show a disguised player&rsquo;s disguise, not their name</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Admin &rarr; Players has an <strong>Export</strong> button that downloads the selected character as a <code className="text-amber-300">.lofp-player.json</code> file, and <strong>Import Character&hellip;</strong> loads one into an account you choose, optionally under a new name. Imported characters get a fresh ID, and anyone standing in a room that doesn&rsquo;t exist on your server lands in room 201. Both actions are logged</li>
+                  <li>@GM channel lines are shown in bold magenta in the web client, telnet and SSH, and read &ldquo;@GM Name SAYS: &hellip;&rdquo;</li>
+                  <li><code className="text-amber-300">@cyberware &lt;player&gt; remove all</code> removes every implant and restores the player&rsquo;s spellcasting</li>
+                  <li>Room scripts match directions in either form: <code className="text-amber-300">IFPREVERB D -1</code> and <code className="text-amber-300">IFPREVERB DOWN -1</code> now behave the same</li>
+                  <li><code className="text-amber-300">NSHADES.SCR</code> is now loaded from <code className="text-amber-300">LEGENDS.CFG</code>, ahead of <code className="text-amber-300">FAYDINDR.SCR</code></li>
+                  <li>The mall&rsquo;s spawn groups 35 and 36 were renumbered to 124 and 125. They had been sharing group numbers with the Caldis Forest and Blackthorn</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.0.0 &mdash; October 18, 2026</h2>
             <p className="text-gray-400 mb-3">A major update: CyberTech is open for business. Implants bought in Fayd are now grafted onto your body as they were in the original game, trading Empathy for strength, speed, sharper senses, telepathy or full-body plating. The calendar gains the seven Feast Days of the Feast of the Great Moon that open each year, and a new <code className="text-amber-300">DATECVT</code> command converts between real and in-game dates. Fighting alongside your group now helps you hit, with Wolflings fighting as a pack. Sorcerous Summons finally calls its demons, and a number of bugs are fixed, including a shop that disconnected players.</p>
 

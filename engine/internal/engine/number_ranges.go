@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jonradoff/lofp/internal/gameworld"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
@@ -19,6 +20,13 @@ import (
 // numbers even though they aren't in the live maps. ANTI.SCR's placeholder items
 // (INUMBER 1-1989, see project_anti_scr_fallback memory) are treated as free —
 // redefining one of those numbers is exactly what the placeholders exist for.
+//
+// The vocabulary tables — item adjectives (ADJDEF), monster adjectives (MADJDEF)
+// and nouns (NOUNDEF) — are numbered the same way and get the same report, plus
+// the word each number maps to so GMs can look up IDs while writing scripts.
+
+// vocabKinds are the report kinds backed by a vocabulary table, in display order.
+var vocabKinds = []string{"adjective", "monadj", "noun"}
 
 // NumberBlock is a contiguous run of used numbers that all come from one source.
 type NumberBlock struct {
@@ -54,6 +62,7 @@ type NumberKindRanges struct {
 	Blocks    []NumberBlock    `json:"blocks"`
 	Gaps      []NumberGap      `json:"gaps"`
 	Conflicts []NumberConflict `json:"conflicts,omitempty"`
+	Names     map[int]string   `json:"names,omitempty"` // vocabulary kinds only: ID -> word
 }
 
 // NumberRangesReport is the response for GET /api/gm/ranges.
@@ -96,6 +105,17 @@ func (e *GameEngine) NumberRanges(ctx context.Context) (*NumberRangesReport, err
 	}
 
 	claims := map[string]map[int][]numberClaim{"room": {}, "item": {}, "monster": {}}
+	names := map[string]map[int]string{}
+	for _, kind := range vocabKinds {
+		claims[kind] = map[int][]numberClaim{}
+		names[kind] = map[int]string{}
+	}
+	for kind, table := range map[string]map[int]string{"adjective": e.adjectives, "monadj": e.monAdjs, "noun": e.nouns} {
+		for n, name := range table {
+			claims[kind][n] = append(claims[kind][n], numberClaim{source: e.vocabSources[kind][n]})
+			names[kind][n] = name
+		}
+	}
 	for n, r := range e.rooms {
 		claims["room"][n] = append(claims["room"][n], numberClaim{source: r.SourceFile})
 	}
@@ -130,6 +150,21 @@ func (e *GameEngine) NumberRanges(ctx context.Context) (*NumberRangesReport, err
 			for _, mon := range parsed.Monsters {
 				claims["monster"][mon.Number] = append(claims["monster"][mon.Number], dc)
 			}
+			addDraftVocab := func(kind string, id int, name string) {
+				claims[kind][id] = append(claims[kind][id], dc)
+				if _, live := names[kind][id]; !live {
+					names[kind][id] = name
+				}
+			}
+			for _, a := range parsed.Adjectives {
+				addDraftVocab("adjective", a.ID, a.Name)
+			}
+			for _, a := range parsed.MonsterAdjs {
+				addDraftVocab("monadj", a.ID, a.Name)
+			}
+			for _, nd := range parsed.Nouns {
+				addDraftVocab("noun", nd.ID, nd.Name)
+			}
 		}
 		sort.Strings(report.Drafts)
 	}
@@ -137,7 +172,33 @@ func (e *GameEngine) NumberRanges(ctx context.Context) (*NumberRangesReport, err
 	for _, kind := range []string{"room", "item", "monster"} {
 		report.Kinds = append(report.Kinds, buildKindRanges(kind, claims[kind], gmScripts))
 	}
+	for _, kind := range vocabKinds {
+		kr := buildKindRanges(kind, claims[kind], gmScripts)
+		kr.Names = names[kind]
+		report.Kinds = append(report.Kinds, kr)
+	}
 	return report, nil
+}
+
+// recordVocabSources notes which script file defined each noun/adjective/monster
+// adjective in parsed, for the Number Ranges report. Later definitions win, the
+// same as the name tables themselves.
+func (e *GameEngine) recordVocabSources(parsed *gameworld.ParsedData) {
+	if e.vocabSources == nil {
+		e.vocabSources = map[string]map[int]string{}
+		for _, kind := range vocabKinds {
+			e.vocabSources[kind] = map[int]string{}
+		}
+	}
+	for _, d := range parsed.Adjectives {
+		e.vocabSources["adjective"][d.ID] = d.SourceFile
+	}
+	for _, d := range parsed.MonsterAdjs {
+		e.vocabSources["monadj"][d.ID] = d.SourceFile
+	}
+	for _, d := range parsed.Nouns {
+		e.vocabSources["noun"][d.ID] = d.SourceFile
+	}
 }
 
 func buildKindRanges(kind string, claims map[int][]numberClaim, gmScripts map[string]gmScriptMeta) NumberKindRanges {

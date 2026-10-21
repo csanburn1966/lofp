@@ -2782,11 +2782,11 @@ func (e *GameEngine) gmGoPlr(ctx context.Context, player *Player, args []string)
 
 // gmMonitor lets a GM silently relay all activity in a room — or in whatever room
 // a named online player currently happens to be in — back to themselves, the same
-// way a familiar's COMMAND WATCH WILL relays events to its summoner (see "watch"
+// way a familiar's COMMAND WATCH relays events to its summoner (see "watch"
 // in summons.go). It reuses that exact same e.watching/forwardToWatchers machinery,
 // so relayed lines already come with the "** " prefix forwardToWatchers applies.
 // A GM (like a familiar) can only monitor one room at a time — @monitor again, or
-// an active familiar WATCH WILL, replaces whichever room was being watched, since
+// an active familiar WATCH, replaces whichever room was being watched, since
 // both share the same one-room-per-player slot.
 //
 //	@monitor            — show what you're currently monitoring, if anything

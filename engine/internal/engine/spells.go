@@ -111,6 +111,7 @@ func init() {
 		{ID: 231, Name: "Imprison", School: "Enchantment", Level: 19, ManaCost: 19, CastTime: 4, Effect: "utility"},
 		{ID: 232, Name: "Mist Form", School: "Enchantment", Level: 20, ManaCost: 20, CastTime: 4, Effect: "utility"},
 		{ID: 233, Name: "Disenchant", School: "Enchantment", Level: 27, ManaCost: 27, CastTime: 4, Effect: "utility"}, // new — not part of the original 1990s data; undoes Enchantment I/II/III (202/203/204)
+		{ID: 223, Name: "Tempering", School: "Enchantment", Level: 28, ManaCost: 28, CastTime: 4, Effect: "utility"},  // new — not part of the original 1990s data; weapon/shield break-resistance (castTemperingSpell)
 		{ID: 243, Name: "Charge Wand", School: "Enchantment", Level: 26, ManaCost: 26, CastTime: 5, Effect: "utility"},
 		{ID: 244, Name: "Enchant an Item", School: "Enchantment", Level: 31, ManaCost: 31, CastTime: 5, Effect: "utility"},
 		{ID: 245, Name: "Slime Form", School: "Enchantment", Level: 13, ManaCost: 13, CastTime: 4, Effect: "utility"},
@@ -775,6 +776,7 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 		}
 		player.PreparedMoonstoneBonus = false
 		player.PreparedWormScaleBonus = false
+		player.PreparedTemperingDiamond = false
 	} else {
 		player.PreparedSpellReagentArch = 0
 		// Moonstone: optional catalyst reagent for any spell with no mandatory reagent
@@ -783,6 +785,7 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 		// absorbed by the magic of your spell!"
 		player.PreparedMoonstoneBonus = false
 		player.PreparedWormScaleBonus = false
+		player.PreparedTemperingDiamond = false
 		if reagentArg != "" {
 			reagentArg = strings.ToLower(reagentArg)
 			// Worm scale: optional catalyst for Tentacles (134) only — see
@@ -802,7 +805,16 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 					}
 				}
 			}
-			if !player.PreparedWormScaleBonus {
+			// Diamond: optional reagent for Tempering (223) that makes the cast permanent.
+			// Only verified here — castTemperingSpell consumes it on a successful cast.
+			if spell.ID == temperingSpellID {
+				idx, matched := e.findTemperingDiamond(player, reagentArg)
+				if matched && idx < 0 {
+					return &CommandResult{Messages: []string{"Only a large or huge diamond that has been polished by a Highlander's hands is strong enough to permanently temper an item."}}
+				}
+				player.PreparedTemperingDiamond = idx >= 0
+			}
+			if !player.PreparedWormScaleBonus && !player.PreparedTemperingDiamond {
 				for i, ii := range player.Inventory {
 					def := e.items[ii.Archetype]
 					if def == nil || ii.Archetype != moonstoneReagentArch {
@@ -837,6 +849,9 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 		prepMsgs = append(prepMsgs, "A worm scale turns to dust as it is absorbed by the magic of your spell!")
 		roomMsgs = append(roomMsgs, fmt.Sprintf("A worm scale turns to dust as it is absorbed by the magic of %s's spell!", player.DisplayName()))
 	}
+	if player.PreparedTemperingDiamond {
+		prepMsgs = append(prepMsgs, "Your polished diamond glimmers in your hand, ready to give itself to the spell.")
+	}
 	prepMsgs = append(prepMsgs, fmt.Sprintf("You prepare the %s spell.", spell.Name))
 	prepMsgs = append(prepMsgs, fmt.Sprintf("[Round: %d sec]", prepRT))
 
@@ -862,6 +877,7 @@ func (e *GameEngine) doRelease(ctx context.Context, player *Player) *CommandResu
 		player.PreparedSpell = 0
 		player.PreparedSpellReagentArch = 0
 		player.PreparedMoonstoneBonus = false
+		player.PreparedTemperingDiamond = false
 		e.SavePlayer(ctx, player)
 		return &CommandResult{Messages: []string{"You release your prepared spell."}}
 	}
@@ -982,6 +998,10 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	committed = true
 	usedMoonstone := player.PreparedMoonstoneBonus
 	player.PreparedMoonstoneBonus = false
+	// Cleared before the roll so a failed or fumbled Tempering never touches the
+	// diamond — castTemperingSpell is only reached on success.
+	usedTemperingDiamond := player.PreparedTemperingDiamond
+	player.PreparedTemperingDiamond = false
 
 	// Casting requires spoken words and hand gestures, unlike preparing —
 	// this gives away a hidden or invisible caster's position. Psionics don't
@@ -1180,6 +1200,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castChargeWandSpell(player, spell, args)
 		case 233: // Disenchant
 			result = e.castDisenchantSpell(player, spell, args)
+		case temperingSpellID:
+			result = e.castTemperingSpell(player, args, usedTemperingDiamond)
 		case 227, 322: // Imprisonment Rune, Death Scythe — sigil spells
 			result = e.castSigilSpell(player, spell, args)
 		case 408: // Truename
@@ -1201,6 +1223,7 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		player.Mana += manaCost
 		player.PreparedSpell = spell.ID
 		player.PreparedMoonstoneBonus = usedMoonstone
+		player.PreparedTemperingDiamond = usedTemperingDiamond
 		player.Hidden = prevHidden
 		player.Invisible = prevInvisible
 		player.PhantomForm = prevPhantomForm
@@ -4007,6 +4030,7 @@ func interruptPreparedSpell(player *Player) string {
 	player.PreparedSpell = 0
 	player.PreparedSpellReagentArch = 0
 	player.PreparedMoonstoneBonus = false
+	player.PreparedTemperingDiamond = false
 	return fmt.Sprintf("The blow shatters your concentration! Your prepared %s is lost.", name)
 }
 
@@ -4418,18 +4442,24 @@ func (e *GameEngine) castMindlink(player *Player, spell *SpellDef, args []string
 		}
 	}
 
-	target.TelepathyActive = true
-	target.TelepathyExpiry = time.Now().Add(1 * time.Hour)
+	mins, applied := applyMindlink(target)
 
 	// Original wording — a touch to the temples when cast on someone else, a plain
 	// gesture on yourself; onlookers just see that the recipient "seems changed".
 	// doCastSpell slots the [Success] roll line in after the opening line.
-	const expanding = "You feel the power of your mind expanding."
+	expanding := "You feel the power of your mind expanding."
+	if !applied {
+		expanding = fmt.Sprintf("You feel the power of your mind expanding further. (%d minutes remaining)", mins)
+	}
 	changed := fmt.Sprintf("%s seems changed.", target.DisplayNameCap())
 	if !isSelf {
 		e.SavePlayer(context.Background(), target)
+		casterMsgs := []string{fmt.Sprintf("You place your fingers upon %s's temples.", target.DisplayName()), changed}
+		if !applied {
+			casterMsgs = append(casterMsgs, fmt.Sprintf("You extend %s's mindlink. (%d minutes remaining)", target.DisplayName(), mins))
+		}
 		return &CommandResult{
-			Messages: []string{fmt.Sprintf("You place your fingers upon %s's temples.", target.DisplayName()), changed},
+			Messages: casterMsgs,
 			RoomBroadcast: []string{
 				fmt.Sprintf("%s places %s fingers upon %s's temples.", player.DisplayNameCap(), player.Possessive(), target.DisplayName()),
 				changed,
@@ -4442,6 +4472,31 @@ func (e *GameEngine) castMindlink(player *Player, spell *SpellDef, args []string
 		Messages:      []string{"You gesture.", expanding},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures.", player.DisplayNameCap()), changed},
 	}
+}
+
+// applyMindlink grants or extends Mindlink (403) telepathy from the spell: one hour
+// on a fresh cast, and +20 minutes per recast while it's still running, capped at
+// 4 hours — the same extend-don't-reset rule as Mystic Armor/Camouflage/Heat
+// Shield. Innate telepathy (zero expiry) counts as not running, so a cast on an
+// Ephemeral just starts the normal hour. Returns minutes remaining and whether this
+// was a fresh application (false = extended an active one).
+func applyMindlink(target *Player) (mins int, applied bool) {
+	const baseDuration = time.Hour
+	const maxDuration = 4 * time.Hour
+	const stackDuration = 20 * time.Minute
+	now := time.Now()
+
+	target.TelepathyActive = true
+	if !target.TelepathyExpiry.IsZero() && now.Before(target.TelepathyExpiry) {
+		newExpiry := target.TelepathyExpiry.Add(stackDuration)
+		if cap := now.Add(maxDuration); newExpiry.After(cap) {
+			newExpiry = cap
+		}
+		target.TelepathyExpiry = newExpiry
+		return int(time.Until(target.TelepathyExpiry).Minutes()) + 1, false
+	}
+	target.TelepathyExpiry = now.Add(baseDuration)
+	return 60, true
 }
 
 // castEnchantmentSpell handles Enchantment I (202), II (203), III (204).

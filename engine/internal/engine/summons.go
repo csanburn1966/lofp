@@ -131,7 +131,7 @@ func (e *GameEngine) sorcerousDemonPresent(spellID, roomNum int) bool {
 }
 
 // spawnSummonedCreature creates a summoned monster in the player's room, links it to the player,
-// and returns a CommandResult with flavor text. isFamiliar enables COMMAND WATCH WILL.
+// and returns a CommandResult with flavor text. isFamiliar enables COMMAND WATCH.
 func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamiliar bool, flavorPrefix string) *CommandResult {
 	def := e.monsters[mnumber]
 	if def == nil {
@@ -172,7 +172,7 @@ func (e *GameEngine) spawnSummonedCreature(player *Player, mnumber int, isFamili
 	summoned := fmt.Sprintf("%s %s%s!", flavorPrefix, carticle, cname)
 	if isFamiliar {
 		return &CommandResult{
-			Messages:      []string{summoned, fmt.Sprintf("You have summoned %s%s as your familiar. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND WATCH WILL, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", carticle, cname)},
+			Messages:      []string{summoned, fmt.Sprintf("You have summoned %s%s as your familiar. (COMMAND FOLLOW ME, COMMAND STAY, COMMAND WATCH, COMMAND LOOK, COMMAND SAY <message>, COMMAND BEGONE)", carticle, cname)},
 			RoomBroadcast: []string{fmt.Sprintf("%s%s appears in a shimmer of magical light.", capArticle(carticle), cname)},
 		}
 	}
@@ -380,7 +380,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		return &CommandResult{Messages: []string{"You have no summoned creature to command."}}
 	}
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Command it to do what? (FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>)"}}
+		return &CommandResult{Messages: []string{"Command it to do what? (FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>)"}}
 	}
 
 	// Locate the summoned creature in the manager
@@ -568,7 +568,7 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		}
 
 	case "watch":
-		// COMMAND WATCH WILL — familiar watches its room and echoes events to the summoner
+		// COMMAND WATCH — familiar watches its room and echoes events to the summoner
 		if !isFamiliar {
 			return &CommandResult{Messages: []string{"Only familiars can watch a room. Elementals and gargoyles use COMMAND GUARD ME instead."}}
 		}
@@ -882,13 +882,13 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		}
 
 	default:
-		return &CommandResult{Messages: []string{"Unknown command. Options: FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH WILL, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>"}}
+		return &CommandResult{Messages: []string{"Unknown command. Options: FOLLOW ME, FOLLOW <name>, STAY, BEGONE, WATCH, GUARD ME, GUARD <name>, UNGUARD ME, UNGUARD <name>, ATTACK <name>, LOOK, SAY <message>"}}
 	}
 }
 
 // ForwardToWatchers relays room broadcast messages (player speech, actions, combat,
 // arrivals/departures) to players whose familiar/summoned creature is watching that room
-// via COMMAND WATCH WILL. Exported so the API layer can call it for the RoomBroadcast/
+// via COMMAND WATCH. Exported so the API layer can call it for the RoomBroadcast/
 // OldRoomMsg paths, not just monster AI activity routed through SetLocalRoomBroadcast.
 func (e *GameEngine) ForwardToWatchers(roomNum int, messages []string) {
 	e.forwardToWatchers(roomNum, messages)

@@ -37,9 +37,9 @@ func (r *NumberReservation) Normalize() error {
 	r.GM = strings.TrimSpace(r.GM)
 	r.Note = strings.TrimSpace(r.Note)
 	switch r.Kind {
-	case "room", "item", "monster":
+	case "room", "item", "monster", "adjective", "monadj", "noun":
 	default:
-		return fmt.Errorf("kind must be room, item or monster")
+		return fmt.Errorf("kind must be room, item, monster, adjective, monadj or noun")
 	}
 	if r.Start < 0 || r.End < r.Start {
 		return fmt.Errorf("range must be non-negative with end >= start")

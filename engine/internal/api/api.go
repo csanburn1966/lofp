@@ -397,6 +397,9 @@ func (s *Server) setupRoutes() {
 	api.HandleFunc("/gm/reservations", s.handleSaveNumberReservation).Methods("POST")
 	api.HandleFunc("/gm/reservations/{id}", s.handleSaveNumberReservation).Methods("PUT")
 	api.HandleFunc("/gm/reservations/{id}", s.handleDeleteNumberReservation).Methods("DELETE")
+	api.HandleFunc("/gm/reports", s.handleGMReports).Methods("GET")
+	api.HandleFunc("/gm/reports/{id}/resolve", s.handleGMResolveReport).Methods("PUT")
+	api.HandleFunc("/gm/reports/{id}/reply", s.handleGMReplyReport).Methods("PUT")
 
 	// Admin bootstrap (only works if no admins exist yet)
 	api.HandleFunc("/admin/bootstrap", s.handleBootstrapAdmin).Methods("POST")
@@ -1225,7 +1228,7 @@ func (s *Server) broadcastToRoom(roomNumber int, excludeName string, messages []
 	})
 
 	// Relay to any summoner whose familiar/summoned creature is watching this room
-	// (COMMAND WATCH WILL) — covers player speech, actions, combat, and arrivals/departures,
+	// (COMMAND WATCH) — covers player speech, actions, combat, and arrivals/departures,
 	// not just monster AI activity.
 	s.engine.ForwardToWatchers(roomNumber, messages)
 }
@@ -3056,6 +3059,78 @@ func (s *Server) handleAdminResolveLog(w http.ResponseWriter, r *http.Request) {
 	if account == nil {
 		return
 	}
+	s.resolveLogEntry(w, r, staffName(account, ""), false)
+}
+
+// handleAdminReplyLog stores a staff reply on a player REPORT (see replyToReport).
+func (s *Server) handleAdminReplyLog(w http.ResponseWriter, r *http.Request) {
+	account := s.requireAdmin(w, r)
+	if account == nil {
+		return
+	}
+	s.replyToReport(w, r, staffName(account, ""))
+}
+
+// --- GM report endpoints ---
+//
+// GMs get the player REPORT queue (and only that — the rest of the game log
+// stays admin-only) so reports can be worked from the GM page instead of only
+// being seen by whoever happens to be online when one is filed.
+
+// handleGMReports lists player REPORT entries. ?resolved=true|false filters on
+// the resolved flag; ?player= filters by character name.
+func (s *Server) handleGMReports(w http.ResponseWriter, r *http.Request) {
+	if s.requireGM(w, r) == nil {
+		return
+	}
+	limit := 200
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+	entries, err := s.gamelog.Query(r.Context(), string(gamelog.EventReport),
+		r.URL.Query().Get("player"), r.URL.Query().Get("resolved"), limit)
+	if err != nil {
+		http.Error(w, "failed to query reports", 500)
+		return
+	}
+	if entries == nil {
+		entries = []gamelog.LogEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+func (s *Server) handleGMResolveReport(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	s.resolveLogEntry(w, r, staffName(account, r.Header.Get("X-Character")), true)
+}
+
+func (s *Server) handleGMReplyReport(w http.ResponseWriter, r *http.Request) {
+	account := s.requireGM(w, r)
+	if account == nil {
+		return
+	}
+	s.replyToReport(w, r, staffName(account, r.Header.Get("X-Character")))
+}
+
+// staffName is who a resolve/reply is credited to: the GM character acting on
+// the GM page when there is one, otherwise the account's name (or email).
+func staffName(account *auth.Account, character string) string {
+	if c := strings.TrimSpace(character); c != "" {
+		return c
+	}
+	if account.Name != "" {
+		return account.Name
+	}
+	return account.Email
+}
+
+// resolveLogEntry marks (or unmarks) the log entry {id} as resolved. With
+// reportOnly, anything that isn't a player REPORT is treated as not found.
+func (s *Server) resolveLogEntry(w http.ResponseWriter, r *http.Request, resolvedBy string, reportOnly bool) {
 	vars := mux.Vars(r)
 	var req struct {
 		Resolved bool `json:"resolved"`
@@ -3064,9 +3139,12 @@ func (s *Server) handleAdminResolveLog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
-	resolvedBy := account.Name
-	if resolvedBy == "" {
-		resolvedBy = account.Email
+	if reportOnly {
+		existing, err := s.gamelog.Get(r.Context(), vars["id"])
+		if err != nil || existing.Event != gamelog.EventReport {
+			http.Error(w, "report not found", 404)
+			return
+		}
 	}
 	entry, err := s.gamelog.SetResolved(r.Context(), vars["id"], req.Resolved, resolvedBy)
 	if err != nil {
@@ -3077,14 +3155,10 @@ func (s *Server) handleAdminResolveLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entry)
 }
 
-// handleAdminReplyLog stores a staff reply on a player REPORT. The player sees it
-// the next time they enter the game; if they're online on this machine right
+// replyToReport stores a staff reply on the player REPORT {id}. The player sees
+// it the next time they enter the game; if they're online on this machine right
 // now, it's delivered immediately instead.
-func (s *Server) handleAdminReplyLog(w http.ResponseWriter, r *http.Request) {
-	account := s.requireAdmin(w, r)
-	if account == nil {
-		return
-	}
+func (s *Server) replyToReport(w http.ResponseWriter, r *http.Request, repliedBy string) {
 	vars := mux.Vars(r)
 	var req struct {
 		Reply string `json:"reply"`
@@ -3097,10 +3171,6 @@ func (s *Server) handleAdminReplyLog(w http.ResponseWriter, r *http.Request) {
 	if len(reply) > 2000 {
 		http.Error(w, "reply too long (max 2000 characters)", 400)
 		return
-	}
-	repliedBy := account.Name
-	if repliedBy == "" {
-		repliedBy = account.Email
 	}
 	entry, err := s.gamelog.SetReply(r.Context(), vars["id"], reply, repliedBy)
 	if err != nil {

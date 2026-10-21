@@ -22,6 +22,9 @@ import (
 // Phantom Form (248): self by default, or a named player in the room —
 // matching the self-or-target pattern used by Camouflage/Mass Protection.
 func (e *GameEngine) castHidingSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
+	if spell.ID == 212 {
+		return e.castMassInvisibility(player)
+	}
 	target := player
 	isSelf := true
 	if len(args) > 0 {
@@ -65,6 +68,43 @@ func (e *GameEngine) castHidingSpell(player *Player, spell *SpellDef, args []str
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s, who fades from sight.", player.DisplayName(), target.DisplayName())},
 		TargetName:    target.FirstName,
 		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You fade from sight.", player.FirstName, spell.Name)},
+	}
+}
+
+// castMassInvisibility handles Mass Invisibility (212): the caster plus every
+// living group-mate in the same room turns invisible. Any group member can cast
+// it, not just the leader (groupMates resolves the group from either side). An
+// ungrouped caster just turns themselves invisible, same as Invisibility (225).
+func (e *GameEngine) castMassInvisibility(player *Player) *CommandResult {
+	player.Invisible = true
+	var names []string
+	for _, mate := range e.groupMates(player) {
+		if mate.Dead || mate.RoomNumber != player.RoomNumber {
+			continue
+		}
+		mate.Invisible = true
+		e.SavePlayer(context.Background(), mate)
+		names = append(names, mate.FirstName)
+		if e.sendToPlayer != nil {
+			e.sendToPlayer(mate.FirstName, []string{fmt.Sprintf("%s gestures, and the spell washes over you. You feel a tingling sensation.", player.FirstName)})
+		}
+	}
+
+	if len(names) == 0 {
+		return &CommandResult{
+			Messages:             []string{"You gesture.", "You feel a tingling sensation."},
+			RoomBroadcast:        []string{fmt.Sprintf("%s fades from sight.", player.DisplayNameCap())},
+			ConcealedBroadcastOK: true, // see castHidingSpell
+		}
+	}
+	verb := "fade"
+	if len(names) == 1 {
+		verb = "fades"
+	}
+	return &CommandResult{
+		Messages:             []string{"You gesture.", fmt.Sprintf("You feel a tingling sensation as %s %s from sight along with you.", joinWithAnd(names), verb)},
+		RoomBroadcast:        []string{fmt.Sprintf("%s gestures, and %s and %s companions fade from sight.", player.DisplayNameCap(), player.DisplayName(), player.Possessive())},
+		ConcealedBroadcastOK: true, // see castHidingSpell
 	}
 }
 

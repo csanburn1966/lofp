@@ -1608,9 +1608,10 @@ func (sc *ScriptContext) getVar(name string) int {
 	}
 	// ITEMCRAFTEDVALUE is the current item's CraftedValue — the copper sell value
 	// crafting and foraging stamp instead of Val1 (see InventoryItem.CraftedValue).
-	// ITEMWORTH is the value SELL actually starts from: CraftedValue if set, else
-	// Val1 — so a GM buy-back script (e.g. a guild cabinet's IFPREVERB2 PUT) can
-	// price crafted/foraged and plain items alike. Not original variables.
+	// ITEMWORTH is the value SELL actually starts from (itemWorth: CraftedValue,
+	// Val1, forage/shop value, weight; 0 if stamped CraftedValue < 0) — so a GM
+	// buy-back script (e.g. a guild cabinet's IFPREVERB2 PUT) can price crafted,
+	// foraged, searched-up and script-made items alike. Not original variables.
 	if name == "ITEMCRAFTEDVALUE" {
 		if sc.ItemRef == nil {
 			return 0
@@ -1618,13 +1619,11 @@ func (sc *ScriptContext) getVar(name string) int {
 		return sc.ItemRef.CraftedValue
 	}
 	if name == "ITEMWORTH" {
-		if sc.ItemRef == nil {
+		if sc.ItemRef == nil || sc.Engine == nil {
 			return 0
 		}
-		if sc.ItemRef.CraftedValue > 0 {
-			return sc.ItemRef.CraftedValue
-		}
-		return sc.ItemRef.Val1
+		ir := sc.ItemRef
+		return sc.Engine.itemWorth(sc.Engine.items[ir.Archetype], ir.Adj3, ir.Val1, ir.Val2, ir.CraftedValue)
 	}
 	if strings.HasPrefix(name, "ITEMADJ") {
 		idx, err := strconv.Atoi(name[7:])
@@ -3017,6 +3016,7 @@ func (sc *ScriptContext) doRoutine(args []string) {
 		sc.Player.PreparedSpellReagentArch = 0
 		sc.Player.PreparedMoonstoneBonus = false
 		sc.Player.PreparedWormScaleBonus = false
+		sc.Player.PreparedTemperingDiamond = false
 		sc.Messages = append(sc.Messages, fmt.Sprintf("The %s glows briefly. %s is prepared for casting. (CAST to release it.)", itemNoun, spell.Name))
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("The %s in %s's hands glows briefly.", itemNoun, sc.Player.FirstName))
 	}

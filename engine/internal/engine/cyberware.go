@@ -315,6 +315,12 @@ func (e *GameEngine) buyCyberware(ctx context.Context, player *Player, k *cyberK
 	if player.IsEphemeral() {
 		return &CommandResult{Messages: []string{"The robot receptionist scans you and says, \"We regret that there is nothing physical to graft our devices onto.\""}}
 	}
+	// Humans only — LEGENDS.DOC: "Cybernetic technology was originally developed for
+	// humans, so they may employ any such device"; the shop sign (ADDAMS.SCR) reads
+	// "Bringing Humans Affordable Ancient Technology".
+	if player.Race != RaceHuman {
+		return &CommandResult{Messages: []string{"The robot receptionist scans you and says, \"We regret that our devices are compatible only with human physiology.\""}}
+	}
 	if have := player.cyberTier(k.kind); have >= tier {
 		return &CommandResult{Messages: []string{fmt.Sprintf("Your %s is already installed.", k.displayName(have))}}
 	}

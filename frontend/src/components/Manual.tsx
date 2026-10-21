@@ -1736,6 +1736,7 @@ gaze  glare  scowl  furrow (brow)  sing  recite  pace  comfort`}</pre>
 220  Dancing Blade                 Lev 1
 221  Dancing Sword                 Lev 6
 222  Bend Space II                 Lev 23
+223  Tempering                     Lev 28
 224  Fly                           Lev 11
 225  Invisibility                  Lev 14
 226  Paranoia                      Lev 3

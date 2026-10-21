@@ -20,7 +20,7 @@ import (
 
 // GameVersion is the release version reported by the VERSION command and the
 // telnet GMCP Core.Hello. Keep in sync with MainMenu.tsx / VersionNotes.tsx.
-const GameVersion = "15.0.0"
+const GameVersion = "15.1.0"
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z'-]{2,19}$`) // min 3 chars total
 
@@ -133,7 +133,8 @@ type GameEngine struct {
 	nouns                     map[int]string
 	adjectives                map[int]string
 	monAdjs                   map[int]string
-	breakMods                 map[int]int // adjective ID -> weapon hardness modifier (BREAKMOD)
+	vocabSources              map[string]map[int]string // "noun"/"adjective"/"monadj" -> ID -> defining script file (GM Number Ranges)
+	breakMods                map[int]int // adjective ID -> weapon hardness modifier (BREAKMOD)
 	items                     map[int]*gameworld.ItemDef
 	rooms                     map[int]*gameworld.Room
 	monsters                  map[int]*gameworld.MonsterDef
@@ -212,7 +213,7 @@ func (e *GameEngine) SetRoomBroadcastExclude(fn RoomBroadcastExcludeFunc) {
 }
 
 // SetLocalRoomBroadcast sets a local-only broadcast (no hub). Used for monster activity.
-// The broadcast is wrapped to also forward messages to watchers (familiar WATCH WILL mode).
+// The broadcast is wrapped to also forward messages to watchers (familiar WATCH mode).
 func (e *GameEngine) SetLocalRoomBroadcast(fn LocalRoomBroadcastFunc) {
 	e.localRoomBroadcast = func(roomNum int, messages []string) {
 		fn(roomNum, messages)
@@ -271,7 +272,7 @@ func (e *GameEngine) SetLocalRoomBroadcastExclude(fn LocalRoomBroadcastExcludeFu
 // setWatching registers or clears a player's familiar watch on a room.
 // roomNum == 0 clears the watch. Safe to call from any goroutine.
 // Also used by @monitor (see gmMonitor in gm_commands.go) — a GM and a familiar's
-// COMMAND WATCH WILL share the same one-room-per-player slot, so setting one
+// COMMAND WATCH share the same one-room-per-player slot, so setting one
 // replaces the other.
 func (e *GameEngine) setWatching(playerName string, roomNum int) {
 	e.watchMu.Lock()
@@ -429,6 +430,7 @@ func NewGameEngine(db *mongo.Database, parsed *gameworld.ParsedData) *GameEngine
 	for i := range parsed.MonsterAdjs {
 		e.monAdjs[parsed.MonsterAdjs[i].ID] = parsed.MonsterAdjs[i].Name
 	}
+	e.recordVocabSources(parsed)
 	for i := range parsed.BreakMods {
 		e.breakMods[parsed.BreakMods[i].AdjID] = parsed.BreakMods[i].Modifier
 	}
@@ -1884,7 +1886,22 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			RoomBroadcast: []string{fmt.Sprintf("%s seems to meld into the rock.", player.DisplayName())},
 		}
 	case "CALL":
-		return &CommandResult{Messages: []string{"[Aelfen familiar coming soon.]"}} // TODO: call woodland creature
+		// LEGENDS.DOC: "Aelfen have the power to CALL a woodland creature to
+		// serve them. This works only in wilderness." Same animals as the druid
+		// spell Call Animal (504), and the same one-summon limit.
+		if player.Race != RaceAelfen {
+			return &CommandResult{Messages: []string{"Only the aelfen can call woodland creatures to serve them."}}
+		}
+		room := e.rooms[player.RoomNumber]
+		if room == nil {
+			return &CommandResult{Messages: []string{"No woodland creature answers your call here."}}
+		}
+		switch room.Terrain {
+		case "FOREST", "MOUNTAIN", "PLAIN", "SWAMP", "JUNGLE", "WASTE": // matches the WILDERNESS script var
+		default:
+			return &CommandResult{Messages: []string{"No woodland creature answers your call here. You must be in the wilderness."}}
+		}
+		return e.castCallAnimal(player)
 	case "TRANSFORM":
 		if player.MistForm || player.SlimeForm {
 			// Mist Form / Slime Form → normal: the only way out of either form
