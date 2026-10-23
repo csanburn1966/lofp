@@ -1283,7 +1283,9 @@ func (e *GameEngine) monsterTick(tick int) {
 			}
 
 			// Move the monster
+			fromRoom := inst.RoomNumber
 			e.monsterMgr.moveMonster(idx, chosen.destID)
+			e.moveMonsterStalkers(inst.ID, fromRoom, chosen.destID)
 
 			// Arrival message
 			entryText := def.TextOverrides["TEXE"]

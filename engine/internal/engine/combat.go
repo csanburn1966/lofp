@@ -4547,7 +4547,9 @@ func (e *GameEngine) monsterFlee(inst *MonsterInstance, def *gameworld.MonsterDe
 	}
 
 	inst.Target = ""
+	fromRoom := inst.RoomNumber
 	e.monsterMgr.moveMonster(e.monsterMgr.indexOfID(inst.ID), chosen.destID)
+	e.moveMonsterStalkers(inst.ID, fromRoom, chosen.destID)
 
 	// The monster is gone from the room — take everyone who was fighting it out of
 	// combat too, same as on death (see clearCombatForMonster), so they don't stay

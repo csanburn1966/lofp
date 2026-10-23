@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -290,6 +291,87 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 	return &CommandResult{Messages: []string{"That skill is not available for training here."}}
 }
 
+// ---- SELFTRAIN ----
+
+// selfTrainSurcharge is SELFTRAIN's extra cost per rank over TRAIN (LEGENDS.DOC:
+// "The build point cost is one build point higher than usual").
+const selfTrainSurcharge = 1
+
+// selfTrainedRanks is how many of a skill's current ranks were self-trained.
+func selfTrainedRanks(player *Player, skillID int) int {
+	return max(0, min(player.SelfTrained[skillID], player.Skills[skillID]))
+}
+
+// setSkillRank sets a skill's rank. When ranks are taken away, self-trained ranks
+// go first, so their surcharge is what gets refunded first.
+func setSkillRank(player *Player, skillID, level int) {
+	if player.Skills == nil {
+		player.Skills = make(map[int]int)
+	}
+	if removed := player.Skills[skillID] - level; removed > 0 {
+		st := max(0, min(player.SelfTrained[skillID]-removed, level))
+		if st == 0 {
+			delete(player.SelfTrained, skillID)
+		} else {
+			player.SelfTrained[skillID] = st
+		}
+	}
+	player.Skills[skillID] = level
+}
+
+// findSkillByArg resolves a skill number or name prefix (lowest skill # wins).
+func findSkillByArg(arg string) (int, bool) {
+	arg = strings.ToLower(strings.TrimSpace(arg))
+	if id, err := strconv.Atoi(arg); err == nil {
+		_, ok := SkillNames[id]
+		return id, ok
+	}
+	for id := 0; id <= 35; id++ {
+		if name, ok := SkillNames[id]; ok && strings.HasPrefix(strings.ToLower(name), arg) {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+// doSelfTrain handles SELFTRAIN <skill# or name>: train yourself one rank in a
+// skill you already know, anywhere, for the usual BP cost plus selfTrainSurcharge
+// — for players who have outgrown every available trainer. No gold fee.
+func (e *GameEngine) doSelfTrain(ctx context.Context, player *Player, args []string) *CommandResult {
+	if len(args) == 0 {
+		return &CommandResult{Messages: []string{"Selftrain which skill? (SELFTRAIN <skill#>)"}}
+	}
+	skillID, ok := findSkillByArg(strings.Join(args, " "))
+	if !ok {
+		return &CommandResult{Messages: []string{"There is no such skill."}}
+	}
+	name := SkillNames[skillID]
+	currentLvl := player.Skills[skillID]
+	if currentLvl < 1 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You can only train yourself in a skill you already know, and you have no ranks in %s.", name)}}
+	}
+	bpCost := skillBPCost(skillID, currentLvl) + selfTrainSurcharge
+	if player.BuildPoints < bpCost {
+		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough build points. Selftraining %s costs %d BP (you have %d).", name, bpCost, player.BuildPoints)}}
+	}
+
+	player.BuildPoints -= bpCost
+	setSkillRank(player, skillID, currentLvl+1)
+	if player.SelfTrained == nil {
+		player.SelfTrained = make(map[int]int)
+	}
+	player.SelfTrained[skillID]++
+	if skillID == 11 { // Endurance: +4 max body points per rank, as in TRAIN
+		player.MaxBodyPoints += 4
+		player.BodyPoints += 4
+	}
+	e.SavePlayer(ctx, player)
+	return &CommandResult{
+		Messages:    []string{fmt.Sprintf("You train yourself in %s to rank %d. (-%d BP, %d BP remaining)", name, currentLvl+1, bpCost, player.BuildPoints)},
+		PlayerState: player,
+	}
+}
+
 // ---- ANOINT (apply poison to weapon) ----
 
 func (e *GameEngine) doAnoint(ctx context.Context, player *Player, args []string) *CommandResult {
@@ -344,21 +426,27 @@ func lockpickBreakChance(material string) int {
 	}
 }
 
+// pickRoundTime is PICK's round time in seconds (5 in every capture).
+const pickRoundTime = 5
+
 func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []string) *CommandResult {
 	lockSkill := player.Skills[22]
 	if lockSkill < 1 {
 		return &CommandResult{Messages: []string{"You have no training in Lockpicking."}}
 	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := int(time.Until(player.RoundTimeExpiry).Seconds()) + 1
+		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
+	}
 
 	raw := strings.ToLower(strings.Join(args, " "))
 	containerTarget := raw
 
-	// Strip optional "with lockpick" suffix
+	// Strip the optional "with <lockpick>" clause. The tool is always the first
+	// lockpick carried, and players abbreviate it ("pick my ches with lock" in
+	// ranlong.txt), so the clause is dropped whatever it says.
 	if idx := strings.Index(raw, " with "); idx >= 0 {
-		tool := strings.TrimSpace(raw[idx+6:])
-		if strings.HasPrefix(tool, "lockpick") {
-			containerTarget = strings.TrimSpace(raw[:idx])
-		}
+		containerTarget = strings.TrimSpace(raw[:idx])
 	}
 	containerTarget, containerMine := stripMyPrefix(containerTarget)
 	containerTarget, ordSkip := parseOrdinal(containerTarget)
@@ -368,6 +456,7 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 	pickIdx := -1
 	pickMaterial := ""
 	pickName := "lockpick"
+	pickNoun := "lockpick"
 	for i, ii := range player.Inventory {
 		def := e.items[ii.Archetype]
 		if def == nil || def.Type != "LOCKPICK" {
@@ -380,61 +469,83 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 			pickMaterial = strings.ToLower(e.getAdjName(ii.Adj2))
 		}
 		pickName = e.formatItemName(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+		pickNoun = e.formatItemNameNoArticle(def, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 		break
 	}
 	if pickIdx < 0 {
 		return &CommandResult{Messages: []string{"You need a lockpick to do that."}}
 	}
 
-	// tryPick returns (success bool, roll int). The roll value lets the caller
-	// assess how badly a failure was (higher roll = worse fumble).
-	tryPick := func(lockDiff int) (bool, int) {
-		chance := 30 + lockSkill*5 + player.Agility/5 - lockDiff + unemoteSkillBonus(player)
-		if chance < 5 {
-			chance = 5
-		}
+	// Every attempt (and setting off a trap) costs pickRoundTime seconds, halved
+	// by spell Haste or psionic Speed via applyRoundTime.
+	roundTime := func() string {
+		rt := applyRoundTime(player, pickRoundTime)
+		player.RoundTime = rt
+		player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
+		return fmt.Sprintf(" [Round: %d sec]", rt)
+	}
+
+	// attempt rolls one pick against a lock of difficulty lockDiff, calling unlock
+	// on success. Output follows the captures (ranlong.txt, rori0627.txt,
+	// chan0327.txt): a [Success/Roll] line, the result, then the round time. The
+	// chance is not floored — the captures show 0% and 1% locks.
+	attempt := func(displayName string, lockDiff int, unlock func()) *CommandResult {
+		chance := max(0, min(100, 30+lockSkill*5+player.Agility/5-lockDiff+unemoteSkillBonus(player)))
 		if player.IsGM {
-			return true, 0
+			chance = 100
 		}
-		r := rand.Intn(100)
-		return r < chance, r
-	}
-
-	// maybeBreakPick checks for an extreme failure (≈1-in-3 of failures) and if so
-	// rolls against the material's break chance. Returns an extra message if it breaks.
-	maybeBreakPick := func(roll int, chance int) string {
-		// Extreme failure: rolled in the top third of the failure range.
-		failureRange := 100 - chance
-		if failureRange <= 0 {
-			failureRange = 1
+		roll := rand.Intn(100) + 1
+		if roll <= chance {
+			unlock()
+			player.Experience += 50 * lockDiff
+			msgs := []string{
+				fmt.Sprintf("[Success: %d%%, Roll: %d] Success!", chance, roll),
+				fmt.Sprintf("You hear a click as you succeed in picking the lock on %s.", displayName),
+				roundTime(),
+			}
+			e.SavePlayer(ctx, player)
+			return &CommandResult{
+				Messages:      msgs,
+				RoomBroadcast: []string{fmt.Sprintf("You hear a click as %s succeeds in picking the lock on %s.", player.DisplayName(), displayName)},
+				PlayerState:   player,
+			}
 		}
-		if roll < 100-failureRange/3 {
-			return "" // not extreme enough
+		msgs := []string{
+			fmt.Sprintf("[Success: %d%%, Roll: %d] Failure.", chance, roll),
+			fmt.Sprintf("You fail to pick the lock on %s.", displayName),
 		}
-		if rand.Intn(100) < lockpickBreakChance(pickMaterial) {
+		// An extreme failure (top third of the failure range) may snap the pick,
+		// depending on its material.
+		if roll > 100-max(1, 100-chance)/3 && rand.Intn(100) < lockpickBreakChance(pickMaterial) {
 			player.Inventory = append(player.Inventory[:pickIdx], player.Inventory[pickIdx+1:]...)
-			return fmt.Sprintf("Your %s snaps with a sharp CRACK!", pickName)
+			msgs = append(msgs, fmt.Sprintf("Your %s snaps with a sharp CRACK!", pickNoun))
 		}
-		return ""
-	}
-
-	// successMsg builds the success CommandResult.
-	successMsg := func(displayName string) *CommandResult {
-		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You hear a soft CLICK as you pick the lock on %s.", displayName)},
-			RoomBroadcast: []string{fmt.Sprintf("You hear a soft CLICK as %s picks the lock on %s.", player.DisplayName(), displayName)},
-		}
-	}
-
-	// failMsg builds the failure CommandResult, appending a break message if the pick snapped.
-	failMsg := func(displayName, breakMsg string) *CommandResult {
-		msgs := []string{fmt.Sprintf("You fiddle with the lock on %s but can't seem to get it open.", displayName)}
-		if breakMsg != "" {
-			msgs = append(msgs, breakMsg)
-		}
+		msgs = append(msgs, roundTime())
+		e.SavePlayer(ctx, player)
 		return &CommandResult{
 			Messages:      msgs,
-			RoomBroadcast: []string{fmt.Sprintf("%s fiddles with a lock on %s.", player.DisplayName(), displayName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s fiddles with the lock on %s but fails to pick it.", player.DisplayNameCap(), displayName)},
+			PlayerState:   player,
+		}
+	}
+
+	// trapResult: working the lock of a trapped container springs the trap and
+	// ends the attempt (see traps.go). An acid trap also "dissolves lockpick"
+	// (GMSCRIPT.DOC VAL4 #3/#9); acid never destroys the container, so pickIdx
+	// is still valid after spring.
+	trapResult := func(displayName string, code int, spring func() ([]string, bool)) *CommandResult {
+		trapMsgs, _ := spring()
+		msgs := append([]string{fmt.Sprintf("You set off a trap on %s!", displayName)}, trapMsgs...)
+		if code == 3 || code == 9 {
+			player.Inventory = append(player.Inventory[:pickIdx], player.Inventory[pickIdx+1:]...)
+			msgs = append(msgs, fmt.Sprintf("The acid eats away %s!", pickName))
+		}
+		msgs = append(msgs, roundTime())
+		e.SavePlayer(ctx, player)
+		return &CommandResult{
+			Messages:      msgs,
+			RoomBroadcast: []string{fmt.Sprintf("%s sets off a trap on %s!", player.DisplayNameCap(), displayName)},
+			PlayerState:   player,
 		}
 	}
 
@@ -456,20 +567,12 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 		if strings.ToUpper(ii.State) != "LOCKED" {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't locked.", displayName)}}
 		}
-		chance := 30 + lockSkill*5 + player.Agility/5 - ii.Val1
-		if chance < 5 {
-			chance = 5
+		if code := trapCodeOf(def, ii.Val4, ii.Val5); code != 0 {
+			return trapResult(displayName, code, func() ([]string, bool) {
+				return e.springCarriedTrap(player, &player.Inventory, i, displayName)
+			})
 		}
-		ok, roll := tryPick(ii.Val1)
-		if ok {
-			player.Inventory[i].State = "CLOSED"
-			player.Experience += 50 * ii.Val1
-			e.SavePlayer(ctx, player)
-			return successMsg(displayName)
-		}
-		breakMsg := maybeBreakPick(roll, chance)
-		e.SavePlayer(ctx, player)
-		return failMsg(displayName, breakMsg)
+		return attempt(displayName, ii.Val1, func() { player.Inventory[i].State = "CLOSED" })
 	}
 
 	// Room items — skipped when "my" was used (e.g. "pick lock my chest").
@@ -491,21 +594,15 @@ func (e *GameEngine) doPickLock(ctx context.Context, player *Player, args []stri
 			if strings.ToUpper(ri.State) != "LOCKED" {
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't locked.", displayName)}}
 			}
-			chance := 30 + lockSkill*5 + player.Agility/5 - ri.Val1
-			if chance < 5 {
-				chance = 5
+			if code := trapCodeOf(def, ri.Val4, ri.Val5); code != 0 {
+				return trapResult(displayName, code, func() ([]string, bool) {
+					return e.springRoomTrap(player, room, i, displayName)
+				})
 			}
-			ok, roll := tryPick(ri.Val1)
-			if ok {
+			return attempt(displayName, ri.Val1, func() {
 				room.Items[i].State = "CLOSED"
 				e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_state", ItemRef: ri.Ref, NewState: "CLOSED"})
-				player.Experience += 50 * ri.Val1
-				e.SavePlayer(ctx, player)
-				return successMsg(displayName)
-			}
-			breakMsg := maybeBreakPick(roll, chance)
-			e.SavePlayer(ctx, player)
-			return failMsg(displayName, breakMsg)
+			})
 		}
 	}
 

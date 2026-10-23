@@ -20,7 +20,7 @@ import (
 
 // GameVersion is the release version reported by the VERSION command and the
 // telnet GMCP Core.Hello. Keep in sync with MainMenu.tsx / VersionNotes.tsx.
-const GameVersion = "15.1.0"
+const GameVersion = "15.3.0"
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z'-]{2,19}$`) // min 3 chars total
 
@@ -1854,11 +1854,11 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 		return e.doRob(ctx, player, args)
 	case "STALK":
-		return &CommandResult{Messages: []string{"[Stalking coming soon.]"}} // TODO: secretly follow someone
+		return e.doStalk(player, args)
 	case "TEACH":
 		return e.doTeach(ctx, player, args)
 	case "SELFTRAIN":
-		return &CommandResult{Messages: []string{"[Self-training coming soon.]"}} // TODO: train self at +1 cost
+		return e.doSelfTrain(ctx, player, args)
 	case "UNLEARN":
 		return e.doUnlearn(ctx, player, args)
 	case "LEARN":
@@ -1868,7 +1868,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "TRAP":
 		return &CommandResult{Messages: []string{"[Trap setting coming soon.]"}} // TODO: place trap on container
 	case "SURVEY":
-		return &CommandResult{Messages: []string{"[Mining survey coming soon.]"}} // TODO: survey area for minerals
+		return e.doSurvey(ctx, player)
 	case "SPLIT":
 		return e.doSplit(ctx, player, args)
 	// === RACIAL/SPECIAL (TODO: implement) ===
@@ -1993,7 +1993,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		return e.doSharedXP(player)
 	case "TEND":
 		return e.doTend(ctx, player, args)
-	case "BREAK":
+	case "BREAK", "DESTROY":
 		if len(args) == 1 && strings.EqualFold(args[0], "FREE") {
 			return e.doBreakFree(ctx, player)
 		}
@@ -2115,7 +2115,7 @@ var allVerbs = []string{
 	"BLEND", "CALL", "TRANSFORM", "MOLD",
 	"DISGUISE", "SUBMIT", "UNSUBMIT", "ARREST", "CARRY", "RELEASE", "PUTDOWN",
 	"ENROLL", "INITIATE", "JOIN", "FOLLOW", "LEAVE", "DISBAND", "SHAREDXP",
-	"TEND", "BREAK",
+	"TEND", "BREAK", "DESTROY",
 	"SNIFF", "SMELL", "LISTEN",
 	// Communication
 	"WHISPER", "YELL", "SPEECH", "THINK", "TELEPATHY", "CONTACT", "SAYTO",
@@ -2187,6 +2187,8 @@ var verbAliases = map[string]string{
 	"WHI": "WHISPER", "THIN": "THINK", "CONTA": "CONTACT",
 	// Keep these abbreviations working now that BUZZ/CLICK (mechanoid emotes) share their prefixes.
 	"BU": "BUY", "CLI": "CLIMB",
+	// DESTROY (BREAK's synonym) would otherwise make "des" ambiguous with DESCEND.
+	"DES": "DESCEND",
 	"DI":    "DIAGNOSE",
 	"FAT":   "FATIGUE",
 	"ORDER": "BUY", "UNLIGHT": "EXTINGUISH", "IGNITE": "LIGHT",

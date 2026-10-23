@@ -9,6 +9,111 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.3.0 &mdash; October 23, 2026</h2>
+            <p className="text-gray-400 mb-3">Three commands that only said &ldquo;coming soon&rdquo; now work: <code className="text-amber-300">BREAK</code> smashes things open, <code className="text-amber-300">STALK</code> lets the stealthy shadow someone unseen, and <code className="text-amber-300">SELFTRAIN</code> lets you push a skill past what any teacher offers. Treasure chests are dangerous again. Their traps go off whether the chest is on the floor or in your hands, and <code className="text-amber-300">DISARM</code> finds and removes them. Picking locks now looks and plays as it did in the original game, and <code className="text-amber-300">UNLEARN</code> returns every build point you spent.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: BREAK &lt;object&gt; WITH &lt;object&gt;</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Smash an item with something made of stronger stuff (synonym <code className="text-amber-300">DESTROY</code>). Wood breaks against stone, stone against metal, and so on. Nothing breaks against a weaker material</li>
+                  <li>It can take many tries. A hammer or an axe helps, and so does a strong arm. Each attempt takes 5 seconds, halved when you&rsquo;re hasted</li>
+                  <li>A broken container spills what&rsquo;s inside onto the floor. Potions, vials, flasks and bottles inside are destroyed, and each gem has an even chance of coming out chipped or cracked if it wasn&rsquo;t already</li>
+                  <li>Breaking a trapped chest sets off its trap</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: STALK</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">STALK &lt;player or creature&gt;</code> follows them like <code className="text-amber-300">FOLLOW</code>, but quietly. You don&rsquo;t join their group, and no one sees you come and go</li>
+                  <li>Needs the Stealth skill. Each time your quarry moves, you make a Stealth roll against their Perception. Fail it and you lose track of them</li>
+                  <li><code className="text-amber-300">STALK</code> on its own, <code className="text-amber-300">LEAVE</code>, <code className="text-amber-300">FOLLOW</code> or <code className="text-amber-300">HOLD</code> ends it, and so does walking off on your own</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: SELFTRAIN</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">SELFTRAIN &lt;skill&gt;</code> raises a skill you already know without a teacher or a fee. It costs 1 build point more than <code className="text-amber-300">TRAIN</code> would</li>
+                  <li>Your build point totals keep track of which ranks you trained yourself, so the extra point is always counted correctly</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Trapped Chests</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Chests and other containers from treasure have always come with traps, but a trap only worked while the chest sat on the floor. Since most adventurers pick a chest up first, traps never went off. Now they go off wherever the chest is, when it is opened, its lock is picked or it is broken</li>
+                  <li>An acid trap eats the lockpick working on it, and an explosive trap destroys the chest and everything inside, as in the original game</li>
+                  <li><code className="text-amber-300">DISARM &lt;object&gt;</code> works as the original manual describes. With Trap &amp; Poison Lore, the first try finds the trap and the next tries remove it. Your skill rank and Perception improve your chances, and harder traps lower them. Each attempt takes 5 seconds, and a very bad fumble sets the trap off</li>
+                  <li>It also works on chests you are carrying (<code className="text-amber-300">DISARM MY CHEST</code>)</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: PICK and UNLEARN</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">PICK</code> now shows your chance and roll, with the original game&rsquo;s messages. Each attempt takes 5 seconds, halved by the Haste spell or the psionic Speed ability. Some locks really are beyond you now: your chance can drop to 0%</li>
+                  <li><code className="text-amber-300">PICK CHEST WITH LOCK</code> and other shortened lockpick names now work</li>
+                  <li><code className="text-amber-300">UNLEARN</code> returns every build point you spent on that rank, including the extra point for a self-trained one. As the manual says, it can be used once per level. It also accepts a skill number</li>
+                  <li>Unlearning a rank of Endurance now takes back the 4 body points it gave you</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When <code className="text-amber-300">@edsk</code> lowers a skill, self-trained ranks come off first and their extra build point is returned. It now reports the change to the player&rsquo;s build points, and it won&rsquo;t set a skill below 0</li>
+                  <li>A trap in an item&rsquo;s <code className="text-amber-300">VAL4</code> now works on any container that opens or any door, wherever it is, and <code className="text-amber-300">DISARM</code> can find and remove it. Potion containers and vessels in the middle of a <code className="text-amber-300">BREW</code> keep their own <code className="text-amber-300">VAL4</code> meanings and are never treated as trapped</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.2.0 &mdash; October 21, 2026</h2>
+            <p className="text-gray-400 mb-3">Enchanters gain a new level 28 spell, Tempering, which hardens a weapon or shield against breaking, for an hour or, with a rare polished diamond, for good. Aelfen can finally <code className="text-amber-300">CALL</code> a woodland creature to serve them. Mass Invisibility now hides your whole group, Mindlink can be extended by casting it again, and CyberTech now serves humans only. GMs can work through player reports from the GM page, and look up adjective and noun numbers there.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Tempering (223)</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A new level 28 Enchantment spell. <code className="text-amber-300">PREPARE 223</code>, then <code className="text-amber-300">CAST &lt;weapon or shield&gt;</code>, makes the item much harder to break in a weapon clash. It works on anything you wield, hold, wear or carry</li>
+                  <li>Prepared on its own, the tempering lasts one hour. Casting it again on the same item resets the hour; the time doesn&rsquo;t add up</li>
+                  <li>Prepared with a large or huge diamond that a Highlander has polished with <code className="text-amber-300">MOLD</code> (<code className="text-amber-300">PREPARE 223 WITH DIAMOND</code>), the tempering is permanent. The diamond is used up only if the spell succeeds</li>
+                  <li>Tempering never stacks. An item that is permanently tempered can&rsquo;t be tempered again</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Added: Aelfen CALL</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Aelfen can now <code className="text-amber-300">CALL</code> a woodland creature to be their familiar, as described in the original player manual. It answers the same way the druid spell Call Animal does, with the same animals</li>
+                  <li>It only works in the wilderness (forest, mountains, plains, swamp, jungle or wasteland), and you can have only one called creature at a time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Spells and Cyberware</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Mass Invisibility (212) now turns every member of your group in the room invisible along with you. Any group member can cast it, not just the leader</li>
+                  <li>Casting Mindlink on someone who already has it adds 20 minutes, up to the usual maximum, instead of doing nothing. Eating or drinking thesnia no longer cuts a longer telepathy short</li>
+                  <li>CyberTech&rsquo;s devices were built for humans, and the surgery now turns other races away before taking any money</li>
+                  <li>Summoned creatures&rsquo; messages now give the right command for watching a room: <code className="text-amber-300">COMMAND &lt;creature&gt; WATCH</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: World</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>All three Fayd restaurants that list grilled shrimp on their menu now sell it, in every season</li>
+                  <li>The Crafters Guild&rsquo;s weavers&rsquo; cabinet, cooler and rack no longer turn away dyes and materials you found by searching or by foraging in the Caldis Forest as &ldquo;already purchased&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM &amp; Scripting Notes</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The GM page has a new <strong>Reports</strong> tab listing players&rsquo; <code className="text-amber-300">REPORT</code>s, with a count of unresolved ones on the tab. GMs can mark reports done, reopen them and reply, as on the Admin page. Replies are credited to the GM character</li>
+                  <li>Number Ranges now covers <strong>Adjectives</strong>, <strong>Monster Adjectives</strong> and <strong>Nouns</strong> (<code className="text-amber-300">ADJDEF</code>, <code className="text-amber-300">MADJDEF</code>, <code className="text-amber-300">NOUNDEF</code>), with free gaps, reservations and a searchable list of every number, its word and the script that defines it</li>
+                  <li><code className="text-amber-300">ITEMWORTH</code> now gives the same full value SELL starts from, so items found by SEARCH or made by <code className="text-amber-300">NEWITEM</code> have a worth too. A negative crafted value (<code className="text-amber-300">CRAFTEDVALUE=-1</code> on <code className="text-amber-300">NEWITEM</code>/<code className="text-amber-300">NEWPUT</code>) marks an item as having no resale value, and its <code className="text-amber-300">ITEMWORTH</code> reads 0</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.1.0 &mdash; October 19, 2026</h2>
             <p className="text-gray-400 mb-3">Guarding is reworked: <code className="text-amber-300">GUARD</code> no longer switches itself off, the new <code className="text-amber-300">UNGUARD</code> command stops it, and a guarding elemental now steps in front of monsters and fights them for you. The way into the sewers beneath Fayd is open again, scripted exits written with short directions (such as <code className="text-amber-300">D</code> or <code className="text-amber-300">NE</code>) now work across the world, and the Night Shades&rsquo; hideout is part of the game. GMs can export a character from the live server and import it into their own.</p>
 

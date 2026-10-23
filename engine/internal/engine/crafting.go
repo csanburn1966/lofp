@@ -211,21 +211,108 @@ func gemXPBase(gemName string) int {
 	}
 }
 
+// roomMineGrade returns the room's ore grade ("A", "B" or "C") from its
+// MINEA/MINEB/MINEC modifier, or "" if the room can't be mined.
+func roomMineGrade(room *gameworld.Room) string {
+	switch {
+	case containsModifier(room.Modifiers, "MINEA"):
+		return "A"
+	case containsModifier(room.Modifiers, "MINEB"):
+		return "B"
+	case containsModifier(room.Modifiers, "MINEC"):
+		return "C"
+	}
+	return ""
+}
+
+// doSurvey evaluates the current area's ore for a character with Mining skill.
+// Original messages from the captures: "You do not know enough about mining to
+// survey this area." (band0521), "This area is not suitable for mining."
+// (rorinquest), "This is an excellent area for mining." + [Round: 2 sec] (rori0808).
+// Per GM Pages updates.html, SURVEY reveals a hidden character, like MINE/FORAGE.
+func (e *GameEngine) doSurvey(ctx context.Context, player *Player) *CommandResult {
+	room := e.rooms[player.RoomNumber]
+	if player.Skills[35] < 1 {
+		return &CommandResult{Messages: []string{"You do not know enough about mining to survey this area."}}
+	}
+	if player.RoundTimeExpiry.After(time.Now()) {
+		remaining := time.Until(player.RoundTimeExpiry).Seconds()
+		return &CommandResult{Messages: []string{fmt.Sprintf("You must wait %.0f more seconds.", remaining)}}
+	}
+
+	player.Hidden = false
+	surveyRoundTime := applyRoundTime(player, 2)
+	player.RoundTimeExpiry = time.Now().Add(time.Duration(surveyRoundTime) * time.Second)
+	player.RoundTime = surveyRoundTime
+	e.SavePlayer(ctx, player)
+
+	result := &CommandResult{
+		RoomBroadcast: []string{fmt.Sprintf("%s surveys the area.", player.DisplayNameCap())},
+		PlayerState:   player,
+	}
+
+	// Room scripts can react to SURVEY — HAVERING.SCR's MACRO 98 nests
+	// "IFPREVERB SURVEY -1" inside IFVAR RNUM range checks to hint at creod.
+	if room != nil {
+		sc := &ScriptContext{Player: player, Room: room, Engine: e, activeVerb: "SURVEY", activeRef: "-1"}
+		for _, block := range room.Scripts {
+			if scriptBlockHandlesVerb(block, "SURVEY") {
+				sc.execBlock(block)
+			}
+		}
+		if len(sc.DeferredSegments) > 0 {
+			e.scheduleScriptSegments(player, sc.DeferredSegments)
+		}
+		result.Messages = append(result.Messages, sc.Messages...)
+		result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
+		result.GMBroadcast = sc.GMMsgs
+		if sc.Blocked {
+			result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", surveyRoundTime))
+			return result
+		}
+	}
+
+	grade := ""
+	if room != nil {
+		grade = roomMineGrade(room)
+	}
+	switch grade {
+	case "A":
+		result.Messages = append(result.Messages, "This is an excellent area for mining. The ore here is grade A.")
+	case "B":
+		result.Messages = append(result.Messages, "This is a good area for mining. The ore here is grade B.")
+	case "C":
+		result.Messages = append(result.Messages, "This is a fair area for mining. The ore here is grade C.")
+	default:
+		result.Messages = append(result.Messages, "This area is not suitable for mining.")
+	}
+	result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", surveyRoundTime))
+	return result
+}
+
+// scriptBlockHandlesVerb reports whether a top-level room script block is an
+// IFVERB/IFPREVERB <verb> -1, or a conditional that has one nested inside it.
+func scriptBlockHandlesVerb(block gameworld.ScriptBlock, verb string) bool {
+	if (block.Type == "IFVERB" || block.Type == "IFPREVERB") && len(block.Args) >= 2 {
+		return strings.EqualFold(block.Args[0], verb) && block.Args[1] == "-1"
+	}
+	for _, body := range [][]gameworld.ScriptStep{block.Body, block.ElseBody} {
+		for _, step := range body {
+			if step.Block != nil && scriptBlockHandlesVerb(*step.Block, verb) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandResult {
 	room := e.rooms[player.RoomNumber]
 	if room == nil {
 		return &CommandResult{Messages: []string{"You can't mine here."}}
 	}
 
-	// Determine mine grade
-	grade := ""
-	if containsModifier(room.Modifiers, "MINEA") {
-		grade = "A"
-	} else if containsModifier(room.Modifiers, "MINEB") {
-		grade = "B"
-	} else if containsModifier(room.Modifiers, "MINEC") {
-		grade = "C"
-	}
+	grade := roomMineGrade(room)
 	if grade == "" {
 		return &CommandResult{Messages: []string{"There is nothing to mine here."}}
 	}

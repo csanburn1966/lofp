@@ -122,6 +122,9 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// If this happened after doLook (as it used to), the leader's own room
 	// render would list who's present in destNum before the group/summons had
 	// actually been moved there, making it look like they didn't follow.
+	// Walking off on your own ends any STALK; anyone stalking you rolls to keep up.
+	clearStalk(player)
+	e.movePlayerStalkers(ctx, player, originalRoom, destNum)
 	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
@@ -879,6 +882,9 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 
 	// Relocate followers and summoned creatures BEFORE rendering any room look
 	// (see doMove for why — otherwise the group looks like it didn't follow).
+	// Walking off on your own ends any STALK; anyone stalking you rolls to keep up.
+	clearStalk(player)
+	e.movePlayerStalkers(ctx, player, originalRoom, destNum)
 	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {

@@ -148,6 +148,9 @@ type InventoryItem struct {
     // (castSigilSpell) — distinct from SigilOwner, which is whoever later claims it by
     // touch. Used by Truename (castTruenameSpell) to reveal who created the glyph.
     SigilCaster  string `bson:"sigilCaster,omitempty" json:"sigilCaster,omitempty"`
+    // TrapFound is set once DISARM has located the VAL4 trap on this item, so the
+    // next DISARM tries to remove it (see doDisarm in traps.go). Cleared with the trap.
+    TrapFound bool `bson:"trapFound,omitempty" json:"trapFound,omitempty"`
 }
 
 // TimedDefenseBuff tracks one active defense spell with a bonus and expiry.
@@ -455,6 +458,12 @@ type Player struct {
 	IsGroupLeader bool     `bson:"-" json:"-"`
 	SharedXP      bool     `bson:"-" json:"-"` // leader-set: SHAREDXP command toggle — group splits combat XP (combat.go sharedXPRecipients)
 
+	// STALK (transient, see stalk.go): the player or monster instance being
+	// secretly followed. At most one is set.
+	StalkingPlayer  string `bson:"-" json:"-"`
+	StalkingMonster int    `bson:"-" json:"-"`
+	StalkingName    string `bson:"-" json:"-"` // display name at the time STALK began, for messages
+
 	// Social blocking (persistent): AVOID/UNAVOID/ALLOW/UNALLOW. AvoidList
 	// blocks physical interactive emotes (KISS, NIBBLE, etc.) and HOLD from
 	// the named players; AllowList overrides AvoidList for named players.
@@ -517,6 +526,12 @@ type Player struct {
 
 	// Skills
 	Skills      map[int]int  `bson:"skills" json:"skills"`           // skill# -> level
+	// SelfTrained counts how many of each skill's ranks came from SELFTRAIN, which
+	// cost 1 BP more than TRAIN — playerBPSpent needs it to total BP spent.
+	SelfTrained map[int]int `bson:"selfTrained,omitempty" json:"selfTrained,omitempty"`
+	// UnlearnLevel is the character level at which UNLEARN was last used — it's
+	// allowed once per level (LEGENDS.DOC).
+	UnlearnLevel int `bson:"unlearnLevel,omitempty" json:"unlearnLevel,omitempty"`
 	KnownSpells  map[int]bool `bson:"knownSpells,omitempty" json:"knownSpells,omitempty"` // spell# -> known
 	SpellMastery map[int]int  `bson:"spellMastery,omitempty" json:"spellMastery,omitempty"` // spell# -> mastery rank
 	WeaponSpecialization map[int]int `bson:"weaponSpecialization,omitempty" json:"weaponSpecialization,omitempty"` // weapon noun ID -> specialization rank

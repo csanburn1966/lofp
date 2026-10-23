@@ -448,6 +448,7 @@ func (e *GameEngine) doFollow(player *Player, args []string) *CommandResult {
 	if found.Following == player.FirstName {
 		return &CommandResult{Messages: []string{"You can't follow someone who is following you."}}
 	}
+	clearStalk(player) // joining a group ends any STALK
 	player.Following = found.FirstName
 	found.IsGroupLeader = true
 	// Add to leader's group members (avoid duplicates)
@@ -476,6 +477,7 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 	if found.Following != "" {
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is already following someone.", found.DisplayName())}}
 	}
+	clearStalk(found)
 	found.Following = player.FirstName
 	player.IsGroupLeader = true
 	alreadyIn := false
@@ -683,6 +685,9 @@ func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, ori
 // doLeave handles the LEAVE command — stop following.
 func (e *GameEngine) doLeave(player *Player) *CommandResult {
 	if player.Following == "" {
+		if player.isStalking() {
+			return e.doStalk(player, nil) // LEAVE also drops a STALK, silently
+		}
 		return &CommandResult{Messages: []string{"You are not following anyone."}}
 	}
 	leaderName := player.Following
@@ -1131,7 +1136,7 @@ var helpTopics = map[string][]string{
 		"TRAIN:                           Spend build points on skills, at a guild that teaches them",
 		"LEARN <spell/skill>:             Learn a new spell or skill from a book, scroll, or trainer",
 		"TEACH <person> <spell/skill>:    Teach a spell or skill you know to someone else",
-		"UNLEARN <skill>:                 Give up a skill to reclaim its build points",
+		"UNLEARN <skill>:                 Give up a skill rank (once per level) to reclaim its build points",
 	},
 	"VERBS": {
 		"Verbs related commands:",

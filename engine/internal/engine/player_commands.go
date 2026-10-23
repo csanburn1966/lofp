@@ -723,6 +723,7 @@ func playerBPSpent(player *Player) int {
 		for r := 0; r < rank; r++ {
 			total += skillBPCost(skillID, r)
 		}
+		total += selfTrainedRanks(player, skillID) * selfTrainSurcharge
 	}
 	// 8 BP for first mastery rank, 4 BP for each additional rank
 	for _, rank := range player.SpellMastery {

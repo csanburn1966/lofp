@@ -69,6 +69,8 @@ type RoomItem struct {
 	// (castSigilSpell in engine/spells.go) — distinct from SigilOwner, which is whoever
 	// later claims it by touch. Used by Truename to reveal who created the glyph.
 	SigilCaster string `bson:"sigilCaster,omitempty" json:"sigilCaster,omitempty"`
+	// TrapFound mirrors engine.InventoryItem.TrapFound — see its doc comment.
+	TrapFound bool `bson:"trapFound,omitempty" json:"trapFound,omitempty"`
 	// BladeSpell* mirror the same fields on engine.InventoryItem (a timed Storm/
 	// Inferno/Winter Blade imbue). Carried here so a weapon set on the floor keeps
 	// its expiry — without them the spell's Val3/Val5 stuck permanently once the

@@ -314,24 +314,22 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 	return &CommandResult{Messages: []string{"You don't see that here."}}
 }
 
-// doBreak handles the BREAK verb. Per LEGENDS.DOC, "BREAK <object> with <object>"
-// is meant to destroy an item using a stronger item — a whole strength-comparison
-// mechanic that doesn't exist yet. What already exists in the world data are
-// scripted environmental reactions to BREAK (IFPREVERB BREAK <ref>) — e.g. the
-// breakable window/door in MALL2.SCR that opens a hole through once broken —
-// which this wires up to the normal item-interaction pipeline so those scripts
-// actually fire. Breaking an object with no such script still gets the "coming
-// soon" message instead of silently claiming to break it.
+// doBreak handles the BREAK verb (synonym DESTROY). Scripted reactions to BREAK
+// (IFPREVERB BREAK <ref>) — e.g. the breakable window/door in MALL2.SCR that opens
+// a hole through once broken — run first through the normal item-interaction
+// pipeline. An object no script handles goes to the "BREAK <object> with <object>"
+// strength mechanic in break.go.
 func (e *GameEngine) doBreak(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Break what?"}}
 	}
-	// Strip a trailing "with <tool>" clause so the target name matches the object
-	// being broken, not the (currently unused) tool doing the breaking.
+	// Split off the "with <tool>" clause so the target name matches the object
+	// being broken, not the tool doing the breaking.
 	target := args
+	var tool []string
 	for i, a := range args {
 		if strings.EqualFold(a, "with") {
-			target = args[:i]
+			target, tool = args[:i], args[i+1:]
 			break
 		}
 	}
@@ -347,7 +345,7 @@ func (e *GameEngine) doBreak(ctx context.Context, player *Player, args []string)
 		return result
 	}
 	if strings.HasPrefix(msg, "You break ") && strings.HasSuffix(msg, "Nothing happens.") {
-		return &CommandResult{Messages: []string{"[Object destruction coming soon.]"}}
+		return e.doBreakWith(ctx, player, target, tool)
 	}
 	return result
 }
@@ -1658,15 +1656,25 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 				fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already open.", capitalize(fullName))}}
 			}
-			player.Inventory[i].State = "OPEN"
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			// Opening a trapped container springs its trap (see traps.go).
+			var trapMsgs []string
+			if trapCodeOf(itemDef, ii.Val4, ii.Val5) != 0 {
+				var destroyed bool
+				trapMsgs, destroyed = e.springCarriedTrap(player, &player.Inventory, i, fullName)
+				e.SavePlayer(context.Background(), player)
+				if destroyed {
+					return &CommandResult{Messages: append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...), PlayerState: player}
+				}
+			}
+			player.Inventory[i].State = "OPEN"
 			openMsg := fmt.Sprintf("You open %s.", fullName)
 			if itemDef.Type == "LIQCONTAINER" && ii.Val2 > 0 && ii.Val4 != 0 {
 				openMsg = fmt.Sprintf("You open %s, revealing a %s potion.", fullName, e.getAdjName(ii.Val4))
 			} else if contentsDesc := e.describeContainerContents(ii.Contents); contentsDesc != "" {
 				openMsg = fmt.Sprintf("You open %s, revealing %s.", fullName, contentsDesc)
 			}
-			return &CommandResult{Messages: []string{openMsg}}
+			return &CommandResult{Messages: append([]string{openMsg}, trapMsgs...), PlayerState: player}
 		}
 	}
 	// Worn containers (backpacks, waistpacks, etc.) — same priority as carried inventory.
@@ -1703,15 +1711,25 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 				fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already open.", capitalize(fullName))}}
 			}
-			player.Worn[i].State = "OPEN"
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			// Opening a trapped container springs its trap (see traps.go).
+			var trapMsgs []string
+			if trapCodeOf(itemDef, ii.Val4, ii.Val5) != 0 {
+				var destroyed bool
+				trapMsgs, destroyed = e.springCarriedTrap(player, &player.Worn, i, fullName)
+				e.SavePlayer(context.Background(), player)
+				if destroyed {
+					return &CommandResult{Messages: append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...), PlayerState: player}
+				}
+			}
+			player.Worn[i].State = "OPEN"
 			openMsg := fmt.Sprintf("You open %s.", fullName)
 			if itemDef.Type == "LIQCONTAINER" && ii.Val2 > 0 && ii.Val4 != 0 {
 				openMsg = fmt.Sprintf("You open %s, revealing a %s potion.", fullName, e.getAdjName(ii.Val4))
 			} else if contentsDesc := e.describeContainerContents(ii.Contents); contentsDesc != "" {
 				openMsg = fmt.Sprintf("You open %s, revealing %s.", fullName, contentsDesc)
 			}
-			return &CommandResult{Messages: []string{openMsg}}
+			return &CommandResult{Messages: append([]string{openMsg}, trapMsgs...), PlayerState: player}
 		}
 	}
 	// Room containers — skipped when "my" was used (e.g. "open my chest").
@@ -1765,18 +1783,25 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 					fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 					return &CommandResult{Messages: []string{fmt.Sprintf("%s is already open.", capitalize(fullName))}}
 				}
-				// Check for traps (VAL4 on item). LIQCONTAINERs use Val4 for the potion's
-				// liquid-appearance adjective, not a trap type, so they're excluded — a
-				// nonzero adjective ID would otherwise get misread as a trap code (e.g.
-				// landing in the >=1000 glyph range and firing a bogus "Inferno Glyph").
+				// Opening a trapped container springs its trap (VAL4; trapCodeOf keeps
+				// a LIQCONTAINER's potion-appearance adjective from reading as one).
+				fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 				var trapMsgs []string
-				if itemDef.Type != "LIQCONTAINER" {
-					trapMsgs = e.checkTrap(player, &room.Items[i])
+				if trapCodeOf(itemDef, ri.Val4, ri.Val5) != 0 {
+					var destroyed bool
+					trapMsgs, destroyed = e.springRoomTrap(player, room, i, fullName)
+					e.SavePlayer(context.Background(), player)
+					if destroyed {
+						return &CommandResult{
+							Messages:      append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...),
+							RoomBroadcast: []string{fmt.Sprintf("%s opens %s, setting off a trap!", player.DisplayNameCap(), fullName)},
+							PlayerState:   player,
+						}
+					}
 				}
 
 				room.Items[i].State = "OPEN"
 				e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_state", ItemRef: ri.Ref, NewState: "OPEN"})
-				fullName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
 				openMsg := fmt.Sprintf("You open %s.", fullName)
 				if itemDef.Type == "LIQCONTAINER" && ri.Val2 > 0 && ri.Val4 != 0 {
 					openMsg = fmt.Sprintf("You open %s, revealing a %s potion.", fullName, e.getAdjName(ri.Val4))
@@ -4021,25 +4046,35 @@ func (e *GameEngine) doUnlearn(ctx context.Context, player *Player, args []strin
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Unlearn what skill?"}}
 	}
-	target := strings.ToLower(strings.Join(args, " "))
-	for id, name := range SkillNames {
-		if !strings.HasPrefix(strings.ToLower(name), target) {
-			continue
-		}
-		currentLvl := player.Skills[id]
-		if currentLvl <= 0 {
-			return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any ranks in %s.", name)}}
-		}
-		// Unlearn one rank, get back build points minus one
-		bpBack := max(0, currentLvl-1) // return BP spent minus 1
-		player.Skills[id] = currentLvl - 1
-		player.BuildPoints += bpBack
-		e.SavePlayer(ctx, player)
-		return &CommandResult{Messages: []string{
-			fmt.Sprintf("You unlearn a rank of %s. (now rank %d, +%d build points, total BP: %d)", name, currentLvl-1, bpBack, player.BuildPoints),
-		}}
+	id, ok := findSkillByArg(strings.Join(args, " "))
+	if !ok {
+		return &CommandResult{Messages: []string{"You don't know that skill."}}
 	}
-	return &CommandResult{Messages: []string{"You don't know that skill."}}
+	name := SkillNames[id]
+	currentLvl := player.Skills[id]
+	if currentLvl <= 0 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any ranks in %s.", name)}}
+	}
+	if player.UnlearnLevel >= player.Level {
+		return &CommandResult{Messages: []string{"You have already unlearned a skill this level."}}
+	}
+	// One rank at a time, refunding everything that rank cost — including the
+	// SELFTRAIN surcharge, since self-trained ranks go first (setSkillRank).
+	// LEGENDS.DOC keeps one BP back ("save one"); the game owner chose the full
+	// refund since once-per-level is restriction enough. recalcBuildPoints makes
+	// player.BuildPoints agree with what's now spent.
+	oldBP := player.BuildPoints
+	setSkillRank(player, id, currentLvl-1)
+	recalcBuildPoints(player)
+	player.UnlearnLevel = player.Level
+	if id == 11 { // Endurance: take back TRAIN's +4 max body points
+		player.MaxBodyPoints -= 4
+		player.BodyPoints = min(player.BodyPoints, player.MaxBodyPoints)
+	}
+	e.SavePlayer(ctx, player)
+	return &CommandResult{Messages: []string{
+		fmt.Sprintf("You unlearn a rank of %s. (now rank %d, +%d build points, total BP: %d)", name, currentLvl-1, player.BuildPoints-oldBP, player.BuildPoints),
+	}}
 }
 
 func (e *GameEngine) doUndress(ctx context.Context, player *Player) *CommandResult {
@@ -4211,82 +4246,6 @@ func (e *GameEngine) doLoadWeapon(ctx context.Context, player *Player, args []st
 }
 
 // ---- DISARM command ----
-
-func (e *GameEngine) doDisarm(ctx context.Context, player *Player, args []string) *CommandResult {
-	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Disarm what?"}}
-	}
-	target := strings.ToLower(strings.Join(args, " "))
-	target, ordSkip := parseOrdinal(target)
-	skip := ordSkip
-
-	room := e.rooms[player.RoomNumber]
-	if room == nil {
-		return &CommandResult{Messages: []string{"You can't do that here."}}
-	}
-
-	for i, ri := range room.Items {
-		itemDef := e.items[ri.Archetype]
-		if itemDef == nil {
-			continue
-		}
-		name := e.getItemNounName(itemDef)
-		if !matchesTarget(name, target, e.getAdjName(ri.Adj1), e.getAdjName(ri.Adj2), e.getAdjName(ri.Adj3)) {
-			continue
-		}
-		if skip > 0 {
-			skip--
-			continue
-		}
-
-		// Check if item has a trap (Val4 > 0). LIQCONTAINERs use Val4 for the potion's
-		// liquid-appearance adjective, not a trap flag, so they can never be "trapped".
-		if itemDef.Type == "LIQCONTAINER" || ri.Val4 == 0 {
-			return &CommandResult{Messages: []string{"That doesn't appear to be trapped."}}
-		}
-
-		// Requires Trap & Poison Lore (skill #12)
-		trapSkill := player.Skills[12]
-		if trapSkill < 1 {
-			return &CommandResult{Messages: []string{"You have no training in Trap & Poison Lore."}}
-		}
-
-		// Skill check: base 20% + skill_level * 5%, capped at 95%
-		successChance := 20 + trapSkill*5 + unemoteSkillBonus(player)
-		if successChance > 95 {
-			successChance = 95
-		}
-		roll := rand.Intn(100) + 1
-
-		// Apply round time
-		disarmRT := applyRoundTime(player, 5)
-		player.RoundTimeExpiry = time.Now().Add(time.Duration(disarmRT) * time.Second)
-
-		if roll <= successChance {
-			// Success — remove the trap
-			room.Items[i].Val4 = 0
-			e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_update", ItemRef: ri.Ref, Item: &room.Items[i]})
-			return &CommandResult{
-				Messages:      []string{fmt.Sprintf("[Success: %d%%, Roll: %d] Success!", successChance, roll), "You carefully disarm the trap."},
-				RoomBroadcast: []string{fmt.Sprintf("%s carefully disarms a trap.", player.FirstName)},
-			}
-		}
-
-		// Failure — optionally trigger the trap
-		msgs := []string{fmt.Sprintf("[Success: %d%%, Roll: %d] Failure.", successChance, roll), "You are unable to disarm the trap."}
-		// Critical failure (roll > 90): trigger the trap
-		if roll > 90 {
-			trapMsgs := e.checkTrap(player, &room.Items[i])
-			if len(trapMsgs) > 0 {
-				msgs = append(msgs, trapMsgs...)
-				e.SavePlayer(ctx, player)
-				e.notifyRoomChange(RoomChange{RoomNumber: player.RoomNumber, Type: "item_update", ItemRef: ri.Ref, Item: &room.Items[i]})
-			}
-		}
-		return &CommandResult{Messages: msgs}
-	}
-	return &CommandResult{Messages: []string{"You don't see that here."}}
-}
 
 // ---- TURN command (book page-turning) ----
 

@@ -3049,12 +3049,23 @@ func (e *GameEngine) gmEds(ctx context.Context, args []string) *CommandResult {
 	if err != nil {
 		return &CommandResult{Messages: []string{"Invalid level."}}
 	}
-	if target.Skills == nil {
-		target.Skills = make(map[int]int)
+	if level < 0 {
+		return &CommandResult{Messages: []string{"Invalid level."}}
 	}
-	target.Skills[skillNum] = level
+	// Lowering a skill removes self-trained ranks (and their SELFTRAIN surcharge)
+	// first; recalcBuildPoints then refunds whatever is no longer spent.
+	oldBP := target.BuildPoints
+	setSkillRank(target, skillNum, level)
+	recalcBuildPoints(target)
 	e.SavePlayer(ctx, target)
-	return &CommandResult{Messages: []string{fmt.Sprintf("Set skill %d to level %d for %s.", skillNum, level, target.FullName())}}
+	msg := fmt.Sprintf("Set skill %d to level %d for %s.", skillNum, level, target.FullName())
+	if st := selfTrainedRanks(target, skillNum); st > 0 {
+		msg += fmt.Sprintf(" (%d rank(s) self-trained)", st)
+	}
+	if delta := target.BuildPoints - oldBP; delta != 0 {
+		msg += fmt.Sprintf(" Build points %+d (%d unspent).", delta, target.BuildPoints)
+	}
+	return &CommandResult{Messages: []string{msg}}
 }
 
 func (e *GameEngine) gmMastery(ctx context.Context, args []string) *CommandResult {
