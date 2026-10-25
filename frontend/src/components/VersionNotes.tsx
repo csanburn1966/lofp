@@ -9,6 +9,53 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.4.0 &mdash; October 24, 2026</h2>
+            <p className="text-gray-400 mb-3">Your spells no longer wear off while you&rsquo;re logged out. Log off with 40 minutes of Haste left and you&rsquo;ll still have 40 minutes when you return. The weather makes more sense too: no more heavy snow at 39 degrees in spring, and it rains far less often. Miners can <code className="text-amber-300">SURVEY</code> an area to learn its ore grade, and Yshtarin&rsquo;s Confounding Translocation can now send other players to your mark.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Spells Pause While You&rsquo;re Offline</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Every timed spell on you stops counting down when you log off and picks up where it left off when you log back in. This includes Mindlink, Haste, Fly, Mystic Armor, the strength and agility spells, Heat and Cold Shield, Camouflage, Light, Night Vision, Divine Blessing, Resist Weather, Claw Growth, the Repel Plants spells, and Wizard&rsquo;s Armor and the other defense spells</li>
+                  <li>Spells on your own items pause too, including items in containers and in the bank: Storm, Inferno and Winter Blade, and an hour of Tempering. Items left on the ground keep counting down</li>
+                  <li>Harmful effects pause as well. Logging off won&rsquo;t wait out a Silence, Imprison, Slow, Paranoia or an entangle</li>
+                  <li>Spells keep their time through a server restart</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Weather and Temperature</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Each region now has its own temperatures for each season, taken from the original world files. They vary from day to day and are cooler at night</li>
+                  <li>Snow falls only when it&rsquo;s at or below freezing, and rain only when it&rsquo;s above it. Snow can no longer come in summer or a warm spring</li>
+                  <li>Some regions are wetter or drier than others, as the original world files set out</li>
+                  <li>Storms clear up more readily. It used to rain or snow about two thirds of the time. It&rsquo;s now closer to a quarter in an average region</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: SURVEY</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>With the Mining skill, <code className="text-amber-300">SURVEY</code> tells you whether the area can be mined, and if so, whether its ore is grade A, B or C. Each survey takes 2 seconds</li>
+                  <li>Places with special survey messages in their scripts still show them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Targeting Players and Translocation</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">TARGET</code> works on players in the room again, as it did in the original game. Players and creatures share the limit of 9 targets, and <code className="text-amber-300">TARGET</code> on its own lists both</li>
+                  <li>Yshtarin&rsquo;s Confounding Translocation (246) sends up to four of your targets, creatures or players, to your marked location. Creatures go first</li>
+                  <li>Chain Lightning, Flaming Arrows and Siryx&rsquo;s Terrible Tentacles never harm players, since there is no player-versus-player combat. You&rsquo;ll see a notice that the spell passed them by</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Thesnia Leaf</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Eating or drinking more thesnia while its telepathy is still running now adds 20 minutes, up to 4 hours, as recasting Mindlink does. It tells you how many minutes are left</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.3.0 &mdash; October 23, 2026</h2>
             <p className="text-gray-400 mb-3">Three commands that only said &ldquo;coming soon&rdquo; now work: <code className="text-amber-300">BREAK</code> smashes things open, <code className="text-amber-300">STALK</code> lets the stealthy shadow someone unseen, and <code className="text-amber-300">SELFTRAIN</code> lets you push a skill past what any teacher offers. Treasure chests are dangerous again. Their traps go off whether the chest is on the floor or in your hands, and <code className="text-amber-300">DISARM</code> finds and removes them. Picking locks now looks and plays as it did in the original game, and <code className="text-amber-300">UNLEARN</code> returns every build point you spent.</p>
 

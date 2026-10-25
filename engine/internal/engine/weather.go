@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -56,22 +57,25 @@ var weatherTransitionMessages = map[[2]int]string{
 }
 
 // weatherTransitions defines likely next states from each weather state.
-// Each entry is [nextState, weight]. Higher weight = more likely.
+// Each entry is [nextState, weight]. Higher weight = more likely. Tuned (no
+// original source) so a PRECIPITATION 0 region is rainy/snowy roughly a third
+// of the time; the precipitation states used to drift back to dry so rarely
+// that it was two-thirds.
 var weatherTransitions = map[int][][2]int{
 	0:  {{0, 60}, {1, 30}, {2, 10}},                // Sunny → stay, partly cloudy, overcast
 	1:  {{0, 30}, {1, 40}, {2, 30}},                // Partly Cloudy → clear, stay, overcast
-	2:  {{1, 20}, {2, 40}, {3, 25}, {11, 15}},      // Overcast → clearing, stay, rain, snow
-	3:  {{2, 25}, {3, 40}, {4, 35}},                // Light Rain → clear, stay, moderate
-	4:  {{3, 30}, {4, 35}, {5, 35}},                // Moderate Rain → lighter, stay, heavier
-	5:  {{4, 35}, {5, 30}, {6, 35}},                // Heavy Rain → moderate, stay, storm
+	2:  {{1, 30}, {2, 45}, {3, 15}, {11, 10}},      // Overcast → clearing, stay, rain, snow
+	3:  {{2, 45}, {3, 35}, {4, 20}},                // Light Rain → clear, stay, moderate
+	4:  {{3, 40}, {4, 35}, {5, 25}},                // Moderate Rain → lighter, stay, heavier
+	5:  {{4, 45}, {5, 30}, {6, 25}},                // Heavy Rain → moderate, stay, storm
 	6:  {{5, 40}, {2, 40}, {6, 20}},                // Thunderstorm → heavy rain, overcast, stay
 	7:  {{5, 50}, {6, 30}, {7, 20}},                // Gale → heavy rain, storm, stay
 	8:  {{7, 50}, {5, 30}, {8, 20}},                // Hurricane → gale, heavy rain, stay
 	9:  {{2, 50}, {3, 30}, {9, 20}},                // Hail → overcast, rain, stay
 	10: {{2, 40}, {11, 30}, {10, 30}},              // Sleet → overcast, flurries, stay
-	11: {{2, 25}, {11, 35}, {12, 40}},              // Snow Flurries → overcast, stay, moderate
-	12: {{11, 30}, {12, 35}, {13, 35}},             // Moderate Snow → flurries, stay, heavy
-	13: {{12, 35}, {13, 35}, {14, 30}},             // Heavy Snow → moderate, stay, blizzard
+	11: {{2, 45}, {11, 35}, {12, 20}},              // Snow Flurries → overcast, stay, moderate
+	12: {{11, 40}, {12, 35}, {13, 25}},             // Moderate Snow → flurries, stay, heavy
+	13: {{12, 45}, {13, 30}, {14, 25}},             // Heavy Snow → moderate, stay, blizzard
 	14: {{13, 50}, {14, 30}, {12, 20}},             // Blizzard → heavy, stay, moderate
 }
 
@@ -131,15 +135,26 @@ func (e *GameEngine) GetRoomWeather(roomNum int) string {
 	return ""
 }
 
-// temperatureBySeason gives a baseline Fahrenheit temperature for each season.
+// temperatureBySeason is the fallback base temperature (Fahrenheit) for a
+// season, used when neither the region nor region 0 has a REGIONDEF
+// <season>TEMP. The values are region 0's own (WINTERTEMP 10, SPRINGTEMP 45,
+// SUMMERTEMP 60, AUTUMNTEMP 29).
 var temperatureBySeason = map[string]int{
-	"PSCRIPT": 55, // Spring
-	"SSCRIPT": 85, // Summer
-	"ASCRIPT": 55, // Autumn
-	"WSCRIPT": 25, // Winter
+	"PSCRIPT": 45, // Spring
+	"SSCRIPT": 60, // Summer
+	"ASCRIPT": 29, // Autumn
+	"WSCRIPT": 10, // Winter
 }
 
-// temperatureByPeriod adjusts the seasonal baseline for time of day (see TimePeriod).
+// seasonTempKey maps a season script name to its REGIONDEF temperature key.
+var seasonTempKey = map[string]string{
+	"PSCRIPT": "SPRINGTEMP",
+	"SSCRIPT": "SUMMERTEMP",
+	"ASCRIPT": "AUTUMNTEMP",
+	"WSCRIPT": "WINTERTEMP",
+}
+
+// temperatureByPeriod adjusts the day's temperature for time of day (see TimePeriod).
 var temperatureByPeriod = map[string]int{
 	"midnight":            -12,
 	"very early morning":  -10,
@@ -151,22 +166,54 @@ var temperatureByPeriod = map[string]int{
 	"night":               -8,
 }
 
-// temperatureByWeather adjusts the temperature for the current weather state.
-var temperatureByWeather = map[int]int{
-	0: 5, 1: 2, 2: 0, 3: -3, 4: -5, 5: -7, 6: -8, 7: -10, 8: -12,
-	9: -10, 10: -15, 11: -18, 12: -22, 13: -26, 14: -32,
+// dailyTemp caches each region's rolled temperature for the current game day.
+type dailyTemp struct {
+	day    int // absolute game day (GameMinutes / gameMinutesPerDay)
+	season string
+	temp   int
 }
 
-// GetTemperature returns the current temperature (degrees Fahrenheit) for a region,
-// derived from season, time of day, and the region's current weather state.
-func (e *GameEngine) GetTemperature(region int) int {
-	state := 0
-	if e.RegionWeather != nil {
-		if s, ok := e.RegionWeather[region]; ok {
-			state = s
+var (
+	dailyTempMu sync.Mutex
+	dailyTemps  = map[int]dailyTemp{}
+)
+
+// regionBaseTemp returns the region's base temperature for the current season:
+// its REGIONDEF <season>TEMP, else region 0's, else temperatureBySeason.
+func (e *GameEngine) regionBaseTemp(region int, season string) int {
+	key := seasonTempKey[season]
+	for _, id := range []int{region, 0} {
+		if r := e.regions[id]; r != nil {
+			if v, ok := r.Properties[key]; ok {
+				if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+					return n
+				}
+			}
 		}
 	}
-	return temperatureBySeason[GameSeason()] + temperatureByPeriod[TimePeriod()] + temperatureByWeather[state]
+	return temperatureBySeason[season]
+}
+
+// GetTemperature returns the current temperature (degrees Fahrenheit) for a region.
+// Per GMSCRIPT.DOC (REGIONDEF x <season>TEMP), the temperature is rolled once a day
+// as base_temp + rnd(15) + rnd(15); the time of day then shifts it a little.
+//
+// It used to be season baseline + time of day + a weather offset (-22 for Moderate
+// Snow), which ran backwards: the weather set the temperature, so spring snow made
+// the day colder rather than needing a cold day to snow. Weather now follows the
+// temperature instead (see precipitationForTemp).
+func (e *GameEngine) GetTemperature(region int) int {
+	season := GameSeason()
+	day := GameMinutes() / gameMinutesPerDay
+	dailyTempMu.Lock()
+	dt, ok := dailyTemps[region]
+	if !ok || dt.day != day || dt.season != season {
+		dt = dailyTemp{day: day, season: season,
+			temp: e.regionBaseTemp(region, season) + 1 + rand.Intn(15) + 1 + rand.Intn(15)}
+		dailyTemps[region] = dt
+	}
+	dailyTempMu.Unlock()
+	return dt.temp + temperatureByPeriod[TimePeriod()]
 }
 
 // TemperatureDesc returns a short descriptive word for a Fahrenheit temperature.
@@ -206,21 +253,84 @@ func isOutdoorTerrain(terrain string) bool {
 // Moderate Snow, Heavy Snow, Blizzard.
 var snowStates = map[int]bool{10: true, 11: true, 12: true, 13: true, 14: true}
 
+// Rain and snow counterparts of matching intensity, for switching precipitation
+// type when the temperature crosses freezing.
+var (
+	rainToSnow = map[int]int{3: 11, 4: 12, 5: 13, 6: 13}
+	snowToRain = map[int]int{10: 3, 11: 3, 12: 4, 13: 5, 14: 5}
+)
+
+// precipitationForTemp turns rain into snow at or below freezing, and snow or sleet
+// into rain once it's clearly above freezing (37°F+). 33-36°F is left alone —
+// either can fall there.
+func precipitationForTemp(state, temp int) int {
+	if temp <= 32 {
+		if s, ok := rainToSnow[state]; ok {
+			return s
+		}
+	} else if temp >= 37 {
+		if s, ok := snowToRain[state]; ok {
+			return s
+		}
+	}
+	return state
+}
+
+// weatherWetness ranks states by how much precipitation they bring: 0-2 dry (sky
+// cover only), 3+ precipitating.
+var weatherWetness = map[int]int{
+	0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 6, 8: 7,
+	9: 4, 10: 3, 11: 3, 12: 4, 13: 5, 14: 6,
+}
+
+// precipitationLevel returns the region's REGIONDEF PRECIPITATION level (0 = normal).
+func (e *GameEngine) precipitationLevel(region int) int {
+	if r := e.regions[region]; r != nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(r.Properties["PRECIPITATION"])); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// biasTransitions applies a REGIONDEF PRECIPITATION level to a state's transitions.
+// Per GMSCRIPT.DOC: closer to 10 makes precipitation less likely to start and more
+// likely to stop (10 = it probably never rains); negative makes it more likely.
+// Moves into wetter precipitation are scaled by wet, moves out of precipitation
+// toward drier states by 1/wet. The weights are scaled by 10 so fractions survive.
+func biasTransitions(oldState int, transitions [][2]int, level int) [][2]int {
+	wet := 1.0
+	if level >= 0 {
+		wet = float64(10-min(level, 10)) / 10
+	} else {
+		wet = 1 + float64(-level)/10
+	}
+	out := make([][2]int, 0, len(transitions))
+	for _, t := range transitions {
+		w := float64(t[1] * 10)
+		from, to := weatherWetness[oldState], weatherWetness[t[0]]
+		switch {
+		case to > from && to >= 3:
+			w *= wet
+		case to < from && from >= 3 && wet > 0:
+			w /= wet
+		}
+		if w >= 1 {
+			out = append(out, [2]int{t[0], int(w)})
+		}
+	}
+	return out
+}
+
 // advanceWeather randomly transitions weather for all regions and broadcasts changes.
 //
-// The random walk previously had no concept of season at all, so a region could
-// wander from Overcast into Snow Flurries and all the way up to Blizzard purely by
-// chance regardless of what season it was — meanwhile GetTemperature is computed
-// independently from season/time-of-day/weather-state, so in Summer (85°F baseline)
-// it stayed a mild 55-65°F even while the weather type had drifted into "Blizzard."
-// Players saw "It is snowing heavily" right next to "around 61 degrees." Snow-family
-// states are now only reachable outside Summer.
+// The random walk is biased by each region's REGIONDEF PRECIPITATION, and its rain
+// or snow is then matched to the region's temperature (precipitationForTemp). Snow
+// was once only blocked in Summer, so Spring snowed as readily as Winter.
 func (e *GameEngine) advanceWeather() {
 	if e.RegionWeather == nil {
 		return
 	}
-
-	snowOK := GameSeason() != "SSCRIPT" // not Summer
 
 	// Collect all regions that have outdoor rooms
 	regionSet := make(map[int]bool)
@@ -234,45 +344,27 @@ func (e *GameEngine) advanceWeather() {
 
 	for region := range regionSet {
 		oldState := e.RegionWeather[region]
+		newState := oldState
 
-		// Season just turned to Summer while this region was sitting in a snow
-		// state (e.g. a lingering Blizzard from Spring) — clear it back to Overcast
-		// rather than let it randomly walk deeper into snow in the middle of July.
-		if !snowOK && snowStates[oldState] {
-			newState := 2 // Overcast
-			e.RegionWeather[region] = newState
-			e.broadcastWeatherChange(region, oldState, newState)
-			continue
-		}
-
-		transitions := weatherTransitions[oldState]
-		if !snowOK {
-			filtered := make([][2]int, 0, len(transitions))
-			for _, t := range transitions {
-				if !snowStates[t[0]] {
-					filtered = append(filtered, t)
-				}
-			}
-			transitions = filtered
-		}
-		if len(transitions) == 0 {
-			continue
-		}
-
-		// Weighted random selection
+		transitions := biasTransitions(oldState, weatherTransitions[oldState], e.precipitationLevel(region))
 		totalWeight := 0
 		for _, t := range transitions {
 			totalWeight += t[1]
 		}
-		roll := rand.Intn(totalWeight)
-		newState := oldState
-		for _, t := range transitions {
-			roll -= t[1]
-			if roll < 0 {
-				newState = t[0]
-				break
+		if totalWeight > 0 {
+			roll := rand.Intn(totalWeight)
+			for _, t := range transitions {
+				roll -= t[1]
+				if roll < 0 {
+					newState = t[0]
+					break
+				}
 			}
 		}
+
+		// Also re-checks a state that didn't move, so lingering snow turns to rain
+		// once the day warms up (and the other way round).
+		newState = precipitationForTemp(newState, e.GetTemperature(region))
 
 		if newState != oldState {
 			e.RegionWeather[region] = newState

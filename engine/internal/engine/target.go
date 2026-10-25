@@ -10,10 +10,9 @@ import (
 // maxTargets is the most creatures a player can hold in their target list at
 // once (TARGET command), used by multi-target spells like Chain Lightning —
 // per MAGIC.TXT: "You TARGET up to nine creatures (for fire arrows, tentacles
-// or lightning, four for translocation)". Yshtarin's Confounding Translocation
-// (246) isn't implemented yet; when it is, its own multi-target cast path
-// needs to cap at the first 4 entries of player.Targets rather than use this
-// constant directly.
+// or lightning, four for translocation)". Monster targets (player.Targets) and
+// player targets (player.TargetPlayers) share this cap. Yshtarin's Confounding
+// Translocation (246) carries only the first 4 — see castTranslocationSpell.
 const maxTargets = 9
 
 // targetEntry pairs a resolved, still-valid monster instance snapshot with
@@ -26,6 +25,10 @@ type targetEntry struct {
 // doTarget handles TARGET [ordinal] <name>, building up to maxTargets
 // monsters in the player's room for multi-target spells (Chain Lightning,
 // Flaming Arrows, Siryx's Terrible Tentacles).
+//
+// Players can be targeted too, as in the original ("tar fyre" → "Targets now
+// include: Fyre" in chan0409.txt) — mainly so Translocation can send them
+// away. With no PvP, the damage spells skip player targets (playerTargetsSpared).
 func (e *GameEngine) doTarget(player *Player, args []string) *CommandResult {
 	if player.Dead {
 		return &CommandResult{Messages: []string{"You can't target anything while dead."}}
@@ -42,7 +45,20 @@ func (e *GameEngine) doTarget(player *Player, args []string) *CommandResult {
 		return &CommandResult{Messages: []string{"What are you referring to?  Please be more specific."}}
 	}
 	if inst == nil {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetArg)}}
+		target := e.findPlayerInRoom(player, strings.ToLower(targetArg))
+		if target == nil {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetArg)}}
+		}
+		for _, name := range player.TargetPlayers {
+			if name == target.FirstName {
+				return &CommandResult{Messages: []string{"That is already being targeted."}}
+			}
+		}
+		if len(player.Targets)+len(player.TargetPlayers) >= maxTargets {
+			return &CommandResult{Messages: []string{"You are already targeting the maximum of 9 creatures."}}
+		}
+		player.TargetPlayers = append(player.TargetPlayers, target.FirstName)
+		return &CommandResult{Messages: e.targetListMessages(player)}
 	}
 	if player.SummonedCreatureID != 0 && inst.ID == player.SummonedCreatureID {
 		return &CommandResult{Messages: []string{"You can't target a creature under your own control."}}
@@ -54,19 +70,62 @@ func (e *GameEngine) doTarget(player *Player, args []string) *CommandResult {
 		}
 	}
 
-	if len(player.Targets) >= maxTargets {
+	if len(player.Targets)+len(player.TargetPlayers) >= maxTargets {
 		return &CommandResult{Messages: []string{"You are already targeting the maximum of 9 creatures."}}
 	}
 
 	player.Targets = append(player.Targets, inst.ID)
+	return &CommandResult{Messages: e.targetListMessages(player)}
+}
 
+// targetListMessages renders the "Targets now include:" list — monsters first,
+// then players, each in the order added.
+func (e *GameEngine) targetListMessages(player *Player) []string {
 	msgs := []string{"Targets now include:"}
 	for _, id := range player.Targets {
 		if name, ok := e.targetDisplayName(id); ok {
 			msgs = append(msgs, name)
 		}
 	}
-	return &CommandResult{Messages: msgs}
+	for _, p := range e.resolvePlayerTargets(player) {
+		msgs = append(msgs, p.DisplayNameCap())
+	}
+	return msgs
+}
+
+// resolvePlayerTargets drops player targets who have logged off, died, or left
+// the caster's room, and returns the rest in the order they were added.
+func (e *GameEngine) resolvePlayerTargets(player *Player) []*Player {
+	if len(player.TargetPlayers) == 0 {
+		return nil
+	}
+	var targets []*Player
+	valid := player.TargetPlayers[:0]
+	for _, name := range player.TargetPlayers {
+		p := e.findOnlinePlayerByName(name)
+		if p == nil || p.Dead || p.RoomNumber != player.RoomNumber {
+			continue
+		}
+		valid = append(valid, name)
+		targets = append(targets, p)
+	}
+	player.TargetPlayers = valid
+	return targets
+}
+
+// playerTargetsSpared returns the notice an offensive multi-target spell adds
+// when the caster's target list includes players: there's no PvP, so the spell
+// hits only the monsters. Returns "" when no player is targeted.
+func (e *GameEngine) playerTargetsSpared(player *Player) string {
+	targets := e.resolvePlayerTargets(player)
+	if len(targets) == 0 {
+		return ""
+	}
+	names := make([]string, len(targets))
+	for i, p := range targets {
+		names[i] = p.DisplayName()
+	}
+	return fmt.Sprintf("Your spell passes harmlessly by %s.", joinList(names))
 }
 
 // targetDisplayName returns the capitalized, articled display name ("A

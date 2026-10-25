@@ -272,6 +272,7 @@ type Player struct {
 	Stance        int           `bson:"-" json:"-"`          // StanceNormal..StanceBerserk
 	CombatTarget  *CombatTarget `bson:"-" json:"-"`          // current combat target
 	Targets       []int         `bson:"-" json:"-"`          // TARGET command: up to 9 monster instance IDs for multi-target spells (see maxTargets in target.go)
+	TargetPlayers []string      `bson:"-" json:"-"`          // TARGET command: player FirstNames; counts toward maxTargets alongside Targets
 	DefenseBonus  int           `bson:"-" json:"-"`          // from spells/psi
 	PreparedPsi   int           `bson:"-" json:"-"`          // prepared psi discipline ID
 	ActivePsi     map[int]bool `bson:"-" json:"-"`          // currently maintained psi disciplines
@@ -604,6 +605,9 @@ type Player struct {
 
 	CreatedAt time.Time  `bson:"createdAt" json:"createdAt"`
 	UpdatedAt time.Time  `bson:"updatedAt" json:"updatedAt"`
+	// LoggedOutAt is stamped by HandlePlayerDisconnect so spell timers can be paused
+	// while offline (see pauseSpellTimersOffline); cleared again on login.
+	LoggedOutAt time.Time `bson:"loggedOutAt,omitempty" json:"loggedOutAt,omitempty"`
 	DeletedAt *time.Time `bson:"deletedAt,omitempty" json:"deletedAt,omitempty"` // soft-delete timestamp
 }
 
@@ -1048,6 +1052,7 @@ func (p *Player) syncLegacyOrgFields() {
 }
 
 func (p *Player) RestoreTransientState() {
+	p.pauseSpellTimersOffline()
 	if p.MysticArmorBonus > 0 && !p.MysticArmorExpiry.IsZero() && time.Now().Before(p.MysticArmorExpiry) {
 		p.DefenseBonus += p.MysticArmorBonus
 	} else if p.MysticArmorBonus > 0 {

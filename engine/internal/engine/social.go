@@ -1335,6 +1335,9 @@ func (e *GameEngine) applySayMove(ctx context.Context, player *Player, sc *Scrip
 // If the player is a group leader, the group is disbanded and all members are notified.
 // If the player is a group member, they are removed from their leader's group.
 func (e *GameEngine) HandlePlayerDisconnect(player *Player) {
+	// Spell timers pause while offline — see pauseSpellTimersOffline.
+	player.LoggedOutAt = time.Now()
+	defer e.SavePlayer(context.Background(), player)
 	e.dismissSummonedCreature(player)
 	e.clearPlayerFromGuards(player.FirstName)
 

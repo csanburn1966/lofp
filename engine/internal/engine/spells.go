@@ -1180,7 +1180,7 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		case 222: // Bend Space II
 			result = e.castBendSpaceII(ctx, player, args)
 		case 246: // Yshtarin's Confounding Translocation
-			result = e.castTranslocationSpell(player, spell, args)
+			result = e.castTranslocationSpell(ctx, player, spell, args)
 		case 215: // Scry — CAST <mark#> for a remote vision (eye-of-scrying use is
 			// handled earlier, pre-roll, in tryCastSpellAtEye)
 			result = e.castScrySpell(player, args)
@@ -1929,6 +1929,10 @@ func (e *GameEngine) castChainLightningSpell(player *Player, spell *SpellDef, ar
 		prevSelf, prevRoom = fullName, fullName
 	}
 
+	if notice := e.playerTargetsSpared(player); notice != "" {
+		msgs = append(msgs, notice)
+	}
+
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
 }
 
@@ -2000,6 +2004,10 @@ func (e *GameEngine) castFlamingArrowsSpell(player *Player, spell *SpellDef, arg
 			msgs = append(msgs, dmgLine)
 			roomMsgs = append(roomMsgs, dmgLine)
 		}
+	}
+
+	if notice := e.playerTargetsSpared(player); notice != "" {
+		msgs = append(msgs, notice)
 	}
 
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
@@ -2093,6 +2101,10 @@ func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []
 			}
 		}
 		e.monsterMgr.mu.Unlock()
+	}
+
+	if notice := e.playerTargetsSpared(player); notice != "" {
+		msgs = append(msgs, notice)
 	}
 
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
@@ -2481,29 +2493,39 @@ func (e *GameEngine) resolveTranslocationMark(player *Player, args []string) (*g
 }
 
 // castTranslocationSpell handles Yshtarin's Confounding Translocation (246):
-// CAST <mark#> sends up to the first 4 creatures in the caster's TARGET list
+// CAST <mark#> sends up to the first 4 entries in the caster's TARGET list
 // (see maxTargets in target.go — TARGET allows up to 9, but this spell only
 // carries the first 4, per MAGIC.TXT) to the room stored at that mark. This
 // is the mirror image of Bend Space I: the caster stays put and the targets
 // go instead. A moved monster has its combat target cleared — appropriate for
 // a spell literally named "Confounding" — and is dropped from the caster's
 // TARGET list since it's no longer in the room to keep targeting.
-func (e *GameEngine) castTranslocationSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
+//
+// Targeted players go too — MAGIC.TXT: "Teleports up to four targets, the
+// caster need not go along" — and need not consent (the user's call: anyone
+// targeted can be sent). Monster targets fill the 4 slots first, then players,
+// each in the order added. A moved player leaves any melee behind, like FLEE.
+func (e *GameEngine) castTranslocationSpell(ctx context.Context, player *Player, spell *SpellDef, args []string) *CommandResult {
 	dest, errMsg := e.resolveTranslocationMark(player, args)
 	if errMsg != "" {
 		return &CommandResult{Messages: []string{errMsg}, TargetNotFound: true}
 	}
 
+	const maxTranslocated = 4
 	entries := e.resolveTargets(player)
-	if len(entries) == 0 {
+	playerTargets := e.resolvePlayerTargets(player)
+	if len(entries) == 0 && len(playerTargets) == 0 {
 		return &CommandResult{Messages: []string{"You have no targets. Use TARGET <creature> first."}, TargetNotFound: true}
 	}
-	if len(entries) > 4 {
-		entries = entries[:4]
+	if len(entries) > maxTranslocated {
+		entries = entries[:maxTranslocated]
+	}
+	if room := maxTranslocated - len(entries); len(playerTargets) > room {
+		playerTargets = playerTargets[:room]
 	}
 
 	var movedNames []string
-	if e.monsterMgr != nil {
+	if e.monsterMgr != nil && len(entries) > 0 {
 		e.monsterMgr.mu.Lock()
 		for _, entry := range entries {
 			for i := range e.monsterMgr.instances {
@@ -2525,19 +2547,51 @@ func (e *GameEngine) castTranslocationSpell(player *Player, spell *SpellDef, arg
 		}
 		e.monsterMgr.mu.Unlock()
 	}
+	for _, p := range playerTargets {
+		movedNames = append(movedNames, p.DisplayNameCap())
+	}
 
 	if len(movedNames) == 0 {
 		return &CommandResult{Messages: []string{"Your targets are gone."}, TargetNotFound: true}
 	}
 
 	movedList := joinList(movedNames)
+	vanish, appear := "vanish", "appear"
+	if len(movedNames) == 1 {
+		vanish, appear = "vanishes", "appears"
+	}
+	// Announce the arrival before the players land, so they don't see their own.
 	if e.localRoomBroadcast != nil {
-		e.localRoomBroadcast(dest.Number, []string{fmt.Sprintf("%s appears in a shimmer of confounding energy!", movedList)})
+		e.localRoomBroadcast(dest.Number, []string{fmt.Sprintf("%s %s in a shimmer of confounding energy!", movedList, appear)})
+	}
+
+	originalRoom := player.RoomNumber
+	for _, p := range playerTargets {
+		e.breakAllMeleeEngagements(p)
+		p.RoomNumber = dest.Number
+		p.Submitting = false
+		p.GuardTargets = nil
+		e.SavePlayer(ctx, p)
+		e.moveFollowingSummons(p, originalRoom, dest.Number)
+		player.TargetPlayers = removeFromStringSlice(player.TargetPlayers, p.FirstName)
+
+		if e.sendToPlayer != nil {
+			look := e.doLook(p)
+			e.sendToPlayer(p.FirstName, append([]string{
+				fmt.Sprintf("%s gestures at you!", player.DisplayNameCap()),
+				"The color and detail of your surroundings swirl together. After a brief moment...",
+			}, look.Messages...))
+		}
+		entry := &CommandResult{}
+		e.applyEntryScripts(ctx, p, dest, entry)
+		if e.sendToPlayer != nil && len(entry.Messages) > 0 {
+			e.sendToPlayer(p.FirstName, entry.Messages)
+		}
 	}
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s! %s vanish in a shimmer of confounding energy!", spell.Name, movedList)},
-		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s! %s vanish in a shimmer of confounding energy!", player.DisplayNameCap(), spell.Name, movedList)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s! %s %s in a shimmer of confounding energy!", spell.Name, movedList, vanish)},
+		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s! %s %s in a shimmer of confounding energy!", player.DisplayNameCap(), spell.Name, movedList, vanish)},
 	}
 }
 

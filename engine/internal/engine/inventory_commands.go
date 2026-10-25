@@ -2407,13 +2407,8 @@ func (e *GameEngine) doEat(ctx context.Context, player *Player, args []string) *
 
 			// Spell effect fires on every bite
 			var extraRoomMsgs []string
-			if spellNum == 403 { // Mindlink — each bite refreshes the 1-hour window
-				player.TelepathyActive = true
-				// Never shortens a longer window stacked up by recasting the spell (applyMindlink).
-				if exp := time.Now().Add(1 * time.Hour); exp.After(player.TelepathyExpiry) {
-					player.TelepathyExpiry = exp
-				}
-				msgs = append(msgs, "You feel your mind open to the thoughts of others.")
+			if spellNum == 403 { // Mindlink — each bite stacks like a recast of the spell
+				msgs = append(msgs, herbMindlinkMessage(player))
 			} else if msg := applyHerbSpell(player, spellNum); msg != "" {
 				msgs = append(msgs, msg)
 			} else if spellNum != 0 {
@@ -3041,13 +3036,8 @@ func (e *GameEngine) drinkItem(ctx context.Context, player *Player, ii *Inventor
 
 	// Spell effect fires on every sip
 	var extraRoomMsgs []string
-	if spellNum == 403 {
-		player.TelepathyActive = true
-		// Never shortens a longer window stacked up by recasting the spell (applyMindlink).
-		if exp := time.Now().Add(1 * time.Hour); exp.After(player.TelepathyExpiry) {
-			player.TelepathyExpiry = exp
-		}
-		msgs = append(msgs, "You feel your mind open to the thoughts of others.")
+	if spellNum == 403 { // Mindlink — each sip stacks like a recast of the spell
+		msgs = append(msgs, herbMindlinkMessage(player))
 	} else if msg := applyHerbSpell(player, spellNum); msg != "" {
 		msgs = append(msgs, msg)
 	} else if spellNum != 0 {
@@ -4565,4 +4555,16 @@ func applyHerbSpell(player *Player, spellNum int) string {
 		return fmt.Sprintf("Your mental resolve hardens like iron. [Willpower +%d]", gain)
 	}
 	return ""
+}
+
+// herbMindlinkMessage applies Mindlink (403) from eating thesnia leaf or drinking
+// a thesnia potion, using the spell's own stacking rule (applyMindlink: 1 hour
+// fresh, +20 minutes per dose while it's still running, capped at 4 hours), and
+// returns the message to show.
+func herbMindlinkMessage(player *Player) string {
+	mins, applied := applyMindlink(player)
+	if applied {
+		return "You feel your mind open to the thoughts of others."
+	}
+	return fmt.Sprintf("You feel your mind open further to the thoughts of others. (%d minutes remaining)", mins)
 }
