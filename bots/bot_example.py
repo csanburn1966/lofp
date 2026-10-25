@@ -14,7 +14,7 @@ import time
 import websocket
 
 API_KEY = os.environ.get("LOFP_API_KEY")
-SERVER = os.environ.get("LOFP_SERVER", "wss://lofp.metavert.io/ws/game")
+SERVER = os.environ.get("LOFP_SERVER", "wss://lofp.sanburnlab.com/ws/game")
 
 if not API_KEY:
     print("Set LOFP_API_KEY environment variable")

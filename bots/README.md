@@ -6,7 +6,7 @@ Control game characters programmatically via the WebSocket API.
 
 ## Getting an API Key
 
-1. Log in at [lofp.metavert.io](https://lofp.metavert.io)
+1. Log in at [lofp.sanburnlab.com](https://lofp.sanburnlab.com)
 2. On the main menu, click the ⚙ icon next to your character
 3. Click **Generate Key** (optionally check "Allow GM commands" if the character is a GM)
 4. **Copy the key immediately** — it's only shown once
@@ -14,7 +14,7 @@ Control game characters programmatically via the WebSocket API.
 
 ## Connection Flow
 
-1. Connect to `wss://lofp.metavert.io/ws/game` (or `ws://localhost:4993/ws/game` for local)
+1. Connect to `wss://lofp.sanburnlab.com/ws/game` (or `ws://localhost:4993/ws/game` for local)
 2. You'll receive a welcome message
 3. Send an `auth_apikey` message with your key
 4. On success, your character is logged in and you'll receive the room description

@@ -8,7 +8,7 @@
 import WebSocket from "ws";
 
 const API_KEY = process.env.LOFP_API_KEY;
-const SERVER = process.env.LOFP_SERVER || "wss://lofp.metavert.io/ws/game";
+const SERVER = process.env.LOFP_SERVER || "wss://lofp.sanburnlab.com/ws/game";
 
 if (!API_KEY) {
   console.error("Set LOFP_API_KEY environment variable");
