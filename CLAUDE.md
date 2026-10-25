@@ -57,17 +57,17 @@ Fly.io is not used; `fly.toml` is left over from upstream.
 
 ### Dev: VM 9011 `lofp-dev` (192.168.4.158)
 
-- Runs in Docker Compose. Repo clone at `~/lofp`; `docker-compose.yml` and its `.env` (JWT secret etc.) live in `~/lofp-deploy`, outside the repo.
+- Runs in Docker Compose from the repo clone at `~/lofp`: `deploy/docker-compose.yml` (project name `lofp-deploy`), with secrets in `deploy/.env` (gitignored; template in `deploy/.env.example`).
 - Two containers: `lofp` (built from the repo's `Dockerfile`) and `mongo:7` as a single-node replica set `rs0` (the hub needs change streams).
 - Ports: web 8080, telnet 4000, SSH game access 4022.
 - SSH from aiportal: `ssh -i ~/.ssh/claude_proxmox claude@192.168.4.158`
 - Update to the latest pushed code:
   ```sh
-  cd ~/lofp && git pull && cd ~/lofp-deploy && sudo docker compose up -d --build
+  cd ~/lofp && git pull && cd deploy && sudo docker compose up -d --build
   ```
 - No email service, Google OAuth, or Turnstile keys are configured. Email/password login works in the web client. Telnet/SSH logins need a verified email, so mark accounts verified by hand:
   ```sh
-  cd ~/lofp-deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
+  cd ~/lofp/deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
   ```
 - The VM's CPU type is `host` because MongoDB 5+ needs AVX.
 

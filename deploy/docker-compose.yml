@@ -1,0 +1,47 @@
+# Dev deployment on VM 9011 (lofp-dev). Secrets come from deploy/.env (gitignored;
+# see .env.example). The project name is pinned so the existing containers and the
+# lofp-deploy_mongo-data volume are reused.
+name: lofp-deploy
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    # single-node replica set: the game hub needs change streams
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - 'try { rs.status().ok } catch (e) { rs.initiate({_id: "rs0", members: [{_id: 0, host: "mongo:27017"}]}).ok }'
+      interval: 5s
+      retries: 30
+    volumes:
+      - mongo-data:/data/db
+
+  lofp:
+    build:
+      context: ..
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY:-}
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/?replicaSet=rs0
+      MONGODB_DATABASE: lofp
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      FRONTEND_URL: ${FRONTEND_URL}
+    ports:
+      - "8080:8080"   # web client
+      - "4000:4000"   # telnet
+      - "4022:4022"   # ssh
+
+volumes:
+  mongo-data:
