@@ -1,5 +1,3 @@
-Read VIBECTL.md for current project status, deployment details, and issue context before starting work.
-
 # LoFP — Legends of Future Past
 
 Resurrecting a 1990s MUD from original script files. The original game engine source code is lost; only the content scripts and documentation survive. We reverse-engineer a working game from those.
@@ -38,7 +36,7 @@ When implementing new features, always cross-reference these documents and the s
 
 ## Multi-Machine Coordination
 
-Production runs multiple Fly.io machines. ALL mutable world state must be coordinated via the MongoDB-backed hub (`engine/internal/hub/`):
+Production is currently a single server, but the engine is designed to run as multiple instances. ALL mutable world state must be coordinated via the MongoDB-backed hub (`engine/internal/hub/`):
 
 - **Messages**: broadcasts, whispers, global announcements → published to `events` collection, delivered via Change Streams
 - **Player presence**: WHO list, room occupancy → `presence` collection with TTL heartbeat
@@ -53,42 +51,45 @@ kill $(lsof -ti:4993) 2>/dev/null; sleep 1; cd engine && go run cmd/lofp/main.go
 ```
 Load .env first if needed: `source .env`
 
-## Deploying to Production
+## Environments and Deployment
 
-**CRITICAL: The Google Client ID MUST be passed as a build arg or Google login will break.**
+Fly.io is not used; `fly.toml` is left over from upstream.
 
-The frontend uses `VITE_GOOGLE_CLIENT_ID` at build time (baked into the JS bundle by Vite). If it's missing, the "Sign in with Google" button disappears and users see "Authentication Not Configured".
+### Dev: VM 9011 `lofp-dev` (192.168.4.158)
 
-**Also required: the Turnstile site key as a build arg, or the registration CAPTCHA won't render.** Same mechanism as the Google Client ID — `VITE_TURNSTILE_SITE_KEY` is baked into the JS bundle by Vite. If it's missing, the register form silently has no CAPTCHA widget and the backend falls back to skipping verification (since `TURNSTILE_SECRET_KEY` being set server-side is what actually enforces the check — see `engine/internal/auth/turnstile.go`).
+- Runs in Docker Compose. Repo clone at `~/lofp`; `docker-compose.yml` and its `.env` (JWT secret etc.) live in `~/lofp-deploy`, outside the repo.
+- Two containers: `lofp` (built from the repo's `Dockerfile`) and `mongo:7` as a single-node replica set `rs0` (the hub needs change streams).
+- Ports: web 8080, telnet 4000, SSH game access 4022.
+- SSH from aiportal: `ssh -i ~/.ssh/claude_proxmox claude@192.168.4.158`
+- Update to the latest pushed code:
+  ```sh
+  cd ~/lofp && git pull && cd ~/lofp-deploy && sudo docker compose up -d --build
+  ```
+- No email service, Google OAuth, or Turnstile keys are configured. Email/password login works in the web client. Telnet/SSH logins need a verified email, so mark accounts verified by hand:
+  ```sh
+  cd ~/lofp-deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
+  ```
+- The VM's CPU type is `host` because MongoDB 5+ needs AVX.
 
-### Deploy command (always use this exact pattern):
-```sh
-GCID=$(grep GOOGLE_CLIENT_ID .env | cut -d= -f2) && TSK=$(grep VITE_TURNSTILE_SITE_KEY .env | cut -d= -f2) && fly deploy --build-arg "VITE_GOOGLE_CLIENT_ID=$GCID" --build-arg "VITE_TURNSTILE_SITE_KEY=$TSK"
-```
+### Production: `lofp` (192.168.4.123), lofp.sanburnlab.com
 
-**Why this specific pattern?** The Bash tool's shell does not persist exported variables between commands. `source .env && fly deploy --build-arg VITE_GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID` silently passes an empty string because `source` sets but does not export the variable, and the Bash tool may run commands in separate shell contexts. Using `grep | cut` directly extracts the value inline, which is reliable.
+- Not Docker. Source tree at `/home/csanburn/lofp`, MongoDB runs natively (`mongod.service`). Two systemd services, both as user `csanburn`:
+  - `lofp`: the Go engine, `ExecStart=/home/csanburn/lofp/engine/cmd/lofp/lofp`, `WorkingDirectory=/home/csanburn/lofp/engine`, `EnvironmentFile=/home/csanburn/lofp/.env`. It listens on 4993 (web API/WebSocket), 4000 (telnet), and 4022 (SSH).
+  - Uses `config/prod.yaml` via `.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=4993` (Vite proxies to 4993), `LOFP_SCRIPTS_DIR=../original/scripts`, `LOFP_CONFIG_FILE=../original/scripts/LEGENDS.CFG`, plus `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, and `JWT_SECRET`. `prod.yaml` has no default for `JWT_SECRET`; it must be at least 32 characters or the engine panics at startup, and if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt: `echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env`.
+  - `dev.yaml` on production is no longer used, so copying the repo's `dev.yaml` over it is harmless.
+  - After a crash loop, `sudo systemctl reset-failed lofp` before restarting.
+  - `lofp-frontend`: the **Vite dev server** (`npx vite --port 4992`) serving `frontend/` straight from source and proxying `/api/`, `/healthz`, and `/ws` to `localhost:4993` (see `frontend/vite.config.ts`, which allows the host `lofp.sanburnlab.com`). There is no frontend build step: copied `.ts`/`.tsx` changes are picked up live. A new npm dependency still needs `npm install` in `frontend/` and a restart of `lofp-frontend`.
+- Deploys are manual: changed and new source files are copied to the server with WinSCP, then on the server (only needed for engine changes):
+  ```sh
+  cd ~/lofp/engine/cmd/lofp && sudo systemctl stop lofp && go build -o lofp . && sudo systemctl start lofp
+  ```
+- Because files are copied by hand, when a change is ready for production, list every added, modified, and deleted file (e.g. `git diff --name-status <last-deployed-commit>..HEAD`) so nothing is missed. Deleted files have to be removed on the server by hand.
 
-If using `--no-cache` to force a fresh build, append it:
-```sh
-GCID=$(grep GOOGLE_CLIENT_ID .env | cut -d= -f2) && TSK=$(grep VITE_TURNSTILE_SITE_KEY .env | cut -d= -f2) && fly deploy --build-arg "VITE_GOOGLE_CLIENT_ID=$GCID" --build-arg "VITE_TURNSTILE_SITE_KEY=$TSK" --no-cache
-```
+### Frontend build-time variables
 
-### After deploying, verify Google login:
-```sh
-fly ssh console -a lofp -C "grep -c 718491 /app/static/assets/index-*.js"
-```
-This should return `1`. If it returns `0`, the build arg was not passed correctly.
+`VITE_GOOGLE_CLIENT_ID` and `VITE_TURNSTILE_SITE_KEY` are read by Vite when it starts: baked into the bundle at build time for Docker (the `Dockerfile` takes them as build args), or read at startup by the dev server on production (restart `lofp-frontend` after changing them). If they're missing, the Google sign-in button and the registration CAPTCHA don't render. `TURNSTILE_SECRET_KEY` must be set server-side at runtime, or `VerifyCaptcha` (`engine/internal/auth/turnstile.go`) silently skips verification.
 
-### Also make sure the Turnstile secret is set as a Fly secret (backend-only, runtime):
-```sh
-fly secrets set TURNSTILE_SECRET_KEY=...
-```
-Without this, `TURNSTILE_SECRET_KEY` is empty and `VerifyCaptcha` silently no-ops — registration works but isn't actually protected, even if the widget renders.
-
-### Local dev vs. production:
-- **Local**: `.env` file at project root contains `GOOGLE_CLIENT_ID=...`, `TURNSTILE_SECRET_KEY=...`, `VITE_TURNSTILE_SITE_KEY=...` (among other secrets). Vite reads the `VITE_`-prefixed ones from the environment when running `npm run dev`.
-- **Production**: Fly.io secrets store `MONGODB_URI`, `JWT_SECRET`, `RESEND_API_KEY`, `SSH_HOST_KEY`, `TURNSTILE_SECRET_KEY` (set via `fly secrets set`). The Google Client ID and Turnstile site key are NOT Fly secrets — they're **build args** because Vite needs them at build time, not runtime.
-- **Never commit `.env`** — it contains production secrets. It is in `.gitignore`.
+**Never commit `.env`**: it contains secrets and is in `.gitignore`.
 
 ## MUD Client Protocols
 
@@ -155,8 +156,8 @@ The game world is defined in a custom scripting language (documented in `origina
 - WebSocket-based real-time multiplayer
 - Admin panel for rooms/items/monsters/players/logs
 - Feedback pipeline: REPORT command forwards to VibeCtl for triage and issue tracking
-- Production: Fly.io (1 machine, ord region) at lofp.metavert.io
-  - Single machine to avoid multi-machine state desync (monsters, combat, player visibility)
+- Production: single server at lofp.sanburnlab.com (see Environments and Deployment)
+  - One instance to avoid multi-instance state desync (monsters, combat, player visibility)
   - Scale to 2+ machines only after implementing full hub-based monster/combat coordination
 
 ## Units

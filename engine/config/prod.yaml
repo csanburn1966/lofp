@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${LOFP_PORT:8080}
   telnet_port: 4000
   ssh_port: 4022
   frontend_url: "${FRONTEND_URL:https://lofp.sanburnlab.com}"
