@@ -10,3 +10,4 @@ engine/lofp
 engine/cmd/lofp/lofp.exe
 *.bak
 VIBECTL.md
+CLAUDE.local.md

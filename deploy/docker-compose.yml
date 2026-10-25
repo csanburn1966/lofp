@@ -1,4 +1,4 @@
-# Dev deployment on VM 9011 (lofp-dev). Secrets come from deploy/.env (gitignored;
+# Dev deployment (Docker Compose). Secrets come from deploy/.env (gitignored;
 # see .env.example). The project name is pinned so the existing containers and the
 # lofp-deploy_mongo-data volume are reused.
 name: lofp-deploy

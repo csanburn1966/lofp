@@ -55,34 +55,31 @@ Load .env first if needed: `source .env`
 
 Fly.io is not used; `fly.toml` is left over from upstream.
 
-### Dev: VM 9011 `lofp-dev` (192.168.4.158)
+Host names, IPs, paths, and SSH access for these environments are in `CLAUDE.local.md` (gitignored, not in the public repo).
 
-- Runs in Docker Compose from the repo clone at `~/lofp`: `deploy/docker-compose.yml` (project name `lofp-deploy`), with secrets in `deploy/.env` (gitignored; template in `deploy/.env.example`).
+### Dev: Docker Compose
+
+- `deploy/docker-compose.yml` (project name `lofp-deploy`) runs from a repo clone, with secrets in `deploy/.env` (gitignored; template in `deploy/.env.example`).
 - Two containers: `lofp` (built from the repo's `Dockerfile`) and `mongo:7` as a single-node replica set `rs0` (the hub needs change streams).
 - Ports: web 8080, telnet 4000, SSH game access 4022.
-- SSH from aiportal: `ssh -i ~/.ssh/claude_proxmox claude@192.168.4.158`
-- Update to the latest pushed code:
-  ```sh
-  cd ~/lofp && git pull && cd deploy && sudo docker compose up -d --build
-  ```
+- Update to the latest pushed code: `git pull && cd deploy && sudo docker compose up -d --build`
 - No email service, Google OAuth, or Turnstile keys are configured. Email/password login works in the web client. Telnet/SSH logins need a verified email, so mark accounts verified by hand:
   ```sh
-  cd ~/lofp/deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
+  cd deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
   ```
-- The VM's CPU type is `host` because MongoDB 5+ needs AVX.
 
-### Production: `lofp` (192.168.4.123), lofp.sanburnlab.com
+### Production: lofp.sanburnlab.com
 
-- Not Docker. Source tree at `/home/csanburn/lofp`, MongoDB runs natively (`mongod.service`). Two systemd services, both as user `csanburn`:
-  - `lofp`: the Go engine, `ExecStart=/home/csanburn/lofp/engine/cmd/lofp/lofp`, `WorkingDirectory=/home/csanburn/lofp/engine`, `EnvironmentFile=/home/csanburn/lofp/.env`. It listens on 4993 (web API/WebSocket), 4000 (telnet), and 4022 (SSH).
-  - Uses `config/prod.yaml` via `.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=4993` (Vite proxies to 4993), `LOFP_SCRIPTS_DIR=../original/scripts`, `LOFP_CONFIG_FILE=../original/scripts/LEGENDS.CFG`, plus `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, and `JWT_SECRET`. `prod.yaml` has no default for `JWT_SECRET`; it must be at least 32 characters or the engine panics at startup, and if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt: `echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env`.
-  - `dev.yaml` on production is no longer used, so copying the repo's `dev.yaml` over it is harmless.
-  - After a crash loop, `sudo systemctl reset-failed lofp` before restarting.
+- Not Docker. A source tree on the server, MongoDB running natively (`mongod.service`), nginx on a separate web server in front. Two systemd services:
+  - `lofp`: the Go engine (binary built in `engine/cmd/lofp`, working directory `engine/`, environment from the repo-root `.env`). Listens on 4993 (web API/WebSocket), 4000 (telnet), and 4022 (SSH).
   - `lofp-frontend`: the **Vite dev server** (`npx vite --port 4992`) serving `frontend/` straight from source and proxying `/api/`, `/healthz`, and `/ws` to `localhost:4993` (see `frontend/vite.config.ts`, which allows the host `lofp.sanburnlab.com`). There is no frontend build step: copied `.ts`/`.tsx` changes are picked up live. A new npm dependency still needs `npm install` in `frontend/` and a restart of `lofp-frontend`.
+- The engine uses `config/prod.yaml`, selected and adjusted through `.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=4993` (Vite proxies to 4993), `LOFP_SCRIPTS_DIR=../original/scripts`, `LOFP_CONFIG_FILE=../original/scripts/LEGENDS.CFG`, plus `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, and `JWT_SECRET`. `dev.yaml` on production is not used.
+- `prod.yaml` has no default for `JWT_SECRET`. It must be at least 32 characters or the engine panics at startup; if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt, not in an editor: `echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env`.
 - Deploys are manual: changed and new source files are copied to the server with WinSCP, then on the server (only needed for engine changes):
   ```sh
   cd ~/lofp/engine/cmd/lofp && sudo systemctl stop lofp && go build -o lofp . && sudo systemctl start lofp
   ```
+- After a crash loop, `sudo systemctl reset-failed lofp` before restarting.
 - Because files are copied by hand, when a change is ready for production, list every added, modified, and deleted file (e.g. `git diff --name-status <last-deployed-commit>..HEAD`) so nothing is missed. Deleted files have to be removed on the server by hand.
 
 ### Frontend build-time variables
