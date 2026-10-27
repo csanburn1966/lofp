@@ -20,7 +20,7 @@ import (
 
 // GameVersion is the release version reported by the VERSION command and the
 // telnet GMCP Core.Hello. Keep in sync with MainMenu.tsx / VersionNotes.tsx.
-const GameVersion = "15.4.0"
+const GameVersion = "15.4.1"
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z'-]{2,19}$`) // min 3 chars total
 

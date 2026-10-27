@@ -1,5 +1,13 @@
 # Changelog
 
+## v15.4.1 — 2026-10-27
+
+Drinks with their own scripted messages show them again. Iced tea now tastes chilled and bitter, and hot tea warms you from the inside, instead of every drink giving only the plain sip message.
+
+### Fixed: Scripted Drink Messages
+- `DRINK` and `SIP` now run a drink’s own scripted reactions. Tea, for one, has different messages for iced and hot, and they appear after the usual sip line
+- A drink whose script replaces the normal drinking with its own action now does so, as eating already did for scripted food
+
 ## v15.4.0 — 2026-10-24
 
 Your spells no longer wear off while you’re logged out. Log off with 40 minutes of Haste left and you’ll still have 40 minutes when you return. The weather makes more sense too: no more heavy snow at 39 degrees in spring, and it rains far less often. Miners can `SURVEY` an area to learn its ore grade, and Yshtarin’s Confounding Translocation can now send other players to your mark.

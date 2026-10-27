@@ -9,6 +9,21 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.4.1 &mdash; October 27, 2026</h2>
+            <p className="text-gray-400 mb-3">Drinks with their own scripted messages show them again. Iced tea now tastes chilled and bitter, and hot tea warms you from the inside, instead of every drink giving only the plain sip message.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Scripted Drink Messages</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code className="text-amber-300">DRINK</code> and <code className="text-amber-300">SIP</code> now run a drink&rsquo;s own scripted reactions. Tea, for one, has different messages for iced and hot, and they appear after the usual sip line</li>
+                  <li>A drink whose script replaces the normal drinking with its own action now does so, as eating already did for scripted food</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.4.0 &mdash; October 24, 2026</h2>
             <p className="text-gray-400 mb-3">Your spells no longer wear off while you&rsquo;re logged out. Log off with 40 minutes of Haste left and you&rsquo;ll still have 40 minutes when you return. The weather makes more sense too: no more heavy snow at 39 degrees in spring, and it rains far less often. Miners can <code className="text-amber-300">SURVEY</code> an area to learn its ore grade, and Yshtarin&rsquo;s Confounding Translocation can now send other players to your mark.</p>
 
