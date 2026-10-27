@@ -2975,21 +2975,33 @@ func (e *GameEngine) drinkItem(ctx context.Context, player *Player, ii *Inventor
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is empty.", displayName)}}
 	}
 
-	// Run item scripts for spell effects
 	room := e.rooms[player.RoomNumber]
+
+	// The item's own IFPREVERB DRINK script gets first say, same as doEat's
+	// IFPREVERB EAT hook: a CLEARVERB there replaces the generic drink entirely.
+	if res := e.runItemOwnPreverbHook(player, room, "DRINK", *ii); res != nil {
+		return res
+	}
+
+	// Run item scripts: root-level IFVAR (spell effects) plus top-level IFVERB DRINK
+	// (custom echoes, e.g. tea 1863's iced/hot flavor text keyed on ITEMADJ3).
 	tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
 		Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
 		Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
 		ItemBits: ii.ItemBits}
 	sc := e.RunItemScripts(player, room, "DRINK", &tempRI, itemDef)
-	// The script's own ECHO OTHERS/ALL lines, captured before applyItemSpellOnPlayer
+	sc2 := e.RunVerbScripts(player, room, "DRINK", &tempRI, itemDef)
+	sc.Messages = append(sc.Messages, sc2.Messages...)
+	// The scripts' own ECHO OTHERS/ALL lines, captured before applyItemSpellOnPlayer
 	// below appends its lines to sc.RoomMsgs (see the same fix in doEat).
-	scriptRoomMsgs := append([]string{}, sc.RoomMsgs...)
-	scriptGMMsgs := append([]string{}, sc.GMMsgs...)
+	scriptRoomMsgs := append(append([]string{}, sc.RoomMsgs...), sc2.RoomMsgs...)
+	scriptGMMsgs := append(append([]string{}, sc.GMMsgs...), sc2.GMMsgs...)
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
 	// the delay is lost.
-	if len(sc.DeferredSegments) > 0 {
-		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	for _, segs := range [][]ScriptSegment{sc.DeferredSegments, sc2.DeferredSegments} {
+		if len(segs) > 0 {
+			e.scheduleScriptSegments(player, segs)
+		}
 	}
 	spellNum := tempRI.Val3
 
