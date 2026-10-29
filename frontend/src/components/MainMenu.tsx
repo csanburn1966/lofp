@@ -518,7 +518,7 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
         )}
         <div className="mt-6 text-center">
           <button onClick={onVersionNotes} className="text-gray-600 hover:text-amber-400 text-xs font-mono">
-            Version 15.4.1 &mdash; Version Notes
+            Version 15.5.0 &mdash; Version Notes
           </button>
           <span className="text-gray-700 mx-2">|</span>
           <a href="/manual" className="text-gray-600 hover:text-amber-400 text-xs font-mono">

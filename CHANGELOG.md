@@ -1,5 +1,24 @@
 # Changelog
 
+## v15.5.0 — 2026-10-29
+
+A very hard hit is no longer almost certain to be a critical. At the hardest odds, only one hit in six is now an Excellent Hit instead of five in six. Potions and enchanted items that cast Night Vision, Light, Haste or Fly now add to a spell you already have running, as casting it yourself does.
+
+### Changed: Excellent Hits on Hard Targets
+- An Excellent Hit now needs a roll of 96 or more *and* at least 5 above the ToHit. At ToHit 91 or less nothing changes. At 92 it takes a 97, and so on up to ToHit 95, where only a 100 is excellent
+- This applies to everyone: players, creatures attacking players, and creatures fighting each other or elementals
+- Any hit on a stunned or knocked-down target is still an automatic Excellent Hit
+
+### Fixed: Spells from Potions and Items
+- Night Vision and Light from a potion or an autocast item now actually work. Before, they showed a message and did nothing
+- Night Vision, Light, Haste and Fly from a potion or item now add 20 minutes to the spell if it’s already running, up to 4 hours, and tell you how many minutes are left. Haste and Fly used to reset to 20 minutes, which could cut a longer spell short
+
+### Fixed: Haste and Psionic Speed
+- Casting Haste on someone maintaining Speed, or using a Haste item while you are, no longer cuts Speed off after 4 hours. The spell tells you they’re already maintaining Speed instead
+
+### Fixed: Damaged Weapons
+- Fighting with a damaged weapon still makes you less likely to hit, but it can no longer make a target impossible to hit. ToHit tops out at 95 like every other attack
+
 ## v15.4.1 — 2026-10-27
 
 Drinks with their own scripted messages show them again. Iced tea now tastes chilled and bitter, and hot tea warms you from the inside, instead of every drink giving only the plain sip message.
