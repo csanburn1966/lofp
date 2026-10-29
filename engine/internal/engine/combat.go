@@ -601,6 +601,14 @@ func calcToHit(attackRating, defenseRating int) int {
 	return toHit
 }
 
+// isExcellentRoll reports whether a hitting roll is an Excellent Hit (critical).
+// The original game made any natural 96+ excellent, so at ToHit 95 five of every
+// six hits were crits. Hard hits now also need a 5-point margin over ToHit:
+// ToHit 91 or less is unchanged, 92 needs 97+, and so on up to 95 needing a 100.
+func isExcellentRoll(roll, toHit int) bool {
+	return roll >= 96 && roll >= toHit+5
+}
+
 func (e *GameEngine) playerAttackRating(player *Player, weaponDef *gameworld.ItemDef) int {
 	rating := 50
 	rating += player.Level * 3
@@ -1563,18 +1571,21 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 	// Damaged weapon penalty (-10 ToHit)
 	if player.Wielded != nil && player.Wielded.State == "DAMAGED" {
 		toHit += 10 // harder to hit with damaged weapon
+		if toHit > 95 {
+			toHit = 95 // same cap as calcToHit, or the target becomes unhittable
+		}
 	}
 
 	if roll >= toHit {
 		// A stunned or knocked-down target is defenseless — any successful hit against
 		// one is an automatic critical (the same "Excellent Hit!"/open-ended bonus
-		// damage path a natural 96+ roll gets), not just the to-hit bonus above.
-		excellent := roll >= 96 || inst.Stunned || inst.KnockedDown
+		// damage path an excellent roll gets — see isExcellentRoll), not just the to-hit bonus above.
+		excellent := isExcellentRoll(roll, toHit) || inst.Stunned || inst.KnockedDown
 		hitLabel := "Hit!"
 		if excellent {
 			hitLabel = "Excellent Hit!"
 		}
-		// Open-ended roll: 96-100 adds a bonus roll
+		// Excellent hit: open-ended bonus roll
 		openEndedBonus := 0
 		if excellent {
 			bonus := rand.Intn(100) + 1
@@ -1827,11 +1838,11 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		ohWepName := e.formatItemNameNoArticle(offHandDef, player.OffHand.Adj1, player.OffHand.Adj2, player.OffHand.Adj3, player.OffHand.Tail)
 		result.Messages = append(result.Messages, fmt.Sprintf("You %s at %s%s with your %s.", ohSelfVerb, article, name, ohWepName))
 		if ohRoll >= ohToHit {
-			// Same critical rule as the main-hand swing above: a natural 96+, or any hit
+			// Same critical rule as the main-hand swing above: an excellent roll (isExcellentRoll), or any hit
 			// on a stunned or knocked-down target, is an excellent hit with the
 			// open-ended bonus damage. The off-hand used to always print a plain "Hit!"
 			// with no bonus — even right after the main hand had knocked the target down.
-			ohExcellent := ohRoll >= 96 || inst.Stunned || inst.KnockedDown
+			ohExcellent := isExcellentRoll(ohRoll, ohToHit) || inst.Stunned || inst.KnockedDown
 			ohHitLabel := "Hit!"
 			ohOpenEndedBonus := 0
 			if ohExcellent {
@@ -2098,7 +2109,7 @@ func (e *GameEngine) elementalGuardIntercept(attackerInst *MonsterInstance, atta
 	summonerName := g.SummonerName
 
 	hitLabel := "Hit!"
-	if roll >= 96 {
+	if isExcellentRoll(roll, toHit) {
 		hitLabel = "Excellent Hit!"
 	}
 
@@ -2329,15 +2340,15 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 
 	if roll >= toHit {
 		// A stunned or knocked-down player is defenseless — any successful hit
-		// against one is an automatic critical, not just a natural 96+ roll (see
+		// against one is an automatic critical, not just an excellent roll (see
 		// the matching comment in doAttackMonster for the player-attacking-monster
 		// direction).
-		excellent := roll >= 96 || player.Stunned || player.KnockedDown
+		excellent := isExcellentRoll(roll, toHit) || player.Stunned || player.KnockedDown
 		hitLabel := "Hit!"
 		if excellent {
 			hitLabel = "Excellent Hit!"
 		}
-		// Open-ended roll: 96-100 adds a bonus roll — mirrors doAttackMonster's
+		// Excellent hit: open-ended bonus roll — mirrors doAttackMonster's
 		// player-vs-monster version, which players already get.
 		openEndedBonus := 0
 		if excellent {
@@ -4171,7 +4182,7 @@ func (e *GameEngine) summonedAttackMonster(inst *MonsterInstance, def *gameworld
 		msgs = []string{attackLine, fmt.Sprintf("[ToHit: %d, Roll: %d] Miss!", toHit, roll)}
 	} else {
 		hitLabel := "Hit!"
-		if roll >= 96 {
+		if isExcellentRoll(roll, toHit) {
 			hitLabel = "Excellent Hit!"
 		}
 		// MagicWeapon immunity
