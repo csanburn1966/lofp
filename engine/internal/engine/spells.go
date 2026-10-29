@@ -5607,6 +5607,21 @@ func (e *GameEngine) castHasteSpell(player *Player, spell *SpellDef, args []stri
 		}
 	}
 
+	// Psionic Speed (42) parks HasteExpiry years out (see psionics.go); extending
+	// it here would cap it back to hasteMaxDuration and cut Speed off early.
+	if target.ActivePsi[42] {
+		if isSelf {
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("You gesture and begin to cast %s, but you are already maintaining Speed.", spell.Name)},
+				RoomBroadcast: []string{fmt.Sprintf("%s gestures, but the spell fades.", player.DisplayName())},
+			}
+		}
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You gesture and begin to cast %s, but %s is already maintaining Speed.", spell.Name, target.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s gestures, but the spell fades.", player.DisplayName())},
+		}
+	}
+
 	if !target.HasteExpiry.IsZero() && time.Now().Before(target.HasteExpiry) {
 		target.HasteExpiry = target.HasteExpiry.Add(hasteDuration)
 		if target.HasteExpiry.After(time.Now().Add(hasteMaxDuration)) {

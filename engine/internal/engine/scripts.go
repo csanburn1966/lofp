@@ -3153,15 +3153,33 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d STR, %d minutes)", spell.Name, bonus, mins))
 				sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s glows with newfound strength.", player.FirstName))
 			}
-		case 210: // Haste
-			player.HasteExpiry = time.Now().Add(20 * time.Minute)
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The world slows around you!", spell.Name))
-			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s moves with incredible speed.", player.FirstName))
-		case 224: // Fly
+		case 210: // Haste — stacks onto an active one, same as CAST (castHasteSpell)
+			// Maintained psionic Speed (42) parks HasteExpiry years out; leave it
+			// alone rather than capping it back to a timed haste.
+			if player.ActivePsi[42] {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s, but you are already maintaining Speed.", spell.Name))
+				break
+			}
+			var mins int
+			var fresh bool
+			player.HasteExpiry, mins, fresh = extendTimedSpell(player.HasteExpiry, 20*time.Minute)
+			if !fresh {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your speed is already heightened! (%d minutes remaining)", spell.Name, mins))
+			} else {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The world slows around you! (%d minutes)", spell.Name, mins))
+				sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s moves with incredible speed.", player.FirstName))
+			}
+		case 224: // Fly — stacks onto an active one, same as CAST (castFlySpell)
+			var mins int
+			var fresh bool
 			player.CanFly = true
-			player.FlyExpiry = time.Now().Add(20 * time.Minute)
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You rise into the air!", spell.Name))
-			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s rises into the air!", player.FirstName))
+			player.FlyExpiry, mins, fresh = extendTimedSpell(player.FlyExpiry, 20*time.Minute)
+			if !fresh {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You are already aloft! (%d minutes remaining)", spell.Name, mins))
+			} else {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You rise into the air! (%d minutes)", spell.Name, mins))
+				sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s rises into the air!", player.FirstName))
+			}
 		case 225: // Invisibility
 			player.Invisible = true
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You fade from sight.", spell.Name))
@@ -3235,8 +3253,16 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 
 	case "utility":
 		switch spell.ID {
-		case 113: // Light
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. A soft glow illuminates the area.", spell.Name))
+		case 113: // Light — stacks onto an active one, same as CAST (see darkness.go)
+			var mins int
+			var fresh bool
+			player.LightSpellExpiry, mins, fresh = extendTimedSpell(player.LightSpellExpiry, lightSpellDuration)
+			if !fresh {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The glow around you brightens. (%d minutes remaining)", spell.Name, mins))
+			} else {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. A soft glow surrounds you, lighting the area. (%d minutes)", spell.Name, mins))
+				sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A soft glow surrounds %s.", player.FirstName))
+			}
 		case 114: // Mystic Key
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You feel it could open any lock.", spell.Name))
 		case 228: // Identify
@@ -3257,8 +3283,15 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			} else {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s, but you aren't bound by any such magic.", spell.Name))
 			}
-		case 520: // Night Vision
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The darkness retreats from your eyes.", spell.Name))
+		case 520: // Night Vision — stacks onto an active one, same as CAST (see darkness.go)
+			var mins int
+			var fresh bool
+			player.NightVisionExpiry, mins, fresh = extendTimedSpell(player.NightVisionExpiry, nightVisionDuration)
+			if !fresh {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your night vision is renewed. (%d minutes remaining)", spell.Name, mins))
+			} else {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The darkness retreats from your eyes. (%d minutes)", spell.Name, mins))
+			}
 		default:
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s.", spell.Name))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A shimmer of magical energy surrounds %s.", player.FirstName))
