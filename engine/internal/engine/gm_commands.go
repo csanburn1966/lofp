@@ -3057,13 +3057,20 @@ func (e *GameEngine) gmEds(ctx context.Context, args []string) *CommandResult {
 	oldBP := target.BuildPoints
 	setSkillRank(target, skillNum, level)
 	recalcBuildPoints(target)
+	forgotten := e.forgetUnqualifiedAbilities(target)
 	e.SavePlayer(ctx, target)
+	if len(forgotten) > 0 && e.sendToPlayer != nil {
+		e.sendToPlayer(target.FirstName, forgotten)
+	}
 	msg := fmt.Sprintf("Set skill %d to level %d for %s.", skillNum, level, target.FullName())
 	if st := selfTrainedRanks(target, skillNum); st > 0 {
 		msg += fmt.Sprintf(" (%d rank(s) self-trained)", st)
 	}
 	if delta := target.BuildPoints - oldBP; delta != 0 {
 		msg += fmt.Sprintf(" Build points %+d (%d unspent).", delta, target.BuildPoints)
+	}
+	if len(forgotten) > 0 {
+		msg += fmt.Sprintf(" Removed %d spell/psionic ability(ies) they no longer qualify for.", len(forgotten))
 	}
 	return &CommandResult{Messages: []string{msg}}
 }

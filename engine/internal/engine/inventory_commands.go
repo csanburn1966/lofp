@@ -4073,10 +4073,11 @@ func (e *GameEngine) doUnlearn(ctx context.Context, player *Player, args []strin
 		player.MaxBodyPoints -= 4
 		player.BodyPoints = min(player.BodyPoints, player.MaxBodyPoints)
 	}
+	forgotten := e.forgetUnqualifiedAbilities(player)
 	e.SavePlayer(ctx, player)
-	return &CommandResult{Messages: []string{
+	return &CommandResult{Messages: append([]string{
 		fmt.Sprintf("You unlearn a rank of %s. (now rank %d, +%d build points, total BP: %d)", name, currentLvl-1, player.BuildPoints-oldBP, player.BuildPoints),
-	}}
+	}, forgotten...)}
 }
 
 func (e *GameEngine) doUndress(ctx context.Context, player *Player) *CommandResult {

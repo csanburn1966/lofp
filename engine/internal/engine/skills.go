@@ -319,6 +319,47 @@ func setSkillRank(player *Player, skillID, level int) {
 	player.Skills[skillID] = level
 }
 
+// forgetUnqualifiedAbilities removes the spells and psionic disciplines player
+// no longer has the ranks for, after a skill was lowered (@EDSK or UNLEARN).
+// Psionic disciplines aren't stored — they follow the school ranks (psiKnown) —
+// so for those it only releases maintained ones and drops a prepared one.
+// Returns the messages to show the player.
+func (e *GameEngine) forgetUnqualifiedAbilities(player *Player) []string {
+	if player.IsGM {
+		return nil
+	}
+	var msgs []string
+	for id := range player.KnownSpells {
+		spell := FindSpellByID(id)
+		if spell == nil {
+			continue
+		}
+		req := schoolSkillID(spell.School)
+		if req < 0 || player.Skills[req] >= spell.Level {
+			continue
+		}
+		delete(player.KnownSpells, id)
+		if player.PreparedSpell == id {
+			player.PreparedSpell = 0
+		}
+		msgs = append(msgs, fmt.Sprintf("You can no longer remember the %s spell.", spell.Name))
+	}
+	for i := range psiRegistry {
+		disc := &psiRegistry[i]
+		if psiKnown(player, disc) {
+			continue
+		}
+		if player.ActivePsi[disc.ID] {
+			msgs = append(msgs, e.releasePsi(player, disc).Messages...)
+		}
+		if player.PreparedPsi == disc.ID {
+			player.PreparedPsi = 0
+			msgs = append(msgs, fmt.Sprintf("Your focus on %s dissipates.", disc.Name))
+		}
+	}
+	return msgs
+}
+
 // findSkillByArg resolves a skill number or name prefix (lowest skill # wins).
 func findSkillByArg(arg string) (int, bool) {
 	arg = strings.ToLower(strings.TrimSpace(arg))

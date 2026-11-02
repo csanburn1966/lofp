@@ -162,44 +162,14 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandRe
 	// Check if this is a maintained power that's already active — toggle off
 	isMaintained := disc.Effect == "buff" || disc.Effect == "defense"
 	if isMaintained && player.ActivePsi[disc.ID] {
-		delete(player.ActivePsi, disc.ID)
-		// Remove defense bonus if applicable
-		if disc.DefBonus > 0 {
-			player.DefenseBonus -= disc.DefBonus
-		}
-		// Clear flight state. Over open sky that means falling (skyfall.go),
-		// not "standing" in mid-air.
-		var fallMsgs []string
-		if disc.ID == 2 || disc.ID == 10 { // Levitate or Flight
-			player.CanFly = false
-			fallMsgs = e.fallIfFlightLost(context.Background(), player, true)
-			if fallMsgs == nil && player.Position == 4 && !player.IsFlying() {
-				player.Position = 0
-			}
-		}
-		// Clear ethereal projection
-		if disc.ID == 15 {
-			player.EtherealActive = false
-			player.Hidden = false
-		}
-		// Speed shares the same HasteExpiry field applyRoundTime reads for every
-		// timed spell-Haste — clearing it here also cancels the round-time discount.
-		if disc.ID == 42 {
-			player.HasteExpiry = time.Time{}
-			return &CommandResult{
-				Messages:      []string{"You stop maintaining Speed.", "You slow down considerably."},
-				RoomBroadcast: []string{fmt.Sprintf("%s returns to normal speed.", player.FirstName)},
-			}
-		}
-		if fallMsgs != nil {
-			// The fall already told both rooms; a RoomBroadcast here would go to
-			// the landing room, which never saw the concentration being released.
-			return &CommandResult{Messages: append([]string{fmt.Sprintf("You release your concentration on %s.", disc.Name)}, fallMsgs...)}
-		}
-		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You release your concentration on %s.", disc.Name)},
-			RoomBroadcast: []string{fmt.Sprintf("%s relaxes %s concentration.", player.FirstName, player.Possessive())},
-		}
+		return e.releasePsi(player, disc)
+	}
+
+	// The school rank gates which disciplines can be used, not just which ones
+	// the PSI listing shows. (Releasing one above is always allowed, so a
+	// discipline lost to a lowered skill can still be let go.)
+	if !psiKnown(player, disc) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't know a discipline called '%s'.", input)}}
 	}
 
 	if player.Psi < disc.PsiCost {
@@ -318,18 +288,71 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandRe
 	}
 }
 
+// psiKnown reports whether player has the ranks to use disc: some Psionics
+// training plus the discipline's school (Mind over Matter or Mind over Mind)
+// at or above its level. GMs know every discipline.
+func psiKnown(player *Player, disc *PsiDiscipline) bool {
+	if player.IsGM {
+		return true
+	}
+	if player.Skills[26] == 0 {
+		return false
+	}
+	if disc.School == "Mind over Matter" {
+		return player.Skills[28] >= disc.Level
+	}
+	return player.Skills[27] >= disc.Level
+}
+
+// releasePsi stops maintaining an active discipline and undoes its effects.
+func (e *GameEngine) releasePsi(player *Player, disc *PsiDiscipline) *CommandResult {
+	delete(player.ActivePsi, disc.ID)
+	// Remove defense bonus if applicable
+	if disc.DefBonus > 0 {
+		player.DefenseBonus -= disc.DefBonus
+	}
+	// Clear flight state. Over open sky that means falling (skyfall.go),
+	// not "standing" in mid-air.
+	var fallMsgs []string
+	if disc.ID == 2 || disc.ID == 10 { // Levitate or Flight
+		player.CanFly = false
+		fallMsgs = e.fallIfFlightLost(context.Background(), player, true)
+		if fallMsgs == nil && player.Position == 4 && !player.IsFlying() {
+			player.Position = 0
+		}
+	}
+	// Clear ethereal projection
+	if disc.ID == 15 {
+		player.EtherealActive = false
+		player.Hidden = false
+	}
+	// Speed shares the same HasteExpiry field applyRoundTime reads for every
+	// timed spell-Haste — clearing it here also cancels the round-time discount.
+	if disc.ID == 42 {
+		player.HasteExpiry = time.Time{}
+		return &CommandResult{
+			Messages:      []string{"You stop maintaining Speed.", "You slow down considerably."},
+			RoomBroadcast: []string{fmt.Sprintf("%s returns to normal speed.", player.FirstName)},
+		}
+	}
+	if fallMsgs != nil {
+		// The fall already told both rooms; a RoomBroadcast here would go to
+		// the landing room, which never saw the concentration being released.
+		return &CommandResult{Messages: append([]string{fmt.Sprintf("You release your concentration on %s.", disc.Name)}, fallMsgs...)}
+	}
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You release your concentration on %s.", disc.Name)},
+		RoomBroadcast: []string{fmt.Sprintf("%s relaxes %s concentration.", player.FirstName, player.Possessive())},
+	}
+}
+
 // listPsiDisciplines shows all known disciplines and their active status.
 func (e *GameEngine) listPsiDisciplines(player *Player) *CommandResult {
 	var msgs []string
 	msgs = append(msgs, "Your psionic disciplines:")
 	msgs = append(msgs, "")
 
-	// Determine which disciplines the player knows based on skill levels
-	momLevel := player.Skills[28] // Mind over Matter
-	mooLevel := player.Skills[27] // Mind over Mind
-	psiLevel := player.Skills[26] // base Psionics
-
-	if psiLevel == 0 && !player.IsGM {
+	if player.Skills[26] == 0 && !player.IsGM {
 		return &CommandResult{Messages: []string{"You have no training in Psionics."}}
 	}
 
@@ -337,14 +360,7 @@ func (e *GameEngine) listPsiDisciplines(player *Player) *CommandResult {
 	msgs = append(msgs, fmt.Sprintf("%-4s %-25s %-6s %-6s %s", "--", "----------", "----", "------", "------"))
 
 	for _, disc := range psiRegistry {
-		// Check if player has enough skill to know this discipline
-		var skillLevel int
-		if disc.School == "Mind over Matter" {
-			skillLevel = momLevel
-		} else {
-			skillLevel = mooLevel
-		}
-		if skillLevel < disc.Level && !player.IsGM {
+		if !psiKnown(player, &disc) {
 			continue
 		}
 
@@ -408,7 +424,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 	}
 
 	disc := FindPsiByID(player.PreparedPsi)
-	if disc == nil {
+	if disc == nil || !psiKnown(player, disc) {
 		player.PreparedPsi = 0
 		return &CommandResult{Messages: []string{"Your focus dissipates."}}
 	}
