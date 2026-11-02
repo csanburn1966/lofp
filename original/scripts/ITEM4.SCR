@@ -1966,6 +1966,26 @@ IFPREVERB REMOVE -1
 	ECHO OTHERS %N slowly and painfully rips off %h tattoo. What an idiot.
 ENDIF
 ;
+;tattoo worn on the wrist/back of the hand, made by Witchlet (GM).
+;Same mechanics as the ankle/chest/leg tattoos above: HIDDEN so it isn't
+;listed in inventory, SKIN so it reads as part of the body. Trying to
+;REMOVE it tears it off: 50 BODYONLY damage and the item is destroyed.
+INUMBER 10013
+NAME 1022
+MISC
+WORN_WRIST
+WEIGHT 1
+VOLUME 1
+SUBSTANCE PAPER
+ARTICLE A
+HIDDEN
+SKIN
+IFPREVERB REMOVE -1
+	DAMAGEPLR BODYONLY 50 You slowly and painfully rip off the tattoo, and the skin around it.
+	REMOVEITEM -1
+	ECHO OTHERS %N slowly and painfully rips off %h tattoo. What an idiot.
+ENDIF
+;
 ;paintings for art auctions
 INUMBER 1090
 NAME 476
