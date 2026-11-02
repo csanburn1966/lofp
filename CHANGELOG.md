@@ -1,5 +1,24 @@
 # Changelog
 
+## v15.6.0 — 2026-11-02
+
+Following a group leader reads cleanly now: you see “You follow Chandra.” and then the room, and everyone else sees one line for the whole group. Psionic disciplines above your Mind over Matter or Mind over Mind rank can no longer be used, and losing a skill rank now takes away the spells and disciplines that rank supported. Witchlet has also added a wrist tattoo.
+
+### Changed: Moving as a Group
+- When your leader moves, you now see “You follow Chandra.” before the new room, instead of “Chandra arrives.” and “Chandra’s group arrives.” after it
+- People in the room you leave see only “Chandra’s group goes east.”, and people in the room you enter see only “Chandra’s group arrives.”, as in the original game. A leader moving alone still gets the usual messages
+- The same applies when a group goes through a portal. Groups carried along by Bend Space no longer see their own “appears out of nowhere” message
+
+### Fixed: Psionic Disciplines Above Your Rank
+- `PSI` with a discipline’s name or number no longer lets you use one your school rank doesn’t cover. You need some Psionics training and Mind over Matter or Mind over Mind at the discipline’s level, the same rule the `PSI` list already used
+- A discipline you prepared but no longer qualify for fizzles when you `PROJECT` it. You can always release one you’re maintaining
+
+### Changed: Losing Skill Ranks
+- When a skill rank is lost, through `UNLEARN` or a GM lowering it, you forget spells whose school rank is now too low, and maintained or prepared psionic disciplines you no longer qualify for are released. You’re told what was lost
+
+### New: Wrist Tattoo
+- Witchlet has made a tattoo worn on the wrist. Like the other tattoos, it can’t simply be taken off: removing it tears it out, and the skin with it
+
 ## v15.5.0 — 2026-10-29
 
 A very hard hit is no longer almost certain to be a critical. At the hardest odds, only one hit in six is now an Excellent Hit instead of five in six. Potions and enchanted items that cast Night Vision, Light, Haste or Fly now add to a spell you already have running, as casting it yourself does.

@@ -9,6 +9,41 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.6.0 &mdash; November 2, 2026</h2>
+            <p className="text-gray-400 mb-3">Following a group leader reads cleanly now: you see &ldquo;You follow Chandra.&rdquo; and then the room, and everyone else sees one line for the whole group. Psionic disciplines above your Mind over Matter or Mind over Mind rank can no longer be used, and losing a skill rank now takes away the spells and disciplines that rank supported. Witchlet has also added a wrist tattoo.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Moving as a Group</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When your leader moves, you now see &ldquo;You follow Chandra.&rdquo; before the new room, instead of &ldquo;Chandra arrives.&rdquo; and &ldquo;Chandra&rsquo;s group arrives.&rdquo; after it</li>
+                  <li>People in the room you leave see only &ldquo;Chandra&rsquo;s group goes east.&rdquo;, and people in the room you enter see only &ldquo;Chandra&rsquo;s group arrives.&rdquo;, as in the original game. A leader moving alone still gets the usual messages</li>
+                  <li>The same applies when a group goes through a portal. Groups carried along by Bend Space no longer see their own &ldquo;appears out of nowhere&rdquo; message</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Psionic Disciplines Above Your Rank</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>PSI</code> with a discipline&rsquo;s name or number no longer lets you use one your school rank doesn&rsquo;t cover. You need some Psionics training and Mind over Matter or Mind over Mind at the discipline&rsquo;s level, the same rule the <code>PSI</code> list already used</li>
+                  <li>A discipline you prepared but no longer qualify for fizzles when you <code>PROJECT</code> it. You can always release one you&rsquo;re maintaining</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Losing Skill Ranks</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When a skill rank is lost, through <code>UNLEARN</code> or a GM lowering it, you forget spells whose school rank is now too low, and maintained or prepared psionic disciplines you no longer qualify for are released. You&rsquo;re told what was lost</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Wrist Tattoo</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Witchlet has made a tattoo worn on the wrist. Like the other tattoos, it can&rsquo;t simply be taken off: removing it tears it out, and the skin with it</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.5.0 &mdash; October 29, 2026</h2>
             <p className="text-gray-400 mb-3">A very hard hit is no longer almost certain to be a critical. At the hardest odds, only one hit in six is now an Excellent Hit instead of five in six. Potions and enchanted items that cast Night Vision, Light, Haste or Fly now add to a spell you already have running, as casting it yourself does.</p>
 
