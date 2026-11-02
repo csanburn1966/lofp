@@ -164,7 +164,11 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	result := e.doLook(player)
 	result.OldRoom = originalRoom
 	// Concealed players (Invisible spell, @hide, @invis) move silently — no exit/entry echoes
-	if !player.IsConcealed() {
+	if !player.IsConcealed() && len(movedFollowers) > 0 {
+		// One line for the whole group, as in the original ("Wolfbane's group goes south.").
+		result.OldRoomMsg = []string{fmt.Sprintf("%s's group goes %s.", player.DisplayNameCap(), dirName)}
+		result.RoomBroadcast = []string{fmt.Sprintf("%s's group arrives.", player.DisplayNameCap())}
+	} else if !player.IsConcealed() {
 		if player.WolfForm {
 			// Wolf form ignores custom ExitEcho/EntryEcho — always the generic wolf line.
 			result.OldRoomMsg = []string{fmt.Sprintf("A wolf goes %s.", dirName)}
@@ -187,20 +191,10 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// Run IFENTRY scripts for the destination room
 	e.applyEntryScripts(ctx, player, dest, result)
 
-	// Group movement echoes + each follower's own room render. Everyone's
-	// RoomNumber was already updated above, so each follower's look (and the
-	// leader's) correctly shows the whole group and any summons as present.
-	if len(movedFollowers) > 0 {
-		for _, p := range movedFollowers {
-			if e.sendToPlayer != nil {
-				followLook := e.doLook(p)
-				e.sendToPlayer(p.FirstName, followLook.Messages)
-			}
-			e.applyEntryScripts(ctx, p, dest, &CommandResult{})
-		}
-		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group goes %s.", player.DisplayNameCap(), dirName))
-		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
-	}
+	// Each follower's own room render. Everyone's RoomNumber was already
+	// updated above, so each follower's look (and the leader's) correctly
+	// shows the whole group and any summons as present.
+	e.sendFollowerLooks(ctx, player, movedFollowers, dest, result)
 
 	result.OldRoomMsg = append(result.OldRoomMsg, summonOldMsgs...)
 	result.RoomBroadcast = append(result.RoomBroadcast, summonRoomMsgs...)
@@ -211,6 +205,22 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	}
 
 	return result
+}
+
+// sendFollowerLooks shows each group member who followed the leader
+// "You follow <leader>." and their new room, runs their IFENTRY scripts, and
+// keeps them out of the leader's arrival broadcast — they arrived with the
+// group, so "Chandra's group arrives." is only for those already there.
+func (e *GameEngine) sendFollowerLooks(ctx context.Context, leader *Player, followers []*Player, dest *gameworld.Room, result *CommandResult) {
+	for _, p := range followers {
+		if e.sendToPlayer != nil {
+			followLook := e.doLook(p)
+			msgs := append([]string{fmt.Sprintf("You follow %s.", leader.DisplayName())}, followLook.Messages...)
+			e.sendToPlayer(p.FirstName, msgs)
+		}
+		e.applyEntryScripts(ctx, p, dest, &CommandResult{})
+		result.BroadcastExclude = append(result.BroadcastExclude, p.FirstName)
+	}
 }
 
 // EnterRoom performs a look and runs IFENTRY scripts. Used on login/creation.
@@ -928,7 +938,10 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	result.Items = lookResult.Items
 	result.OldRoom = originalRoom
 	// Concealed players (Invisible spell, @hide, @invis) move silently — no exit/entry echoes.
-	if !player.IsConcealed() {
+	if !player.IsConcealed() && len(movedFollowers) > 0 {
+		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group goes through %s.", player.DisplayNameCap(), portalName))
+		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
+	} else if !player.IsConcealed() {
 		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s goes through %s.", player.DisplayNameCap(), portalName))
 		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 	}
@@ -936,19 +949,9 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	// Run IFENTRY scripts at destination
 	e.applyEntryScripts(ctx, player, dest, result)
 
-	// Group movement echoes + each follower's own room render (everyone's
-	// RoomNumber was already updated above, so it correctly shows the group).
-	if len(movedFollowers) > 0 {
-		for _, p := range movedFollowers {
-			if e.sendToPlayer != nil {
-				followLook := e.doLook(p)
-				e.sendToPlayer(p.FirstName, followLook.Messages)
-			}
-			e.applyEntryScripts(ctx, p, dest, &CommandResult{})
-		}
-		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group goes through %s.", player.DisplayNameCap(), portalName))
-		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
-	}
+	// Each follower's own room render (everyone's RoomNumber was already
+	// updated above, so it correctly shows the group).
+	e.sendFollowerLooks(ctx, player, movedFollowers, dest, result)
 
 	result.OldRoomMsg = append(result.OldRoomMsg, summonOldMsgs...)
 	result.RoomBroadcast = append(result.RoomBroadcast, summonRoomMsgs...)

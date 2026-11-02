@@ -2833,6 +2833,7 @@ func (e *GameEngine) castBendSpaceII(ctx context.Context, player *Player, args [
 			}, followLook.Messages...)
 			e.sendToPlayer(p.FirstName, followMsgs)
 		}
+		result.BroadcastExclude = append(result.BroadcastExclude, p.FirstName)
 		e.applyEntryScripts(ctx, p, dest, &CommandResult{})
 	}
 

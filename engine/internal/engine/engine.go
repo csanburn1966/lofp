@@ -550,6 +550,10 @@ type CommandResult struct {
 	RoomBroadcast []string `json:"-"`
 	OldRoom       int      `json:"-"`
 	OldRoomMsg    []string `json:"-"`
+	// BroadcastExclude: players who don't get RoomBroadcast even though they're
+	// in the room, e.g. group members who arrived with the leader (they get their
+	// own "You follow X." instead of "X's group arrives.").
+	BroadcastExclude []string `json:"-"`
 	// ConcealedBroadcastOK: by default, dispatchCommandResult (api.go) suppresses
 	// RoomBroadcast/OldRoomMsg entirely for a concealed actor (Hidden/Invisible/
 	// PhantomForm/GM @hide/@invis) — the safe default for commands that never

@@ -1049,11 +1049,11 @@ func (s *Server) dispatchCommandResult(session *Session, result *engine.CommandR
 	concealed := session.Player.IsConcealed()
 	suppress := concealed && !result.ConcealedBroadcastOK
 	if len(result.RoomBroadcast) > 0 && !suppress {
+		excludes := result.BroadcastExclude
 		if result.TargetName != "" {
-			s.broadcastToRoom(session.Player.RoomNumber, session.Player.FirstName, result.RoomBroadcast, result.TargetName)
-		} else {
-			s.broadcastToRoom(session.Player.RoomNumber, session.Player.FirstName, result.RoomBroadcast)
+			excludes = append(excludes, result.TargetName)
 		}
+		s.broadcastToRoom(session.Player.RoomNumber, session.Player.FirstName, result.RoomBroadcast, excludes...)
 	}
 	// Send second-person message to emote target
 	if result.TargetName != "" && len(result.TargetMsg) > 0 {
