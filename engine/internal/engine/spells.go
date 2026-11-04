@@ -122,6 +122,7 @@ func init() {
 	necro := []SpellDef{
 		{ID: 301, Name: "Turn Undead I", School: "Necromancy", Level: 2, ManaCost: 4, CastTime: 3, Effect: "damage", DmgMin: 5, DmgMax: 15, DmgType: ""},
 		{ID: 302, Name: "Turn Undead II", School: "Necromancy", Level: 8, ManaCost: 10, CastTime: 3, Effect: "damage", DmgMin: 10, DmgMax: 30, DmgType: ""},
+		{ID: 304, Name: "Turn Undead III", School: "Necromancy", Level: 16, ManaCost: 18, CastTime: 3, Effect: "damage", DmgMin: 20, DmgMax: 60, DmgType: ""},
 		{ID: 303, Name: "Cure Poison", School: "Necromancy", Level: 11, ManaCost: 12, CastTime: 3, Effect: "utility"},
 		{ID: 319, Name: "Cure Disease", School: "Necromancy", Level: 12, ManaCost: 14, CastTime: 3, Effect: "utility"},
 		{ID: 313, Name: "Body Destruction I", School: "Necromancy", Level: 1, ManaCost: 3, CastTime: 3, Effect: "damage", DmgMin: 3, DmgMax: 10, DmgType: ""},
@@ -148,6 +149,7 @@ func init() {
 		{ID: 307, Name: "Animate Zombie", School: "Necromancy", Level: 10, ManaCost: 10, CastTime: 5, Effect: "utility"},
 		{ID: 308, Name: "Control Undead I", School: "Necromancy", Level: 7, ManaCost: 7, CastTime: 4, Effect: "utility"},
 		{ID: 309, Name: "Control Undead II", School: "Necromancy", Level: 13, ManaCost: 13, CastTime: 4, Effect: "utility"},
+		{ID: 310, Name: "Control Undead III", School: "Necromancy", Level: 21, ManaCost: 21, CastTime: 4, Effect: "utility"},
 		{ID: 311, Name: "Speak With Dead", School: "Necromancy", Level: 3, ManaCost: 3, CastTime: 4, Effect: "utility"},
 		{ID: 353, Name: "Summon Spectral Warrior", School: "Necromancy", Level: 32, ManaCost: 32, CastTime: 5, Effect: "utility"},
 		{ID: 322, Name: "Death Scythe", School: "Necromancy", Level: 25, ManaCost: 30, CastTime: 4, Effect: "utility"},
@@ -584,10 +586,10 @@ func (e *GameEngine) trainSpellFromTeacher(ctx context.Context, player *Player, 
 }
 
 // isUndeadOnlySpell returns true for Necromancy spells that only affect undead creatures
-// (RACE 22 in the monster script data): Turn Undead I/II and Destroy Undead I/II/III.
+// (RACE 22 in the monster script data): Turn Undead I/II/III and Destroy Undead I/II/III.
 func isUndeadOnlySpell(spellID int) bool {
 	switch spellID {
-	case 301, 302, 339, 340, 341:
+	case 301, 302, 304, 339, 340, 341:
 		return true
 	}
 	return false
@@ -1159,7 +1161,7 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castAnimateUndead(player, 1, "The ground trembles as bones knit together, rising as")
 		case 307: // Animate Zombie
 			result = e.castAnimateUndead(player, 2, "The earth churns as a rotting corpse claws free, becoming")
-		case 308, 309: // Control Undead I/II
+		case 308, 309, 310: // Control Undead I/II/III
 			result = e.castControlUndead(player, spell, args)
 		case 205, 206, 214: // Command, Domination I, Domination II
 			result = e.castCommandSpell(player, spell, args)
@@ -1269,7 +1271,7 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spell *SpellDef) *CommandResult {
 	switch spell.Effect {
 	case "damage":
-		// Turn Undead I/II and Destroy Undead I/II/III only harm the undead (see
+		// Turn Undead I/II/III and Destroy Undead I/II/III only harm the undead (see
 		// isUndeadOnlySpell) — a non-undead caster is just as immune to their own
 		// backfire as any other living target would be to the spell itself.
 		if isUndeadOnlySpell(spell.ID) && !player.IsUndead() {
@@ -1504,7 +1506,7 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		}
 	}
 
-	// Turn Undead I/II and Destroy Undead I/II/III only affect the undead (RACE 22).
+	// Turn Undead I/II/III and Destroy Undead I/II/III only affect the undead (RACE 22).
 	if isUndeadOnlySpell(spell.ID) && def.Race != 22 {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and cast %s at a %s, but it has no effect — only the undead are vulnerable to this magic!", spell.Name, name)},

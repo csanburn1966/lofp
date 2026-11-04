@@ -202,10 +202,11 @@ func (e *GameEngine) castSummonSpectralWarrior(player *Player) *CommandResult {
 	return e.spawnSummonedCreature(player, 130, false, "Ghostly mist swirls and coalesces into")
 }
 
-// castControlUndead handles Control Undead I (308) and II (309). Rather than summoning
+// castControlUndead handles Control Undead I (308), II (309) and III (310). Rather than summoning
 // a new creature, it dominates an existing undead creature in the room for 40 minutes,
 // after which control lapses and the creature turns hostile again (see monsterTick).
-// Control I only works on undead with <=100 body points; Control II raises the cap to <=200.
+// Control I only works on undead with <=100 body points; Control II raises the cap to <=200,
+// Control III to <=400.
 func (e *GameEngine) castControlUndead(player *Player, spell *SpellDef, args []string) *CommandResult {
 	if player.SummonedCreatureID != 0 {
 		return &CommandResult{Messages: []string{"You already have a summoned or controlled creature. Use COMMAND BEGONE to dismiss it first."}}
@@ -225,8 +226,11 @@ func (e *GameEngine) castControlUndead(player *Player, spell *SpellDef, args []s
 		return &CommandResult{Messages: []string{"That undead is already under someone's control."}}
 	}
 	bodyCap := 100
-	if spell.ID == 309 {
+	switch spell.ID {
+	case 309:
 		bodyCap = 200
+	case 310:
+		bodyCap = 400
 	}
 	if def.Body > bodyCap {
 		return &CommandResult{Messages: []string{"This undead's malevolent will is too strong for you to dominate."}}
