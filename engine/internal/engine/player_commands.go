@@ -195,7 +195,10 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 	// active state in-memory (ActivePsi is session-only, not persisted). If CanFly
 	// survived a reload but wasn't granted by race or an active Fly spell, the
 	// concentration lapsed when the player disconnected — land them and clear it.
-	if player.CanFly && player.Race != RaceDrakin && (player.FlyExpiry.IsZero() || time.Now().After(player.FlyExpiry)) {
+	// The Fly timer is judged against the logout time, not now: it stops counting
+	// while the player is offline and RestoreTransientState, which runs after this,
+	// carries what was left of it into the new session (see pauseSpellTimersOffline).
+	if player.CanFly && player.Race != RaceDrakin && !player.timerRunningAtLogout(player.FlyExpiry) {
 		player.CanFly = false
 		if player.Position == 4 {
 			player.Position = 0
@@ -204,8 +207,8 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 	}
 	// Logging back in over open sky: someone who can still fly is put back in
 	// the air (earlier bugs could leave a player "standing" in an AERIAL room);
-	// anyone else falls to the ground (skyfall.go) — e.g. a Fly spell that ran
-	// out while they were logged out. Done here rather than in EnterRoom so the
+	// anyone else falls to the ground (skyfall.go) — e.g. Mind Over Matter
+	// Flight, which lapsed when they logged out. Done here rather than in EnterRoom so the
 	// login presence/"arrives" echo already use the landing room.
 	if e.isAerialRoom(player.RoomNumber) {
 		if player.IsFlying() {

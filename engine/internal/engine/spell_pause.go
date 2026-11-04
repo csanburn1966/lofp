@@ -16,10 +16,7 @@ import "time"
 // Winter Blade imbues, temporary Tempering) pause as well; items left lying in a
 // room keep counting. A new timed effect needs adding to spellTimers.
 func (p *Player) pauseSpellTimersOffline() {
-	since := p.LoggedOutAt
-	if since.IsZero() {
-		since = p.UpdatedAt
-	}
+	since := p.logoutTime()
 	p.LoggedOutAt = time.Time{}
 	offline := time.Since(since)
 	if since.IsZero() || offline <= 0 {
@@ -62,6 +59,23 @@ func (p *Player) pauseSpellTimersOffline() {
 			shiftItem(&items[i])
 		}
 	}
+}
+
+// logoutTime is when the player's last session ended: LoggedOutAt, or the last
+// save when the session never closed cleanly.
+func (p *Player) logoutTime() time.Time {
+	if !p.LoggedOutAt.IsZero() {
+		return p.LoggedOutAt
+	}
+	return p.UpdatedAt
+}
+
+// timerRunningAtLogout reports whether expiry was still in the future when the
+// player logged out, i.e. whether pauseSpellTimersOffline will carry it over into
+// the next session. Only meaningful before that has run.
+func (p *Player) timerRunningAtLogout(expiry time.Time) bool {
+	since := p.logoutTime()
+	return !expiry.IsZero() && !since.IsZero() && expiry.After(since)
 }
 
 // spellTimers lists the player's persisted single-value spell expiries.

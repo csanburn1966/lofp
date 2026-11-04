@@ -5732,6 +5732,8 @@ func (e *GameEngine) castFlySpell(player *Player, spell *SpellDef, args []string
 	}
 
 	if !target.FlyExpiry.IsZero() && time.Now().Before(target.FlyExpiry) {
+		// Set CanFly here too, so a recast repairs a timer left running without it.
+		target.CanFly = true
 		target.FlyExpiry = target.FlyExpiry.Add(flyDuration)
 		if target.FlyExpiry.After(time.Now().Add(flyMaxDuration)) {
 			target.FlyExpiry = time.Now().Add(flyMaxDuration)
