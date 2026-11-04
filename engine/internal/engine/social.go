@@ -164,15 +164,17 @@ func (e *GameEngine) runVerbScriptsForTarget(ctx context.Context, player *Player
 		}
 	}
 
-	// Search player items (inventory, worn, wielded)
+	// Search player items (wielded, inventory, worn). The wielded item comes first so
+	// "PLAY WHISTLE" with spare whistles in the pack reaches the one in hand, whose
+	// IFITEM -1 WIELDED check (item 1155) is the one that can pass.
 	allPlayerItems := make([]InventoryItem, 0, len(player.Inventory)+len(player.Worn)+1)
-	allPlayerItems = append(allPlayerItems, player.Inventory...)
-	allPlayerItems = append(allPlayerItems, player.Worn...)
 	wieldedIdx := -1
 	if player.Wielded != nil {
-		wieldedIdx = len(allPlayerItems)
+		wieldedIdx = 0
 		allPlayerItems = append(allPlayerItems, *player.Wielded)
 	}
+	allPlayerItems = append(allPlayerItems, player.Inventory...)
+	allPlayerItems = append(allPlayerItems, player.Worn...)
 	for idx, ii := range allPlayerItems {
 		itemDef := e.items[ii.Archetype]
 		if itemDef == nil {
