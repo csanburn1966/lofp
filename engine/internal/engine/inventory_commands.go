@@ -1600,7 +1600,16 @@ func (e *GameEngine) syncLinkedPortal(originRoom int, ri *gameworld.RoomItem, it
 	e.roomBroadcast(destRoom.Number, []string{fmt.Sprintf(echoTemplate, displayName)})
 }
 
-func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doOpen(player *Player, args []string) (res *CommandResult) {
+	// IFVERB OPEN scripts run after the attempt, whatever its outcome — see
+	// openCloseVerbHook. Each branch arms the hook once its IFPREVERB stage has
+	// let the attempt through.
+	var hook *openCloseVerbHook
+	defer func() {
+		if hook != nil && res != nil {
+			res = e.runOpenCloseVerbHook(player, hook, res)
+		}
+	}()
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Open what?"}}
 	}
@@ -1641,6 +1650,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 			if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
 				return res
 			}
+			hook = &openCloseVerbHook{verb: "OPEN", def: itemDef, items: &player.Inventory, idx: i}
 			if !containsFlag(itemDef.Flags, "OPENABLE") {
 				// Not a container — but it may still define its own universal OPEN
 				// hijack (e.g. item 925, "the object").
@@ -1664,6 +1674,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 				trapMsgs, destroyed = e.springCarriedTrap(player, &player.Inventory, i, fullName)
 				e.SavePlayer(context.Background(), player)
 				if destroyed {
+					hook = nil
 					return &CommandResult{Messages: append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...), PlayerState: player}
 				}
 			}
@@ -1698,6 +1709,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 			if res := e.runItemOwnPreverbHook(player, room, "OPEN", ii); res != nil {
 				return res
 			}
+			hook = &openCloseVerbHook{verb: "OPEN", def: itemDef, items: &player.Worn, idx: i}
 			if !containsFlag(itemDef.Flags, "OPENABLE") {
 				return &CommandResult{Messages: []string{"You can't open that."}}
 			}
@@ -1719,6 +1731,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 				trapMsgs, destroyed = e.springCarriedTrap(player, &player.Worn, i, fullName)
 				e.SavePlayer(context.Background(), player)
 				if destroyed {
+					hook = nil
 					return &CommandResult{Messages: append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...), PlayerState: player}
 				}
 			}
@@ -1770,6 +1783,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 					return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 				}
 				ri = room.Items[i]
+				hook = &openCloseVerbHook{verb: "OPEN", def: itemDef, room: room, idx: i, roomItem: ri}
 				if !containsFlag(itemDef.Flags, "OPENABLE") && !isPortal(itemDef.Type) {
 					return &CommandResult{Messages: []string{"You can't open that."}}
 				}
@@ -1792,6 +1806,7 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 					trapMsgs, destroyed = e.springRoomTrap(player, room, i, fullName)
 					e.SavePlayer(context.Background(), player)
 					if destroyed {
+						hook = nil
 						return &CommandResult{
 							Messages:      append([]string{fmt.Sprintf("You open %s.", fullName)}, trapMsgs...),
 							RoomBroadcast: []string{fmt.Sprintf("%s opens %s, setting off a trap!", player.DisplayNameCap(), fullName)},
@@ -1823,6 +1838,72 @@ func (e *GameEngine) doOpen(player *Player, args []string) *CommandResult {
 		}
 	}
 	return &CommandResult{Messages: []string{"You don't see that here."}}
+}
+
+// openCloseVerbHook names the item an OPEN or CLOSE attempt was aimed at, so its
+// IFVERB scripts can run once the attempt has played out. The original engine ran
+// IFVERB OPEN/CLOSE whatever the outcome: room 1606 (FAYDINDR.SCR) and room 391
+// (PALACE.SCR) wrap theirs in IFITEM 4 UNLOCKED, which would be pointless if they
+// only fired on a successful open, while item 895 (BONKER.SCR) checks IFITEM -1
+// OPEN inside IFVERB OPEN, so the new state must already be in place. Exactly one
+// of items (carried or worn) and room is set.
+type openCloseVerbHook struct {
+	verb     string
+	def      *gameworld.ItemDef
+	items    *[]InventoryItem
+	room     *gameworld.Room
+	idx      int
+	roomItem gameworld.RoomItem // the room item as matched, to detect it moving or vanishing
+}
+
+// runOpenCloseVerbHook runs the hooked item's IFVERB scripts and folds their output
+// into res. A CLEARVERB that produced its own messages replaces the default "You
+// open/close ..." lines (item 1705's storybook, the dragon chest in DRAGON.SCR room
+// 747); otherwise script output follows them.
+func (e *GameEngine) runOpenCloseVerbHook(player *Player, hook *openCloseVerbHook, res *CommandResult) *CommandResult {
+	room := e.rooms[player.RoomNumber]
+	if room == nil {
+		return res
+	}
+	var sc *ScriptContext
+	if hook.room != nil {
+		if hook.room != room || !roomItemStillAt(room, hook.idx, hook.roomItem) {
+			return res
+		}
+		sc = e.RunVerbScripts(player, room, hook.verb, &room.Items[hook.idx], hook.def)
+	} else {
+		if hook.idx >= len(*hook.items) {
+			return res
+		}
+		ii := &(*hook.items)[hook.idx]
+		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
+			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
+			ItemBits: ii.ItemBits, State: ii.State}
+		sc = e.RunVerbScripts(player, room, hook.verb, &tempRI, hook.def)
+		// Keep what the script changed (ITEMVAL/ITEMBIT writes, item 1758's pouch
+		// reseeding ITEMVAL1 on CLOSE).
+		ii.Adj1, ii.Adj2, ii.Adj3 = tempRI.Adj1, tempRI.Adj2, tempRI.Adj3
+		ii.Val1, ii.Val2, ii.Val3, ii.Val4, ii.Val5 = tempRI.Val1, tempRI.Val2, tempRI.Val3, tempRI.Val4, tempRI.Val5
+		ii.ItemBits = tempRI.ItemBits
+		ii.State = tempRI.State
+		sc.NeedsSave = true
+	}
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
+	if sc.NeedsSave {
+		e.SavePlayer(context.Background(), player)
+	}
+	if sc.Blocked && len(sc.Messages) > 0 {
+		res.Messages = sc.Messages
+		res.RoomBroadcast = sc.RoomMsgs
+	} else {
+		res.Messages = append(res.Messages, sc.Messages...)
+		res.RoomBroadcast = append(res.RoomBroadcast, sc.RoomMsgs...)
+	}
+	res.GMBroadcast = append(res.GMBroadcast, sc.GMMsgs...)
+	return res
 }
 
 // checkTrap checks if an item has a trap (VAL4) and triggers it. Returns messages.
@@ -1967,7 +2048,16 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 	return msgs
 }
 
-func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
+func (e *GameEngine) doClose(player *Player, args []string) (res *CommandResult) {
+	// IFVERB CLOSE scripts run after the attempt, whatever its outcome — see
+	// openCloseVerbHook. Each branch arms the hook once its IFPREVERB stage has
+	// let the attempt through.
+	var hook *openCloseVerbHook
+	defer func() {
+		if hook != nil && res != nil {
+			res = e.runOpenCloseVerbHook(player, hook, res)
+		}
+	}()
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Close what?"}}
 	}
@@ -1998,6 +2088,7 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 			if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
 				return res
 			}
+			hook = &openCloseVerbHook{verb: "CLOSE", def: itemDef, items: &player.Inventory, idx: i}
 			if ii.State != "OPEN" {
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 			}
@@ -2021,6 +2112,7 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 			if res := e.runItemOwnPreverbHook(player, room, "CLOSE", ii); res != nil {
 				return res
 			}
+			hook = &openCloseVerbHook{verb: "CLOSE", def: itemDef, items: &player.Worn, idx: i}
 			if ii.State != "OPEN" {
 				return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 			}
@@ -2050,6 +2142,7 @@ func (e *GameEngine) doClose(player *Player, args []string) *CommandResult {
 					return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 				}
 				ri = room.Items[i]
+				hook = &openCloseVerbHook{verb: "CLOSE", def: itemDef, room: room, idx: i, roomItem: ri}
 				if ri.State != "OPEN" {
 					return &CommandResult{Messages: []string{fmt.Sprintf("%s is already closed.", capitalize(fullName))}}
 				}
