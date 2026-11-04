@@ -657,7 +657,7 @@ func (t *telnetConn) sendGMCPStatus(p *engine.Player, currencies map[string]int)
 		return
 	}
 	gender := "Male"
-	if p.Gender == 2 {
+	if p.Gender == engine.GenderFemale {
 		gender = "Female"
 	}
 	t.sendGMCP("Char.Status", map[string]interface{}{
