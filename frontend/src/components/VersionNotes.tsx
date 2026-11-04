@@ -9,6 +9,54 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.7.0 &mdash; November 4, 2026</h2>
+            <p className="text-gray-400 mb-3">You can now mark items with <code>NOSELL</code> so a merchant won&rsquo;t buy them by accident. Necromancers get Turn Undead III and Control Undead III. Fly no longer stops working after you log back in, scripted objects now react when you open or close them, and playing an instrument you&rsquo;re holding works even with spares in your pack.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: NOSELL</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>NOSELL &lt;item&gt;</code> marks an item so merchants won&rsquo;t buy it from you. <code>NOSELL</code> it again to clear the mark, and <code>NOSELL</code> on its own lists everything you&rsquo;ve marked, including items inside your containers</li>
+                  <li><code>SELL SWORD</code> passes over marked swords and sells the first unmarked one. If every sword you have is marked, the merchant refuses. <code>SELL ALL</code> leaves marked items behind and tells you how many it kept</li>
+                  <li>Marked items show <code>(nosell)</code> in your inventory, and <code>APPRAISE</code> reminds you of the mark</li>
+                  <li>The mark stays on an item when you put it in a container, the bank, or wear or wield it. Dropping it or giving it away clears the mark</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Turn Undead III and Control Undead III</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Turn Undead III (spell 304, level 16) is a stronger Turn Undead II, dealing 20 to 60 damage. Like the other Turn Undead spells, it only harms the undead</li>
+                  <li>Control Undead III (spell 310, level 21) takes control of undead with up to 400 body points, twice as many as Control Undead II</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Fly After Logging In</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>If you logged out with Fly still running and stayed away longer than its remaining time, you came back with the spell showing as active but couldn&rsquo;t take off, and casting it again didn&rsquo;t help. Fly now carries its remaining time over properly, and casting it again fixes a character already caught by this</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Scripts That React to Opening and Closing</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Scripts that react after you open or close something now run. They run whether or not the attempt succeeds, as in the original game. For example, the drawer in the janitor&rsquo;s office now has its message, and some doors lock themselves again when closed</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Playing a Held Instrument</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>With more than one of the same instrument, <code>PLAY</code> now uses the one you&rsquo;re holding. Before, it could pick a spare from your pack and tell you to hold it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Gender in GMCP</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>MUD clients using GMCP were told every character was male. Female characters are now reported correctly</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.6.0 &mdash; November 2, 2026</h2>
             <p className="text-gray-400 mb-3">Following a group leader reads cleanly now: you see &ldquo;You follow Chandra.&rdquo; and then the room, and everyone else sees one line for the whole group. Psionic disciplines above your Mind over Matter or Mind over Mind rank can no longer be used, and losing a skill rank now takes away the spells and disciplines that rank supported. Witchlet has also added a wrist tattoo.</p>
 

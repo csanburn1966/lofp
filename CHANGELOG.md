@@ -1,5 +1,31 @@
 # Changelog
 
+## v15.7.0 — 2026-11-04
+
+You can now mark items with `NOSELL` so a merchant won’t buy them by accident. Necromancers get Turn Undead III and Control Undead III. Fly no longer stops working after you log back in, scripted objects now react when you open or close them, and playing an instrument you’re holding works even with spares in your pack.
+
+### New: NOSELL
+- `NOSELL <item>` marks an item so merchants won’t buy it from you. `NOSELL` it again to clear the mark, and `NOSELL` on its own lists everything you’ve marked, including items inside your containers
+- `SELL SWORD` passes over marked swords and sells the first unmarked one. If every sword you have is marked, the merchant refuses. `SELL ALL` leaves marked items behind and tells you how many it kept
+- Marked items show `(nosell)` in your inventory, and `APPRAISE` reminds you of the mark
+- The mark stays on an item when you put it in a container, the bank, or wear or wield it. Dropping it or giving it away clears the mark
+
+### New: Turn Undead III and Control Undead III
+- Turn Undead III (spell 304, level 16) is a stronger Turn Undead II, dealing 20 to 60 damage. Like the other Turn Undead spells, it only harms the undead
+- Control Undead III (spell 310, level 21) takes control of undead with up to 400 body points, twice as many as Control Undead II
+
+### Fixed: Fly After Logging In
+- If you logged out with Fly still running and stayed away longer than its remaining time, you came back with the spell showing as active but couldn’t take off, and casting it again didn’t help. Fly now carries its remaining time over properly, and casting it again fixes a character already caught by this
+
+### Fixed: Scripts That React to Opening and Closing
+- Scripts that react after you open or close something now run. They run whether or not the attempt succeeds, as in the original game. For example, the drawer in the janitor’s office now has its message, and some doors lock themselves again when closed
+
+### Fixed: Playing a Held Instrument
+- With more than one of the same instrument, `PLAY` now uses the one you’re holding. Before, it could pick a spare from your pack and tell you to hold it
+
+### Fixed: Gender in GMCP
+- MUD clients using GMCP were told every character was male. Female characters are now reported correctly
+
 ## v15.6.0 — 2026-11-02
 
 Following a group leader reads cleanly now: you see “You follow Chandra.” and then the room, and everyone else sees one line for the whole group. Psionic disciplines above your Mind over Matter or Mind over Mind rank can no longer be used, and losing a skill rank now takes away the spells and disciplines that rank supported. Witchlet has also added a wrist tattoo.
