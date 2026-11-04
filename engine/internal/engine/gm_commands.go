@@ -1617,6 +1617,7 @@ func (e *GameEngine) gmVerbs() *CommandResult {
 		"  RUB <item>                - Rub an item",
 		"  SEARCH <target>           - Search an item or dead monster",
 		"  SELL <item>               - Sell an item at a merchant",
+		"  NOSELL [item]             - Toggle an item's do-not-sell mark; list marked items",
 		"  SKIN <target>             - Skin a dead monster",
 		"  TAP <item>                - Tap an item",
 		"  TOUCH <item>              - Touch an item",

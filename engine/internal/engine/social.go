@@ -1151,6 +1151,7 @@ var helpTopics = map[string][]string{
 		"EAT, DRINK, WEAR, REMOVE, WIELD, UNWIELD",
 		"TOUCH, PUSH, PULL, TURN, RUB, TAP, FLIP",
 		"LATCH, UNLATCH, MARK, SKIN, APPRAISE, USE",
+		"NOSELL <item>: mark an item so merchants won't buy it (again to unmark); NOSELL lists marked items",
 		"TIME, WEATHER",
 		"DATECVT <month-day-year> [time]: convert a real date to the in-game calendar",
 		"DATECVT GAME <month-day-year> [time]: convert an in-game date to a real date",

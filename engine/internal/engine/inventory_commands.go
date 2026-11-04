@@ -2666,6 +2666,11 @@ func (e *GameEngine) doSell(ctx context.Context, player *Player, args []string) 
 		return &CommandResult{Messages: []string{"Nobody here is interested in buying anything."}}
 	}
 
+	// Without an ordinal, NOSELL-marked items are passed over so "SELL SWORD" sells
+	// the first unmarked sword; an ordinal names one exact item, which is refused if
+	// marked. noSellName is the first marked match, for the refusal when nothing
+	// unmarked matches.
+	noSellName := ""
 	for i, ii := range player.Inventory {
 		itemDef := e.items[ii.Archetype]
 		if itemDef == nil {
@@ -2673,11 +2678,20 @@ func (e *GameEngine) doSell(ctx context.Context, player *Player, args []string) 
 		}
 		name := e.getItemNounName(itemDef)
 		if matchesTarget(name, target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+			if ii.NoSell && ordSkip == 0 {
+				if noSellName == "" {
+					noSellName = e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+				}
+				continue
+			}
 			if skip > 0 {
 				skip--
 				continue
 			}
 			displayName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			if ii.NoSell {
+				return noSellRefusal(displayName)
+			}
 			sellValue := e.computeSellValue(itemDef, &player.Inventory[i])
 			player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
 			// Paid in the local currency in a currency region (currency.go).
@@ -2692,6 +2706,9 @@ func (e *GameEngine) doSell(ctx context.Context, player *Player, args []string) 
 		}
 	}
 
+	if noSellName != "" {
+		return noSellRefusal(noSellName)
+	}
 	return &CommandResult{Messages: []string{"You don't have that."}}
 }
 
@@ -2928,10 +2945,14 @@ func (e *GameEngine) doAppraise(ctx context.Context, player *Player, args []stri
 				e.SavePlayer(ctx, player) // lock in a freshly-rolled gem value
 			}
 			md := e.roomCurrency(player.RoomNumber)
-			return &CommandResult{Messages: []string{
+			msgs := []string{
 				fmt.Sprintf("The merchant examines %s carefully.", displayName),
 				fmt.Sprintf("\"I'd give you %s for that.\"", formatCurrency(md, copperToCurrency(md, sellValue))),
-			}}
+			}
+			if ii.NoSell {
+				msgs = append(msgs, "(You've marked it NOSELL, so you won't sell it.)")
+			}
+			return &CommandResult{Messages: msgs}
 		}
 	}
 	return &CommandResult{Messages: []string{"You don't have that."}}

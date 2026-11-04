@@ -1553,6 +1553,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			return e.doSellAll(ctx, player, noun)
 		}
 		return e.doSell(ctx, player, args)
+	case "NOSELL":
+		return e.doNoSell(ctx, player, args)
 	case "APPRAISE":
 		return e.doAppraise(ctx, player, args)
 	case "DRINK", "SIP":
@@ -2090,7 +2092,7 @@ var allVerbs = []string{
 	"QUIT", "HELP", "ADVICE", "ASSIST", "ANSWER", "ACT", "EMOTE", "RECITE", "READ", "CLIMB",
 	"PULL", "PUSH", "TURN", "TWIST", "RUB", "TAP", "TOUCH", "SEARCH", "DIG", "RECALL", "USE", "PRAY",
 	"POP", "RIP", "LIFT", "PRY",
-	"CAST", "CONCENTRATE", "BUY", "SELL", "PAY",
+	"CAST", "CONCENTRATE", "BUY", "SELL", "NOSELL", "PAY",
 	"DRINK", "SIP", "LIGHT", "EXTINGUISH", "DOUSE",
 	"FLIP", "LATCH", "UNLATCH",
 	"DEPOSIT", "WITHDRAW", "TRAIN",

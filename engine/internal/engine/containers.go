@@ -1780,6 +1780,7 @@ func (e *GameEngine) doSellAll(ctx context.Context, player *Player, noun string)
 	var kept []InventoryItem
 	totalValue := 0
 	sold := 0
+	markedKept := 0
 
 	for i := range player.Inventory {
 		ii := &player.Inventory[i]
@@ -1792,6 +1793,11 @@ func (e *GameEngine) doSellAll(ctx context.Context, player *Player, noun string)
 			kept = append(kept, *ii)
 			continue
 		}
+		if ii.NoSell {
+			kept = append(kept, *ii)
+			markedKept++
+			continue
+		}
 		// computeSellValue (not a duplicated inline calc) so gem pricing,
 		// CraftedValue (Wood Lore/Jewelry/Weaving), and the plain Val1/weight
 		// fallback all stay in one place — see its doc comment.
@@ -1800,6 +1806,9 @@ func (e *GameEngine) doSellAll(ctx context.Context, player *Player, noun string)
 	}
 
 	if sold == 0 {
+		if markedKept > 0 {
+			return &CommandResult{Messages: []string{fmt.Sprintf("Every %s you have is marked NOSELL, so you keep them all.", noun)}}
+		}
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have any %s to sell.", noun)}}
 	}
 
@@ -1810,10 +1819,14 @@ func (e *GameEngine) doSellAll(ctx context.Context, player *Player, noun string)
 	addFunds(player, md, payout)
 	e.SavePlayer(ctx, player)
 
-	return &CommandResult{Messages: []string{
+	msgs := []string{
 		fmt.Sprintf("You sell %d %s.", sold, noun),
 		fmt.Sprintf("The merchant hands you %s.", formatCurrency(md, payout)),
-	}}
+	}
+	if markedKept > 0 {
+		msgs = append(msgs, fmt.Sprintf("You keep %d marked NOSELL.", markedKept))
+	}
+	return &CommandResult{Messages: msgs}
 }
 
 // formatCoinStr converts a copper-unit coin value to a readable string.
@@ -2254,7 +2267,7 @@ func (e *GameEngine) doInventoryEnhanced(player *Player, filter string) *Command
 		itemDef := e.items[player.Wielded.Archetype]
 		if itemDef != nil && matches(itemDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3) {
 			name := e.formatItemName(itemDef, player.Wielded.Adj1, player.Wielded.Adj2, player.Wielded.Adj3, player.Wielded.Tail)
-			msgs = append(msgs, fmt.Sprintf("  %s (wielded)", name))
+			msgs = append(msgs, fmt.Sprintf("  %s (wielded)%s", name, noSellTag(*player.Wielded)))
 			found = true
 		}
 	}
@@ -2266,7 +2279,7 @@ func (e *GameEngine) doInventoryEnhanced(player *Player, filter string) *Command
 			if itemDef.Type == "SHIELD" {
 				label = "(shield)"
 			}
-			msgs = append(msgs, fmt.Sprintf("  %s %s", name, label))
+			msgs = append(msgs, fmt.Sprintf("  %s %s%s", name, label, noSellTag(*player.OffHand)))
 			found = true
 		}
 	}
@@ -2275,7 +2288,7 @@ func (e *GameEngine) doInventoryEnhanced(player *Player, filter string) *Command
 		itemDef := e.items[ii.Archetype]
 		if itemDef != nil && matches(itemDef, ii.Adj1, ii.Adj2, ii.Adj3) {
 			name := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
-			msgs = append(msgs, fmt.Sprintf("  %s (worn)", name))
+			msgs = append(msgs, fmt.Sprintf("  %s (worn)%s", name, noSellTag(ii)))
 			found = true
 		}
 	}
@@ -2285,7 +2298,7 @@ func (e *GameEngine) doInventoryEnhanced(player *Player, filter string) *Command
 		if itemDef == nil || !matches(itemDef, ii.Adj1, ii.Adj2, ii.Adj3) {
 			continue
 		}
-		msgs = append(msgs, "  "+e.formatContainerName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.State, ii.Tail))
+		msgs = append(msgs, "  "+e.formatContainerName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.State, ii.Tail)+noSellTag(ii))
 		found = true
 	}
 

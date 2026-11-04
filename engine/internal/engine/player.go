@@ -121,6 +121,11 @@ type InventoryItem struct {
     // changelog #69: "Players can now WRITE on items scripted as WRITEABLE."
     WrittenText string `bson:"writtenText,omitempty" json:"writtenText,omitempty"`
     WornSlot  string `bson:"wornSlot,omitempty" json:"wornSlot,omitempty"`
+    // NoSell is the owner's NOSELL mark (nosell.go): merchants refuse the item and
+    // SELL ALL leaves it behind. Kept on InventoryItem only, so it follows the item
+    // into containers, the bank, and onto the body, and is dropped when the item
+    // leaves the player (DROP, GIVE).
+    NoSell    bool   `bson:"noSell,omitempty" json:"noSell,omitempty"`
     // Container contents — populated when this item is an open container.
     Contents  []InventoryItem `bson:"contents,omitempty" json:"contents,omitempty"`
     // BladeSpellExpiry marks a timed elemental-crit imbue from Storm/Inferno/Winter
