@@ -41,7 +41,7 @@ func npcStyleMovementText(player *Player, dirName string) (exitMsg, entryMsg str
 }
 
 func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *CommandResult {
-	if player.Immobilized {
+	if player.IsImmobilized() {
 		return &CommandResult{Messages: []string{"You are immobilized and cannot move!"}}
 	}
 	if len(player.Entangles) > 0 {

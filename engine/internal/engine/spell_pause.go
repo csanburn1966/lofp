@@ -90,6 +90,7 @@ func (p *Player) spellTimers() []*time.Time {
 		&p.ParanoiaExpiry,
 		&p.SilencedExpiry,
 		&p.ImprisonedExpiry,
+		&p.ImmobilizedExpiry,
 		&p.FlyExpiry,
 		&p.HeatShieldExpiry,
 		&p.ColdShieldExpiry,

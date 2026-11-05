@@ -258,7 +258,11 @@ type Player struct {
 	PoisonLevel  int  `bson:"poisonLevel,omitempty" json:"poisonLevel,omitempty"`
 	Joined      bool `bson:"joined" json:"joined"`
 	Unconscious bool `bson:"unconscious" json:"unconscious"`
-	Immobilized bool `bson:"immobilized" json:"immobilized"`
+	// ImmobilizedExpiry is when psi Immobilize or an Imprisonment Rune trap stops
+	// holding the player in place (IsImmobilized). It replaces a plain
+	// "immobilized" flag that nothing ever cleared; that old field is no longer
+	// read, so anyone saved with it is free again on their next login.
+	ImmobilizedExpiry time.Time `bson:"immobilizedExpiry,omitempty" json:"immobilizedExpiry,omitempty"`
 	Sleeping    bool `bson:"sleeping,omitempty" json:"sleeping,omitempty"`
 	Submitting  bool `bson:"submitting,omitempty" json:"submitting,omitempty"`
 	Undead      bool `bson:"undead,omitempty" json:"undead,omitempty"`
@@ -391,8 +395,8 @@ type Player struct {
 
 	// Entangles tracks active movement-restricting spells (Plant Snare, and any
 	// future player-targeting Web/Tentacles) so Freedom (505) can remove one at
-	// random. Distinct from the older, unnamed Immobilized flag below (used by
-	// psi Immobilize and Imprisonment Rune traps), which Freedom does not touch.
+	// random. Distinct from ImmobilizedExpiry (psi Immobilize and Imprisonment
+	// Rune traps), which Freedom does not touch.
 	Entangles []PlayerEntangle `bson:"entangles,omitempty" json:"entangles,omitempty"`
 
 	// Pending summons (e.g. Call the Pack): room to teleport to via ANSWER, and when the
@@ -829,7 +833,7 @@ func (p *Player) PromptIndicators() string {
 	if p.Unconscious {
 		codes = append(codes, 'U')
 	}
-	if p.Immobilized {
+	if p.IsImmobilized() {
 		codes = append(codes, 'I')
 	}
 	return string(codes)
@@ -896,6 +900,13 @@ func formActionBlockMessage(p *Player) string {
 // player from speaking or casting.
 func (p *Player) IsSilenced() bool {
 	return !p.SilencedExpiry.IsZero() && time.Now().Before(p.SilencedExpiry)
+}
+
+// IsImmobilized reports whether psi Immobilize or an Imprisonment Rune trap
+// currently holds this player in place (no walking, advancing, retreating,
+// fleeing or attacking).
+func (p *Player) IsImmobilized() bool {
+	return !p.ImmobilizedExpiry.IsZero() && time.Now().Before(p.ImmobilizedExpiry)
 }
 
 // IsImprisoned reports whether the Imprison spell (231) currently traps this

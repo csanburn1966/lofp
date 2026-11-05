@@ -2047,7 +2047,7 @@ func (sc *ScriptContext) getVar(name string) int {
 		}
 		return 0
 	case "MOVEABLE":
-		if sc.Player.Position == 0 && !sc.Player.Immobilized && !sc.Player.Stunned {
+		if sc.Player.Position == 0 && !sc.Player.IsImmobilized() && !sc.Player.Stunned {
 			return 1
 		}
 		return 0

@@ -1280,7 +1280,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 	if player.Stunned {
 		return &CommandResult{Messages: []string{"You are stunned and cannot attack!"}}
 	}
-	if player.Immobilized {
+	if player.IsImmobilized() {
 		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
 	}
 	if player.IsImprisoned() {
@@ -3147,6 +3147,7 @@ func (e *GameEngine) handlePlayerDeath(player *Player, killerName string) []stri
 	player.Stunned = false
 	player.StunExpiry = time.Time{}
 	player.KnockedDown = false
+	player.ImmobilizedExpiry = time.Time{}
 	// A corpse can't stay hidden/invisible/phantom-formed — it needs to be
 	// visible so other players can find and raise it.
 	player.Hidden = false
@@ -3821,7 +3822,7 @@ func (e *GameEngine) doFlee(ctx context.Context, player *Player) *CommandResult 
 	if player.Stunned {
 		return &CommandResult{Messages: []string{"You are stunned and cannot flee!"}}
 	}
-	if player.Immobilized {
+	if player.IsImmobilized() {
 		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
 	}
 	if player.RoundTimeExpiry.After(time.Now()) {
@@ -4304,6 +4305,13 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 	if inst.Silenced && now.After(inst.SilenceExpiry) {
 		inst.Silenced = false
 	}
+	if inst.Immobilized && now.After(inst.ImmobilizeExpiry) {
+		inst.Immobilized = false
+		if e.localRoomBroadcast != nil {
+			name := FormatMonsterName(def, e.monAdjs)
+			e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The invisible bands holding the %s dissolve.", strings.ToLower(name))})
+		}
+	}
 	if inst.Imprisoned && now.After(inst.ImprisonExpiry) {
 		inst.Imprisoned = false
 		if e.localRoomBroadcast != nil {
@@ -4523,6 +4531,9 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 }
 
 func (e *GameEngine) monsterFlee(inst *MonsterInstance, def *gameworld.MonsterDef) {
+	if inst.Immobilized {
+		return // psi Immobilize holds it in place
+	}
 	room := e.rooms[inst.RoomNumber]
 	if room == nil {
 		return

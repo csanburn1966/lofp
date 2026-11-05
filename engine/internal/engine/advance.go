@@ -103,7 +103,7 @@ func (e *GameEngine) doAdvance(ctx context.Context, player *Player, args []strin
 	if player.Position == 2 {
 		return &CommandResult{Messages: []string{"You can't advance while laying down! Stand up first."}}
 	}
-	if player.Immobilized {
+	if player.IsImmobilized() {
 		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
 	}
 	if len(player.Entangles) > 0 {
@@ -217,7 +217,7 @@ func (e *GameEngine) doRetreat(ctx context.Context, player *Player) *CommandResu
 	if player.Position == 2 {
 		return &CommandResult{Messages: []string{"You can't retreat while laying down! Stand up first."}}
 	}
-	if player.Immobilized {
+	if player.IsImmobilized() {
 		return &CommandResult{Messages: []string{"You are rooted to the spot and cannot retreat!"}}
 	}
 	if len(player.Entangles) > 0 {
@@ -292,7 +292,7 @@ func (e *GameEngine) breakAllMeleeEngagements(player *Player) {
 // future player-targeting Web/Tentacles — see Player.Entangles's doc comment).
 // Per skills.txt: "The chance is only 2% per level of skill known, and incurs a
 // five second round time in the attempt." Deliberately does not touch the
-// Imprison spell or the older Immobilized flag (psi Immobilize/Imprisonment Rune
+// Imprison spell or Immobilize (psi Immobilize/Imprisonment Rune
 // traps) — skills.txt calls those "totally impenetrable," and Freedom (505),
 // which shares the same Entangles-only scope, already draws that same line.
 func (e *GameEngine) doBreakFree(ctx context.Context, player *Player) *CommandResult {

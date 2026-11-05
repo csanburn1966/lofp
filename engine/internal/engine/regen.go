@@ -386,6 +386,15 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
+		// Check for expired Immobilize (psi Immobilize, Imprisonment Rune trap)
+		if !p.ImmobilizedExpiry.IsZero() && time.Now().After(p.ImmobilizedExpiry) {
+			p.ImmobilizedExpiry = time.Time{}
+			changed = true
+			if e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{"The invisible bands holding you dissolve. You are no longer rooted to the spot."})
+			}
+		}
+
 		// Check for expired Entangles (e.g. Plant Snare) — each has its own
 		// duration, independent of the others, unlike Freedom which removes one
 		// early at random.

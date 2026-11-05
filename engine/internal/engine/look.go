@@ -1062,7 +1062,7 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 			msgs = append(msgs, fmt.Sprintf("%s looks sickly.", heOrShe))
 		}
 	}
-	if target.Immobilized {
+	if target.IsImmobilized() {
 		msgs = append(msgs, fmt.Sprintf("%s rooted to the spot.", pronoun))
 	}
 	if len(target.Wounds) > 0 {

@@ -81,6 +81,8 @@ type MonsterInstance struct {
 	SilenceExpiry      time.Time `json:"-"`
 	Imprisoned         bool      `json:"-"` // Imprison spell: cannot attack or cast at all
 	ImprisonExpiry     time.Time `json:"-"`
+	Immobilized        bool      `json:"-"` // psi Immobilize: cannot wander or flee, can still fight
+	ImmobilizeExpiry   time.Time `json:"-"`
 	Tentacled          bool      `json:"-"` // Siryx's Terrible Tentacles: immobilized, takes periodic crushing damage
 	TentacleExpiry     time.Time `json:"-"`
 	TentacleCasterName string    `json:"-"` // player who cast Tentacles, for death XP attribution on the DOT tick
@@ -627,6 +629,8 @@ func (e *GameEngine) monsterNamesInRoom(roomNum int) []string {
 			name += " (webbed)"
 		} else if inst.Tentacled {
 			name += " (entangled)"
+		} else if inst.Immobilized {
+			name += " (immobilized)"
 		} else if inst.Feared {
 			name += " (cowering)"
 		}
@@ -1229,7 +1233,7 @@ func (e *GameEngine) monsterTick(tick int) {
 		}
 
 		// Wandering: ~5% chance per action tick for non-hostile, non-combat monsters (skip summoned)
-		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && rand.Intn(100) < 5 {
+		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && !inst.Immobilized && rand.Intn(100) < 5 {
 			room := e.rooms[inst.RoomNumber]
 			if room == nil {
 				continue

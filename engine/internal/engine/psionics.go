@@ -480,7 +480,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 		result = e.projectBuff(player, disc)
 	case "utility":
 		if disc.ID == 14 { // Immobilize
-			result = e.projectImmobilize(player, args)
+			result = e.projectImmobilize(player, disc, args, psiRoll, castChance)
 		} else if disc.ID == 12 { // Teleportation
 			result = e.projectTeleport(ctx, player, args)
 		} else if disc.ID == 8 { // Manipulate Lock
@@ -504,39 +504,63 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 	return result
 }
 
-func (e *GameEngine) projectImmobilize(player *Player, args []string) *CommandResult {
+// immobilizeDuration is how long psi Immobilize (and an Imprisonment Rune trap,
+// which uses the same hold) keeps its victim in place. Neither manual gives a
+// duration; this sits between Plant Snare/Web (60 seconds) and Imprison (5 minutes).
+const immobilizeDuration = 2 * time.Minute
+
+// projectImmobilize handles Immobilize (14) against a monster. Like the damage
+// disciplines, the monster's PSIRESIST (or MAGICRESIST when it has none) can
+// resist it, folded into the same psi roll (psiResisted). Players can't be
+// targeted: psionic attacks on players aren't implemented, the same rule
+// projectDamage applies.
+func (e *GameEngine) projectImmobilize(player *Player, disc *PsiDiscipline, args []string, psiRoll, castChance int) *CommandResult {
 	if len(args) == 0 {
 		return &CommandResult{Messages: []string{"Immobilize whom?"}}
 	}
 	targetName := strings.Join(args, " ")
 
-	// Try monster first
 	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
 	if refusal != nil {
 		return refusal
 	}
-	if inst != nil {
-		inst.Sedated = true // use Sedated to prevent movement/wandering
-		name := FormatMonsterName(def, e.monAdjs)
+	if inst == nil {
+		if found := e.findPlayerInRoom(player, targetName); found != nil {
+			return &CommandResult{Messages: []string{fmt.Sprintf("You can't project %s at %s. Psionic attacks against players are not yet implemented.", disc.Name, found.FirstName)}}
+		}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see %s here.", targetName)}}
+	}
+	name := FormatMonsterName(def, e.monAdjs)
+
+	resist := def.PsiResist
+	if resist <= 0 {
+		resist = def.MagicResist
+	}
+	if psiResisted(player, disc, resist, psiRoll, castChance) {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You project Immobilize at %s! Invisible force bands wrap around it, freezing it in place.", name)},
-			RoomBroadcast: []string{fmt.Sprintf("%s concentrates and %s freezes in place.", player.FirstName, name)},
+			Messages:      []string{fmt.Sprintf("You project %s at %s, but it resists!", disc.Name, name)},
+			RoomBroadcast: []string{fmt.Sprintf("%s concentrates at %s, but it resists!", player.FirstName, name)},
+			Resisted:      true,
 		}
 	}
 
-	// Try player
-	found := e.findPlayerInRoom(player, targetName)
-	if found != nil {
-		found.Immobilized = true
-		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You project Immobilize at %s! Invisible force bands wrap around them.", found.FirstName)},
-			RoomBroadcast: []string{fmt.Sprintf("%s concentrates and %s freezes in place.", player.FirstName, found.FirstName)},
-			TargetName:    found.FirstName,
-			TargetMsg:     []string{"Invisible force bands wrap around you, making it impossible to move!"},
+	// Its own timed flag, not Sedated: Sedated (the GM @GEN "inert" state)
+	// switches the monster's AI off entirely and never wears off, so it couldn't
+	// fight back for the rest of its life. Immobilize only stops it moving
+	// (wandering and fleeing, see monsterTick/monsterFlee).
+	e.monsterMgr.mu.Lock()
+	for i := range e.monsterMgr.instances {
+		if e.monsterMgr.instances[i].ID == inst.ID {
+			e.monsterMgr.instances[i].Immobilized = true
+			e.monsterMgr.instances[i].ImmobilizeExpiry = time.Now().Add(immobilizeDuration)
+			break
 		}
 	}
-
-	return &CommandResult{Messages: []string{fmt.Sprintf("You don't see %s here.", targetName)}}
+	e.monsterMgr.mu.Unlock()
+	return &CommandResult{
+		Messages:      []string{fmt.Sprintf("You project %s at %s! Invisible force bands wrap around it, freezing it in place.", disc.Name, name)},
+		RoomBroadcast: []string{fmt.Sprintf("%s concentrates and %s freezes in place.", player.FirstName, name)},
+	}
 }
 
 // psiResisted reports whether a monster's psionic resistance stops a

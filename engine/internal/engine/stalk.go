@@ -90,7 +90,7 @@ func (e *GameEngine) moveStalkers(ctx context.Context, originalRoom, destNum, ta
 			continue
 		}
 		name := p.StalkingName
-		if followBlockedReason(p) != "" || e.isEngagedInMelee(p) || p.Immobilized || len(p.Entangles) > 0 ||
+		if followBlockedReason(p) != "" || e.isEngagedInMelee(p) || p.IsImmobilized() || len(p.Entangles) > 0 ||
 			rand.Intn(100) >= e.stalkChance(p, targetPerception, destNum) {
 			clearStalk(p)
 			if e.sendToPlayer != nil {

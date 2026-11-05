@@ -970,6 +970,7 @@ func (e *GameEngine) gmHeal(ctx context.Context, player *Player, args []string) 
 	target.Wounds = nil
 	target.Bleeding = false
 	target.Stunned = false
+	target.ImmobilizedExpiry = time.Time{}
 	target.Diseased = false
 	target.DiseaseLevel = 0
 	target.Poisoned = false

@@ -2035,7 +2035,7 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 			msgs = append(msgs, fmt.Sprintf("A Thunder Glyph explodes with crackling energy! [%d Damage]", spellDmg))
 		case glyphType <= 8:
 			msgs = append(msgs, fmt.Sprintf("An Imprisonment Rune flares! You feel rooted to the spot!"))
-			player.Immobilized = true
+			player.ImmobilizedExpiry = time.Now().Add(immobilizeDuration)
 		default:
 			msgs = append(msgs, fmt.Sprintf("A Symbol of Death erupts! [%d Damage]", spellDmg))
 		}

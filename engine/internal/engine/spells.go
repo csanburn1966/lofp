@@ -3499,9 +3499,10 @@ func (e *GameEngine) castPlantSnareSpell(player *Player, spell *SpellDef, args [
 // restricting spell (see Player.Entangles — currently populated by Plant
 // Snare) from the target, chosen at random if more than one is active. It
 // only removes the effect; it doesn't grant any lasting immunity, so the
-// target can be re-snared immediately afterward. Does not touch the older,
-// unnamed Immobilized flag (psi Immobilize, Imprisonment Rune traps) — those
-// have their own separate clear mechanisms.
+// target can be re-snared immediately afterward. Does not touch Immobilize (psi
+// Immobilize, Imprisonment Rune traps): the manuals list Freedom as freeing you
+// from plant snare, webs, insect swarms and tentacles only. Immobilize ends on its
+// own (ImmobilizedExpiry), on death, or with @heal.
 func (e *GameEngine) castFreedomSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
 	target := player
 	isSelf := true

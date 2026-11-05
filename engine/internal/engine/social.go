@@ -62,7 +62,7 @@ func (e *GameEngine) doRoomVerbScriptsThenEmote(player *Player, verb string, arg
 // to their feet. Returns nil (caller falls back to the normal PULL emote) when the
 // target isn't a player here, isn't lying down, or can't be raised — dead,
 // unconscious, asleep, or held down by Plant Snare/webs/tentacles (Entangles) or
-// Immobilize/Imprisonment Rune (Immobilized).
+// Immobilize/Imprisonment Rune (IsImmobilized).
 func (e *GameEngine) doPullPlayerUp(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
 		return nil
@@ -71,7 +71,7 @@ func (e *GameEngine) doPullPlayerUp(ctx context.Context, player *Player, args []
 	if target == nil || target == player || target.Position != 2 {
 		return nil
 	}
-	if target.Dead || target.Unconscious || target.Sleeping || target.Immobilized || len(target.Entangles) > 0 {
+	if target.Dead || target.Unconscious || target.Sleeping || target.IsImmobilized() || len(target.Entangles) > 0 {
 		return nil
 	}
 	target.Position = 0
