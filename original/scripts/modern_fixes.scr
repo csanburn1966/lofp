@@ -632,3 +632,22 @@ IFPREVERB GO 8
 	CLEARVERB
 ENDIF
 ;
+;
+; Icon (ITEM1.SCR INUMBER 165) is a jeweler's piece like the idol, statue and
+; scepter beside it, but its definition lacks the PARAMETER2 skill level every
+; other jeweler item carries. Without it the crafting code filed it under
+; Weaponsmithing at level 0: CRAFT listed it as "no skill required", and CRAFT
+; ICON made one on the spot from the first metal in the pack instead of starting
+; the CRAFT/WORK routine. Redefined here (a later INUMBER replaces the earlier
+; one) with PARAMETER2 19, the idol's level, its closest counterpart.
+;I# 165 : icon
+INUMBER 165
+MISC
+NAME 230
+SUBSTANCE HARDMETAL
+PARAMETER2 19
+CRAFTABLE
+ENCRUSTABLE
+WEIGHT 1
+VOLUME 1
+;
