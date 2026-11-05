@@ -24,7 +24,7 @@ type targetEntry struct {
 
 // doTarget handles TARGET [ordinal] <name>, building up to maxTargets
 // monsters in the player's room for multi-target spells (Chain Lightning,
-// Flaming Arrows, Siryx's Terrible Tentacles).
+// Flaming Arrows, Siryx's Terrible Tentacles, Wail of the Banshee).
 //
 // Players can be targeted too, as in the original ("tar fyre" → "Targets now
 // include: Fyre" in chan0409.txt) — mainly so Translocation can send them

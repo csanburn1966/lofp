@@ -128,6 +128,7 @@ func init() {
 		{ID: 313, Name: "Body Destruction I", School: "Necromancy", Level: 1, ManaCost: 3, CastTime: 3, Effect: "damage", DmgMin: 3, DmgMax: 10, DmgType: ""},
 		{ID: 314, Name: "Body Destruction II", School: "Necromancy", Level: 5, ManaCost: 7, CastTime: 3, Effect: "damage", DmgMin: 6, DmgMax: 20, DmgType: ""},
 		{ID: 315, Name: "Body Destruction III", School: "Necromancy", Level: 10, ManaCost: 14, CastTime: 3, Effect: "damage", DmgMin: 12, DmgMax: 35, DmgType: ""},
+		{ID: 312, Name: "Wail of the Banshee", School: "Necromancy", Level: 20, ManaCost: 20, CastTime: 4, Effect: "damage", DmgMin: 12, DmgMax: 35, DmgType: ""}, // MAGIC.TXT: "Medium/Multiple"; dice from Body Destruction III (castWailSpell)
 		{ID: 316, Name: "Body Restoration I", School: "Necromancy", Level: 1, ManaCost: 3, CastTime: 3, Effect: "heal", HealMin: 5, HealMax: 15},
 		{ID: 317, Name: "Body Restoration II", School: "Necromancy", Level: 5, ManaCost: 7, CastTime: 3, Effect: "heal", HealMin: 10, HealMax: 30},
 		{ID: 318, Name: "Body Restoration III", School: "Necromancy", Level: 10, ManaCost: 14, CastTime: 3, Effect: "heal", HealMin: 20, HealMax: 50},
@@ -1463,6 +1464,9 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 	if spell.ID == 131 && len(e.resolveTargets(player)) > 0 {
 		return e.castFlamingArrowsSpell(player, spell, args, spectacular, castRoll, castChance)
 	}
+	if spell.ID == 312 && len(e.resolveTargets(player)) > 0 {
+		return e.castWailSpell(player, spell, spectacular, castRoll, castChance)
+	}
 
 	// Find target
 	targetName := ""
@@ -1554,16 +1558,7 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		dmg = dmg * 2
 	}
 
-	// Body Destruction I/II/III (313/314/315) call upon the forces of death — the dark
-	// mirror of Body Restoration's forces-of-life blessing (see castHealSpell). Same
-	// 1-in-100 throttle: these are routine damage spells cast constantly, and an
-	// unconditional shift would tank a caster's alignment far faster than the original
-	// 1990s game did.
-	isBodyDestruction := spell.ID == 313 || spell.ID == 314 || spell.ID == 315
-	alignmentCursed := isBodyDestruction && rand.Intn(100) == 0
-	if alignmentCursed {
-		player.Alignment--
-	}
+	alignmentCursed := darkNecromancyCurse(player, spell)
 
 	// Generic spell flavor text based on damage type. The caster sees a
 	// second-person ("You...") version; onlookers see a third-person version.
@@ -1615,6 +1610,11 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		gestureRoom = fmt.Sprintf("%s slams %s palms into the ground.", player.DisplayNameCap(), player.Possessive())
 		flavorSelf = fmt.Sprintf("A rippling wave of earth surges outward and slams into %s%s!", article, name)
 		flavorRoom = fmt.Sprintf("A rippling wave of earth surges outward and slams into %s%s!", article, name)
+	case 312: // Wail of the Banshee, single target (no TARGET list; see castWailSpell)
+		gestureSelf = "You send out an ear-piercing sonic scream!"
+		gestureRoom = fmt.Sprintf("%s sends out an ear-piercing sonic scream!", player.DisplayNameCap())
+		flavorSelf = fmt.Sprintf("The wail tears into %s%s!", article, name)
+		flavorRoom = flavorSelf
 	case 354: // Rorin's Fire
 		flavorSelf = fmt.Sprintf("A wave of red and orange flames erupts from your hand and encircles %s%s, hissing and constricting like a snake!", article, name)
 		flavorRoom = fmt.Sprintf("A wave of red and orange flames erupts from %s's hand and encircles %s%s, hissing and constricting like a snake!", player.DisplayName(), article, name)
@@ -1929,6 +1929,87 @@ func (e *GameEngine) castChainLightningSpell(player *Player, spell *SpellDef, ar
 		}
 
 		prevSelf, prevRoom = fullName, fullName
+	}
+
+	if notice := e.playerTargetsSpared(player); notice != "" {
+		msgs = append(msgs, notice)
+	}
+
+	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
+}
+
+// darkNecromancyCurse applies the alignment cost of Body Destruction I/II/III
+// (313/314/315) and Wail of the Banshee (312) — the "Minor Dark Necromancy"
+// spells per the Fayd warrant list (3SYSOP.SC6). They call upon the forces of
+// death, the dark mirror of Body Restoration's forces-of-life blessing (see
+// castHealSpell). Same 1-in-100 throttle: these are routine damage spells cast
+// constantly, and an unconditional shift would tank a caster's alignment far
+// faster than the original 1990s game did. Reports whether the curse landed.
+func darkNecromancyCurse(player *Player, spell *SpellDef) bool {
+	switch spell.ID {
+	case 312, 313, 314, 315:
+	default:
+		return false
+	}
+	if rand.Intn(100) != 0 {
+		return false
+	}
+	player.Alignment--
+	return true
+}
+
+// castWailSpell handles Wail of the Banshee (312) when the caster has a
+// multi-target TARGET list: a single sonic scream strikes every targeted
+// creature at once, each resisting (or not) on its own. Like Body Destruction
+// it's pure essence damage with no elemental type, so immunities don't apply.
+func (e *GameEngine) castWailSpell(player *Player, spell *SpellDef, spectacular bool, castRoll, castChance int) *CommandResult {
+	entries := e.resolveTargets(player)
+	if len(entries) == 0 {
+		return &CommandResult{Messages: []string{"Cast at what? Specify a target."}, TargetNotFound: true}
+	}
+
+	msgs := []string{"You send out an ear-piercing sonic scream!"}
+	roomMsgs := []string{fmt.Sprintf("%s sends out an ear-piercing sonic scream!", player.DisplayNameCap())}
+	if darkNecromancyCurse(player, spell) {
+		msgs = append(msgs, "You sense the displeasure of the gods as you call upon the forces of death.")
+	}
+
+	for _, en := range entries {
+		name := strings.ToLower(FormatMonsterName(en.Def, e.monAdjs))
+		article := articleFor(name, en.Def.Unique)
+
+		if magicResisted(player, castRoll, castChance, en.Def.MagicResist) {
+			line := fmt.Sprintf("The wail washes over %s%s, but it resists!", article, name)
+			msgs = append(msgs, line)
+			roomMsgs = append(roomMsgs, line)
+			continue
+		}
+
+		dmg := rand.Intn(spell.DmgMax-spell.DmgMin+1) + spell.DmgMin
+		dmg += masteryDamageBonus(spellMasteryLevel(player, spell), player)
+		if spectacular {
+			dmg *= 2
+		}
+
+		hitLine := fmt.Sprintf("The wail tears into %s%s!", article, name)
+		msgs = append(msgs, hitLine, fmt.Sprintf(" %s %s to %s. [%d Damage]", damageSeverity(dmg, en.Inst.MaxHP), spellDmgNoun(spell.DmgType), randomBodyPart(en.Def.BodyType), dmg))
+		// Onlookers get the vague tier, as in castDamageSpell.
+		roomMsgs = append(roomMsgs, fmt.Sprintf("%s %s.", hitLine, simplifiedDamageTier(dmg)))
+
+		killed, _ := e.damageMonster(en.Inst.ID, dmg, player.FirstName)
+		if killed {
+			deathText := en.Def.TextOverrides["TEXD"]
+			if deathText != "" {
+				msgs = append(msgs, fmt.Sprintf("A %s %s", name, deathText))
+				roomMsgs = append(roomMsgs, fmt.Sprintf("A %s %s", name, deathText))
+			} else {
+				msgs = append(msgs, "It collapses, dead.")
+				roomMsgs = append(roomMsgs, fmt.Sprintf("A %s collapses, dead!", name))
+			}
+			instCopy := en.Inst
+			e.handleMonsterDeath(e.sharedXPRecipients(player), &instCopy, en.Def)
+			player.Targets = removeTargetID(player.Targets, en.Inst.ID)
+		}
 	}
 
 	if notice := e.playerTargetsSpared(player); notice != "" {

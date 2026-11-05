@@ -2817,6 +2817,8 @@ func monsterSpellHitFlavor(spell *SpellDef, subject, object string) string {
 		flavor = fmt.Sprintf("A ghostly sword materializes before %s and slashes at %s!", subject, object)
 	case 523: // Earth Spike
 		flavor = fmt.Sprintf("As %s beckons to the ground, a horrible spike thrusts up from the earth and impales %s!", subject, object)
+	case 312: // Wail of the Banshee
+		flavor = fmt.Sprintf("%s sends out an ear-piercing sonic scream that tears into %s!", subject, object)
 	case 354: // Rorin's Fire
 		flavor = fmt.Sprintf("A wave of red and orange flames erupts from %s's hand and encircles %s, hissing and constricting like a snake!", subject, object)
 	}
