@@ -9,6 +9,37 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.7.1 &mdash; November 5, 2026</h2>
+            <p className="text-gray-400 mb-3">Immobilize no longer leaves its victim rooted to the spot forever: the hold now wears off after two minutes. It can be resisted, can&rsquo;t be used on other players, and no longer leaves a monster unable to fight back. The icon is now crafted with the Jeweler skill, and the error box some players saw pop up while playing is gone.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Immobilize</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Being Immobilized, by the psionic discipline or by an Imprisonment Rune trap on a chest, now wears off after two minutes. Before, nothing ever ended it, so a character could stay rooted to the spot for good. Anyone still stuck is freed the next time they log in</li>
+                  <li>The hold also ends if you die, and pauses while you&rsquo;re logged out, like other harmful effects</li>
+                  <li>Immobilize can now be resisted. A monster&rsquo;s resistance to psionics, or to magic if it has none, can shake it off, the same way it resists psionic attacks</li>
+                  <li>Immobilize can&rsquo;t be used on other players, the same as other psionic attacks</li>
+                  <li>An Immobilized monster can no longer wander off or flee, but it fights back as usual, and shows as &ldquo;(immobilized)&rdquo; in the room. Before, it was frozen completely and for good, and never fought back</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Crafting an Icon</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The icon is a Jeweler&rsquo;s item and now needs Jeweler skill 19. It no longer shows up in a weaponsmith&rsquo;s craft list as needing no skill</li>
+                  <li><code>CRAFT ICON</code> now starts the usual crafting routine, and you choose the metal with <code>WORK &lt;metal&gt;</code>. Before, it made an icon at once from the first metal in your pack</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Error Box in the Web Client</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Some players occasionally saw a large error message about a missing <code>.env</code> file appear over the game. It came from automated scanners probing the server, not from anything the player did. It no longer appears, and the server now refuses those probes</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.7.0 &mdash; November 4, 2026</h2>
             <p className="text-gray-400 mb-3">You can now mark items with <code>NOSELL</code> so a merchant won&rsquo;t buy them by accident. Necromancers get Turn Undead III and Control Undead III. Fly no longer stops working after you log back in, scripted objects now react when you open or close them, and playing an instrument you&rsquo;re holding works even with spares in your pack.</p>
 

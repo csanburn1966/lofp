@@ -1,5 +1,23 @@
 # Changelog
 
+## v15.7.1 — 2026-11-05
+
+Immobilize no longer leaves its victim rooted to the spot forever: the hold now wears off after two minutes. It can be resisted, can’t be used on other players, and no longer leaves a monster unable to fight back. The icon is now crafted with the Jeweler skill, and the error box some players saw pop up while playing is gone.
+
+### Fixed: Immobilize
+- Being Immobilized, by the psionic discipline or by an Imprisonment Rune trap on a chest, now wears off after two minutes. Before, nothing ever ended it, so a character could stay rooted to the spot for good. Anyone still stuck is freed the next time they log in
+- The hold also ends if you die, and pauses while you’re logged out, like other harmful effects
+- Immobilize can now be resisted. A monster’s resistance to psionics, or to magic if it has none, can shake it off, the same way it resists psionic attacks
+- Immobilize can’t be used on other players, the same as other psionic attacks
+- An Immobilized monster can no longer wander off or flee, but it fights back as usual, and shows as “(immobilized)” in the room. Before, it was frozen completely and for good, and never fought back
+
+### Fixed: Crafting an Icon
+- The icon is a Jeweler’s item and now needs Jeweler skill 19. It no longer shows up in a weaponsmith’s craft list as needing no skill
+- `CRAFT ICON` now starts the usual crafting routine, and you choose the metal with `WORK <metal>`. Before, it made an icon at once from the first metal in your pack
+
+### Fixed: Error Box in the Web Client
+- Some players occasionally saw a large error message about a missing `.env` file appear over the game. It came from automated scanners probing the server, not from anything the player did. It no longer appears, and the server now refuses those probes
+
 ## v15.7.0 — 2026-11-04
 
 You can now mark items with `NOSELL` so a merchant won’t buy them by accident. Necromancers get Turn Undead III and Control Undead III. Fly no longer stops working after you log back in, scripted objects now react when you open or close them, and playing an instrument you’re holding works even with spares in your pack.
