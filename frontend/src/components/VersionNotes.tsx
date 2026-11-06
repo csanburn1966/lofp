@@ -9,6 +9,45 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.8.0 &mdash; November 6, 2026</h2>
+            <p className="text-gray-400 mb-3">Necromancers get Wail of the Banshee, a sonic scream that strikes every creature you&rsquo;ve targeted at once. Insect Swarm now works as it did in the original game: the insects hold their victim in place and keep biting until they die off or are driven away. The meditation in the receding dimension works again.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Wail of the Banshee</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Wail of the Banshee (spell 312, Necromancy level 20) sends out an ear-piercing sonic scream that strikes every creature you&rsquo;ve chosen with <code>TARGET</code>, each one resisting on its own. With no targets chosen, it hits a single creature</li>
+                  <li>It deals 12 to 35 damage, about the same as Body Destruction III. It&rsquo;s pure necromantic force, so no creature is immune to it</li>
+                  <li>Like Body Destruction, it&rsquo;s Minor Dark Necromancy, and calling on the forces of death can occasionally cost you a point of alignment</li>
+                  <li>Monsters that know the spell, such as the chaos mage, can now cast it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Insect Swarm</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Insect Swarm (spell 522) now swarms its victim instead of striking once. &ldquo;Insects suddenly boil up from the ground and swarm over you!&rdquo;, then &ldquo;You are being devoured by insects!&rdquo; every 5 seconds for a minute</li>
+                  <li>While swarmed you can&rsquo;t move, retreat or stand up, and your prompt shows the I (immobilized) code. You can still fight and cast spells</li>
+                  <li>To get rid of the insects, cast Freedom or Dispel Lesser Magic, take Mist or Slime Form, <code>TRANSFORM</code> if you&rsquo;re a wolfling, or get caught in a Plant Snare. &ldquo;The insects drop off and die.&rdquo; <code>STRUGGLE</code> won&rsquo;t shake them off</li>
+                  <li>Cast on a monster, the swarm keeps it from wandering off or fleeing while the insects bite it every 5 seconds. It can still fight back, and if the insects kill it, you get the experience</li>
+                  <li>Monsters, items and traps that cast Insect Swarm now use the new swarm too</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: The I Prompt Code</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The I (immobilized) prompt code now also shows while you&rsquo;re held by Plant Snare or an insect swarm, not just by Immobilize</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Meditating in the Receding Dimension</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Sitting in the receding dimension and saying &ldquo;OM...&rdquo; now starts the meditation, and saying it again while in the trance casts Body Restoration III on you, as the room intended. Before, nothing happened</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.7.1 &mdash; November 5, 2026</h2>
             <p className="text-gray-400 mb-3">Immobilize no longer leaves its victim rooted to the spot forever: the hold now wears off after two minutes. It can be resisted, can&rsquo;t be used on other players, and no longer leaves a monster unable to fight back. The icon is now crafted with the Jeweler skill, and the error box some players saw pop up while playing is gone.</p>
 
