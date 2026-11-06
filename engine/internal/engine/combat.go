@@ -2912,6 +2912,23 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 		return nil, roomMsgs, nil
 	}
 
+	// Insect Swarm (522) swarms the target rather than striking once; the bites come
+	// from swarm.go's tick. The insects rise from the ground, so there's no dodging
+	// them, but Spell Shield can still turn the spell. The target sees only the swarm
+	// line after the cast, as in original/csanburn/bog.txt.
+	if spellID == insectSwarmSpellID {
+		if resist := spellShieldResistBonus(target); resist > 0 && rand.Intn(100) < resist {
+			roomMsgs = append(roomMsgs, fmt.Sprintf("An antimagical field around %s deflects the spell!", target.DisplayName()))
+			playerMsgs = append(playerMsgs, gestureMsg, "Your antimagical field flares and deflects the spell!")
+			return playerMsgs, roomMsgs, target
+		}
+		swarmPlayer(target)
+		e.SavePlayer(context.Background(), target)
+		roomMsgs = append(roomMsgs, fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s!", target.DisplayName()))
+		playerMsgs = append(playerMsgs, gestureMsg, "Insects suddenly boil up from the ground and swarm over you!")
+		return playerMsgs, roomMsgs, target
+	}
+
 	// hitFlavor is the actual "X hurls a bolt of lightning at Y!" line — mirrors the
 	// third-person text castDamageSpell shows onlookers when a player casts the same
 	// spell (see monsterSpellHitFlavor), matching e.g. original/icyranbro.txt's "A
@@ -4533,8 +4550,8 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 }
 
 func (e *GameEngine) monsterFlee(inst *MonsterInstance, def *gameworld.MonsterDef) {
-	if inst.Immobilized {
-		return // psi Immobilize holds it in place
+	if inst.Immobilized || inst.Swarmed {
+		return // psi Immobilize or an insect swarm holds it in place
 	}
 	room := e.rooms[inst.RoomNumber]
 	if room == nil {

@@ -107,7 +107,7 @@ func (e *GameEngine) doAdvance(ctx context.Context, player *Player, args []strin
 		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
 	}
 	if len(player.Entangles) > 0 {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot move!", player.Entangles[0].SpellName)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot move!", entangleNoun(player.Entangles[0]))}}
 	}
 	if player.IsImprisoned() {
 		return &CommandResult{Messages: []string{"You are trapped within a blue force bubble and cannot move!"}}
@@ -221,7 +221,7 @@ func (e *GameEngine) doRetreat(ctx context.Context, player *Player) *CommandResu
 		return &CommandResult{Messages: []string{"You are rooted to the spot and cannot retreat!"}}
 	}
 	if len(player.Entangles) > 0 {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot retreat!", player.Entangles[0].SpellName)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot retreat!", entangleNoun(player.Entangles[0]))}}
 	}
 	if player.IsImprisoned() {
 		return &CommandResult{Messages: []string{"You are trapped within a blue force bubble and cannot retreat!"}}
@@ -302,6 +302,9 @@ func (e *GameEngine) doBreakFree(ctx context.Context, player *Player) *CommandRe
 	if len(player.Entangles) == 0 {
 		return &CommandResult{Messages: []string{"You aren't bound by anything to break free from."}}
 	}
+	if len(player.Entangles) == 1 && player.Entangles[0].SpellID == insectSwarmSpellID {
+		return &CommandResult{Messages: []string{"You can't break free of a swarm of insects!"}}
+	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
@@ -318,8 +321,16 @@ func (e *GameEngine) doBreakFree(ctx context.Context, player *Player) *CommandRe
 	if chance > 100 {
 		chance = 100
 	}
-	if rand.Intn(100) < chance {
-		idx := rand.Intn(len(player.Entangles))
+	// An insect swarm can't be wrestled off (MAGIC.TXT's escape list doesn't
+	// include it), so only the other bindings are candidates.
+	var candidates []int
+	for i, ent := range player.Entangles {
+		if ent.SpellID != insectSwarmSpellID {
+			candidates = append(candidates, i)
+		}
+	}
+	if len(candidates) > 0 && rand.Intn(100) < chance {
+		idx := candidates[rand.Intn(len(candidates))]
 		removed := player.Entangles[idx]
 		player.Entangles = append(player.Entangles[:idx], player.Entangles[idx+1:]...)
 		return &CommandResult{

@@ -193,7 +193,7 @@ func init() {
 		{ID: 516, Name: "Wall of Thorns", School: "Druidic", Level: 14, ManaCost: 14, CastTime: 4, Effect: "utility"},
 		{ID: 517, Name: "Stick to Snake", School: "Druidic", Level: 5, ManaCost: 5, CastTime: 4, Effect: "utility"},
 		{ID: 518, Name: "Claw Growth", School: "Druidic", Level: 2, ManaCost: 2, CastTime: 3, Effect: "buff"},
-		{ID: 522, Name: "Insect Swarm", School: "Druidic", Level: 25, ManaCost: 25, CastTime: 4, Effect: "damage", DmgMin: 15, DmgMax: 40, DmgType: ""},
+		{ID: 522, Name: "Insect Swarm", School: "Druidic", Level: 25, ManaCost: 25, CastTime: 4, Effect: "utility", DmgMin: 3, DmgMax: 8, DmgType: ""}, // DmgMin/Max are per 5-second tick (swarm.go)
 		{ID: 526, Name: "Creeping Death", School: "Druidic", Level: 22, ManaCost: 22, CastTime: 4, Effect: "damage", DmgMin: 18, DmgMax: 45, DmgType: ""},
 		{ID: 528, Name: "Free Action", School: "Druidic", Level: 20, ManaCost: 20, CastTime: 3, Effect: "buff"},
 		{ID: 531, Name: "Tree Door", School: "Druidic", Level: 10, ManaCost: 10, CastTime: 4, Effect: "utility"},
@@ -1146,6 +1146,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castCallAnimal(player)
 		case 500: // Plant Snare
 			result = e.castPlantSnareSpell(player, spell, args)
+		case 522: // Insect Swarm
+			result = e.castInsectSwarmSpell(player, spell, args, castRoll, castChance)
 		case 501: // Call Storm
 			result = e.castCallStormSpell(player, spell)
 		case 502: // Disperse Storm
@@ -3561,6 +3563,8 @@ func (e *GameEngine) castPlantSnareSpell(player *Player, spell *SpellDef, args [
 		}
 	}
 
+	// Per MAGIC.TXT, being snared or webbed gets rid of an insect swarm.
+	dropMsg := removeInsectSwarm(target)
 	target.Entangles = append(target.Entangles, PlayerEntangle{
 		SpellID:   spell.ID,
 		SpellName: spell.Name,
@@ -3568,11 +3572,15 @@ func (e *GameEngine) castPlantSnareSpell(player *Player, spell *SpellDef, args [
 	})
 	e.SavePlayer(context.Background(), target)
 
+	targetMsgs := []string{fmt.Sprintf("%s casts %s at you! Roots and vines burst from the ground, entangling you!", player.FirstName, spell.Name)}
+	if dropMsg != "" {
+		targetMsgs = append(targetMsgs, dropMsg)
+	}
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s at %s. Roots and vines burst from the ground, entangling them!", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s. Roots and vines burst from the ground, entangling them!", player.DisplayName(), target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s at you! Roots and vines burst from the ground, entangling you!", player.FirstName, spell.Name)},
+		TargetMsg:     targetMsgs,
 	}
 }
 
@@ -3615,6 +3623,20 @@ func (e *GameEngine) castFreedomSpell(player *Player, spell *SpellDef, args []st
 	target.Entangles = append(target.Entangles[:idx], target.Entangles[idx+1:]...)
 	e.SavePlayer(context.Background(), target)
 
+	if removed.SpellID == insectSwarmSpellID {
+		if isSelf {
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("You gesture and cast %s. %s", spell.Name, insectSwarmDropMsg)},
+				RoomBroadcast: []string{fmt.Sprintf("%s gestures, and the insects swarming over %s drop off and die.", player.DisplayNameCap(), player.Objective())},
+			}
+		}
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s. The insects swarming over %s drop off and die.", spell.Name, target.FirstName, target.FirstName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s gestures, and the insects swarming over %s drop off and die.", player.DisplayNameCap(), target.DisplayName())},
+			TargetName:    target.FirstName,
+			TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. %s", player.FirstName, spell.Name, insectSwarmDropMsg)},
+		}
+	}
 	if isSelf {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and cast %s. The %s releases its hold on you!", spell.Name, removed.SpellName)},
@@ -3780,7 +3802,7 @@ func activeDispellableEffects(target *Player) []dispellableEffect {
 		idx, entangle := i, ent
 		effects = append(effects, dispellableEffect{entangle.SpellName, func() string {
 			target.Entangles = append(target.Entangles[:idx], target.Entangles[idx+1:]...)
-			return fmt.Sprintf("The %s releases its hold on you.", entangle.SpellName)
+			return entangleReleaseMsg(entangle)
 		}})
 	}
 

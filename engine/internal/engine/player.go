@@ -833,7 +833,7 @@ func (p *Player) PromptIndicators() string {
 	if p.Unconscious {
 		codes = append(codes, 'U')
 	}
-	if p.IsImmobilized() {
+	if p.IsImmobilized() || len(p.Entangles) > 0 {
 		codes = append(codes, 'I')
 	}
 	return string(codes)

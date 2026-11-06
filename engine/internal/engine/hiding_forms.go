@@ -167,6 +167,7 @@ func (e *GameEngine) castFormSpell(player *Player, spell *SpellDef) *CommandResu
 		return &CommandResult{Messages: []string{"You are already in another form."}}
 	}
 
+	dropMsg := removeInsectSwarm(player)
 	player.Entangles = nil
 	player.ImprisonedExpiry = time.Time{}
 
@@ -180,8 +181,12 @@ func (e *GameEngine) castFormSpell(player *Player, spell *SpellDef) *CommandResu
 		bodyMsg = "You feel your body changing shape. Suddenly, you realize that you are a slime! [Type TRANSFORM to assume a material shape again]"
 	}
 
+	msgs := []string{"You gesture.", bodyMsg}
+	if dropMsg != "" {
+		msgs = append(msgs, dropMsg)
+	}
 	return &CommandResult{
-		Messages:      []string{"You gesture.", bodyMsg},
+		Messages:      msgs,
 		RoomBroadcast: []string{fmt.Sprintf("%s shudders and transforms into %s!", player.FirstName, player.DisplayName())},
 	}
 }

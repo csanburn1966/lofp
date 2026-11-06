@@ -1094,7 +1094,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		// (see monsterTick in combat.go). Doesn't block SIT/KNEEL/LAY — roots
 		// around your feet stop you rising, not settling into another position.
 		if player.Position == 2 && len(player.Entangles) > 0 {
-			return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot stand up!", player.Entangles[0].SpellName)}}
+			return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot stand up!", entangleNoun(player.Entangles[0]))}}
 		}
 		player.Position = 0
 		player.KnockedDown = false // "a -50 penalty ... until you stand up again" — LEGENDS.DOC
@@ -1931,12 +1931,23 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 		transformRT := applyRoundTime(player, 7)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(transformRT) * time.Second)
+		// Per MAGIC.TXT, "Wolflings can transform out of" webs, plants, insects and
+		// tentacles, like Mist/Slime Form (castFormSpell). bog.txt shows the swarm's
+		// "The insects drop off and die." after a wolfling's TRANSFORM.
+		var shakeOff []string
+		if dropMsg := removeInsectSwarm(player); dropMsg != "" {
+			shakeOff = append(shakeOff, dropMsg)
+		}
+		for _, ent := range player.Entangles {
+			shakeOff = append(shakeOff, entangleReleaseMsg(ent))
+		}
+		player.Entangles = nil
 		if player.WolfForm {
 			// Wolf → human
 			player.WolfForm = false
 			e.SavePlayer(ctx, player)
 			return &CommandResult{
-				Messages:      []string{"You howl in pain as your body undergoes a metamorphosis and resumes humanoid form.", "[Round: 7 sec]"},
+				Messages:      append([]string{"You howl in pain as your body undergoes a metamorphosis and resumes humanoid form.", "[Round: 7 sec]"}, shakeOff...),
 				RoomBroadcast: []string{fmt.Sprintf("A wolf shudders and transforms, resuming the shape of %s. Where the wolf stood, %s rises in humanoid form.", player.DisplayName(), player.Pronoun())},
 			}
 		}
@@ -1945,7 +1956,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		player.WolfForm = true
 		e.SavePlayer(ctx, player)
 		return &CommandResult{
-			Messages:      []string{"You groan in pain as your body undergoes a metamorphosis and assumes the form of a wolf.", "[Round: 7 sec]"},
+			Messages:      append([]string{"You groan in pain as your body undergoes a metamorphosis and assumes the form of a wolf.", "[Round: 7 sec]"}, shakeOff...),
 			RoomBroadcast: []string{fmt.Sprintf("Without warning, %s howls and collapses to the ground, shaking. Undergoing a terrible transformation, %s changes shape into that of a wolf!", preTransformName, player.Pronoun())},
 		}
 	case "MOLD":

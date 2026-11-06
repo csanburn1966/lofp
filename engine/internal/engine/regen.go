@@ -403,7 +403,7 @@ func (e *GameEngine) regenTick() {
 			if time.Now().After(ent.Expiry) {
 				changed = true
 				if e.sendToPlayer != nil {
-					e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("The %s releases its hold on you.", ent.SpellName)})
+					e.sendToPlayer(p.FirstName, []string{entangleReleaseMsg(ent)})
 				}
 			} else {
 				activeEntangles = append(activeEntangles, ent)

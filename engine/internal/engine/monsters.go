@@ -86,6 +86,9 @@ type MonsterInstance struct {
 	Tentacled          bool      `json:"-"` // Siryx's Terrible Tentacles: immobilized, takes periodic crushing damage
 	TentacleExpiry     time.Time `json:"-"`
 	TentacleCasterName string    `json:"-"` // player who cast Tentacles, for death XP attribution on the DOT tick
+	Swarmed            bool      `json:"-"` // Insect Swarm: cannot wander or flee, can still fight, bitten every 5s (swarm.go)
+	SwarmExpiry        time.Time `json:"-"`
+	SwarmCasterName    string    `json:"-"` // player who cast Insect Swarm, for death XP attribution on the bite tick
 
 	// Monster spellcasting (SPELLUSE/SPELL/MANA) and special attacks (SPECUSE/SPECUSES).
 	// CurrentMana is seeded from def.Mana at spawn and never regenerates (per GMSCRIPT.DOC,
@@ -631,6 +634,8 @@ func (e *GameEngine) monsterNamesInRoom(roomNum int) []string {
 			name += " (entangled)"
 		} else if inst.Immobilized {
 			name += " (immobilized)"
+		} else if inst.Swarmed {
+			name += " (swarmed by insects)"
 		} else if inst.Feared {
 			name += " (cowering)"
 		}
@@ -1233,7 +1238,7 @@ func (e *GameEngine) monsterTick(tick int) {
 		}
 
 		// Wandering: ~5% chance per action tick for non-hostile, non-combat monsters (skip summoned)
-		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && !inst.Immobilized && rand.Intn(100) < 5 {
+		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && !inst.Immobilized && !inst.Swarmed && rand.Intn(100) < 5 {
 			room := e.rooms[inst.RoomNumber]
 			if room == nil {
 				continue

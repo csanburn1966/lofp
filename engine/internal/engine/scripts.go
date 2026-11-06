@@ -3059,6 +3059,13 @@ func (sc *ScriptContext) doScriptSpell(args []string) {
 // Unlike casting a spell normally, no mana cost or skill check applies — the item does the work.
 func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 	player := sc.Player
+	if spell.ID == insectSwarmSpellID {
+		// Wild-magic items and traps (ITEM2.SCR, ITEM6.SCR, ICE.SCR) swarm the player.
+		swarmPlayer(player)
+		sc.Messages = append(sc.Messages, "Insects suddenly boil up from the ground and swarm over you!")
+		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s!", player.DisplayName()))
+		return
+	}
 	switch spell.Effect {
 	case "heal":
 		healMin, healMax := spell.HealMin, spell.HealMax
