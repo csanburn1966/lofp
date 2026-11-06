@@ -85,7 +85,12 @@ type ScriptContext struct {
 	// response instead of one. Only blocks whose normalized pattern is identical are
 	// deduplicated; two genuinely different phrases that both happen to match (via the
 	// Contains fallback) still both fire.
-	firedSayPatterns map[string]bool
+	//
+	// The map value is the raw (uppercased) arg of the block that fired. A later block
+	// with the exact same raw arg is not a punctuation variant but a deliberate second
+	// stage, and still runs: INDOOR.SCR room 3162 has two "IFSAY OM..." blocks, the
+	// first casting on FLAG1 = 60 and the second advancing FLAG1 from 50 to 60.
+	firedSayPatterns map[string]string
 
 	KillPlayer        bool // KILL PLAYER: set when script kills the player
 	NeedsSave         bool // set by ROUTINE and similar actions that modify player state
@@ -584,13 +589,14 @@ func (sc *ScriptContext) execBlock(block gameworld.ScriptBlock) {
 	case "IFSAY":
 		if sc.matchesSayText(block.Args) {
 			pattern := sayPattern(block.Args[0])
-			if sc.firedSayPatterns[pattern] {
+			raw := strings.ToUpper(block.Args[0])
+			if firedRaw, ok := sc.firedSayPatterns[pattern]; ok && firedRaw != raw {
 				return
 			}
 			if sc.firedSayPatterns == nil {
-				sc.firedSayPatterns = make(map[string]bool)
+				sc.firedSayPatterns = make(map[string]string)
 			}
-			sc.firedSayPatterns[pattern] = true
+			sc.firedSayPatterns[pattern] = raw
 			sc.execChildren(block)
 		}
 
