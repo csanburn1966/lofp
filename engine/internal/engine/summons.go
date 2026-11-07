@@ -841,21 +841,20 @@ func (e *GameEngine) doCommand(ctx context.Context, player *Player, args []strin
 		if rawRest == "" {
 			return &CommandResult{Messages: []string{"Command it to say what? (COMMAND SAY <message>)"}}
 		}
+		// Unlike every other COMMAND, SAY skips the commandBroadcast echo (the gaze
+		// and "I command you to say ...!") so onlookers hear only the creature.
 		spokenLine := fmt.Sprintf("%s says, \"%s\"", capCname, rawRest)
-		rb := commandBroadcast("say " + rawRest)
 		if sameRoom {
-			rb = append(rb, spokenLine)
 			return &CommandResult{
 				Messages:      []string{spokenLine},
-				RoomBroadcast: rb,
+				RoomBroadcast: []string{spokenLine},
 			}
 		}
 		if e.localRoomBroadcast != nil {
 			e.localRoomBroadcast(instRoom, []string{spokenLine})
 		}
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("%s acknowledges your command.", capCname)},
-			RoomBroadcast: rb,
+			Messages: []string{fmt.Sprintf("%s acknowledges your command.", capCname)},
 		}
 
 	case "look":
