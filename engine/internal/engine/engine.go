@@ -670,12 +670,13 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 
 	// DEPART and REPORT must always work — they're the way out of (and the way
 	// to tell us about) a stuck state, so no dead/unconscious/stun gate below
-	// may block them. Neither handler checks roundtime either.
+	// may block them. Neither handler checks roundtime either. GM characters
+	// skip those gates entirely so they can always act, even while dead.
 	firstVerb := ""
 	if f := strings.Fields(input); len(f) > 0 {
 		firstVerb = resolveVerb(strings.ToUpper(f[0]))
 	}
-	alwaysAllowed := firstVerb == "DEPART" || firstVerb == "REPORT"
+	alwaysAllowed := firstVerb == "DEPART" || firstVerb == "REPORT" || player.IsGM
 
 	// Dead players can only DEPART, LOOK, WHO, QUIT, EXP, STATUS, HEALTH — unless
 	// Speak with Dead (spell 311) has granted them the power of speech.
