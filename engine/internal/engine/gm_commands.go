@@ -3634,6 +3634,7 @@ func (e *GameEngine) gmEdItem(ctx context.Context, gmPlayer *Player, args []stri
 		"  Example: @editem gloves tail lined with palest pink silk\n" +
 		"  Example: @editem gloves tail -  (clears the tail)\n" +
 		"  Example: @editem steel rapier tail polished to a high sheen  (adjectives narrow the match; if several still match, the last one in inventory is edited)\n" +
+		"  Example: @editem 4 ancient scroll val3 119  (an ordinal — 4, fourth, 4th — picks the Nth match in INVENTORY order)\n" +
 		"  Example: @editem bracelet examinedesc Each wing sparkles brightly blue.  (sets the archetype's EXAMINE text)\n" +
 		"  Example: @editem bracelet examinedesc -  (clears it)\n" +
 		"  Example: @editem Moryan ring itembit0 1  (grants War Room access on a Crimson Band ring)"
@@ -3691,6 +3692,14 @@ func (e *GameEngine) gmEdItem(ctx context.Context, gmPlayer *Player, args []stri
 		}
 	}
 
+	// An ordinal ("4 ancient scroll", "second scroll", "3rd scroll") picks the
+	// Nth match in the order listed below instead of the default last one.
+	hasOrdinal := false
+	ordinal := 0
+	if clean, ord := parseOrdinal(itemTarget); clean != itemTarget {
+		itemTarget, ordinal, hasOrdinal = clean, ord, true
+	}
+
 	// --- locate the item in the target's slots ---
 	type itemRef struct {
 		item    *InventoryItem
@@ -3705,6 +3714,11 @@ func (e *GameEngine) gmEdItem(ctx context.Context, gmPlayer *Player, args []stri
 
 	if target.Wielded != nil && e.gmItemMatchesTarget(target.Wielded, itemTarget) {
 		found = append(found, itemRef{item: target.Wielded, label: "WIELDING"})
+	}
+	// Same order as INVENTORY lists them (wielded, off-hand, worn, carried), so
+	// an ordinal counts the way the GM sees it there.
+	if target.OffHand != nil && e.gmItemMatchesTarget(target.OffHand, itemTarget) {
+		found = append(found, itemRef{item: target.OffHand, label: "OFF-HAND"})
 	}
 	for i := range target.Worn {
 		if e.gmItemMatchesTarget(&target.Worn[i], itemTarget) {
@@ -3761,8 +3775,16 @@ func (e *GameEngine) gmEdItem(ctx context.Context, gmPlayer *Player, args []stri
 			break
 		}
 	}
+	if hasOrdinal {
+		if ordinal >= len(found) {
+			return &CommandResult{Messages: []string{
+				fmt.Sprintf("Only %d item(s) matching '%s' found in %s's inventory.", len(found), itemTarget, target.FirstName),
+			}}
+		}
+		chosen = ordinal
+	}
 	var warnMsgs []string
-	if len(found) > 1 {
+	if len(found) > 1 && !hasOrdinal {
 		warnMsgs = append(warnMsgs, fmt.Sprintf("Warning: %d items match '%s' — editing the one marked with *:", len(found), itemTarget))
 		for i, f := range found {
 			mark := " "
