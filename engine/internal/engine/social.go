@@ -444,6 +444,7 @@ func (e *GameEngine) doFollow(player *Player, args []string) *CommandResult {
 	if found == nil {
 		return &CommandResult{Messages: []string{"They are not here."}}
 	}
+	e.clearStaleFollowing(player)
 	if player.Following != "" {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You are already following %s.", e.displayNameForOnlinePlayer(player.Following))}}
 	}
@@ -476,6 +477,7 @@ func (e *GameEngine) doHold(player *Player, found *Player) *CommandResult {
 	if e.isAvoiding(player.FirstName, found) {
 		return avoidBlockMessage(found.FirstName)
 	}
+	e.clearStaleFollowing(found)
 	if found.Following != "" {
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is already following someone.", found.DisplayName())}}
 	}
@@ -684,6 +686,45 @@ func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, ori
 	return moved
 }
 
+// disbandGroup breaks up leader's group: every online member's Following is
+// cleared (and they're sent notice, if non-empty) before the leader's member
+// list goes. Clearing only the leader's side — as the script DISBAND once did —
+// left members still pointing at a leader who no longer listed them, so they
+// couldn't be HELD or FOLLOW anyone until they typed LEAVE.
+func (e *GameEngine) disbandGroup(leader *Player, notice string) {
+	if e.sessions != nil {
+		for _, memberName := range leader.GroupMembers {
+			p := e.findOnlinePlayerByName(memberName)
+			if p == nil || p.Following != leader.FirstName {
+				continue
+			}
+			p.Following = ""
+			if notice != "" && e.sendToPlayer != nil {
+				e.sendToPlayer(p.FirstName, []string{notice})
+			}
+		}
+	}
+	leader.GroupMembers = nil
+	leader.IsGroupLeader = false
+}
+
+// clearStaleFollowing drops p.Following when the leader it names is offline
+// or no longer lists p as a member, so a group broken out from under p
+// doesn't keep blocking HOLD and FOLLOW.
+func (e *GameEngine) clearStaleFollowing(p *Player) {
+	if p.Following == "" || e.sessions == nil {
+		return
+	}
+	if leader := e.findOnlinePlayerByName(p.Following); leader != nil {
+		for _, m := range leader.GroupMembers {
+			if m == p.FirstName {
+				return
+			}
+		}
+	}
+	p.Following = ""
+}
+
 // doLeave handles the LEAVE command — stop following.
 func (e *GameEngine) doLeave(player *Player) *CommandResult {
 	if player.Following == "" {
@@ -706,22 +747,7 @@ func (e *GameEngine) doDisband(player *Player) *CommandResult {
 	if !player.IsGroupLeader || len(player.GroupMembers) == 0 {
 		return &CommandResult{Messages: []string{"You don't have a group to disband."}}
 	}
-	// Clear Following on all members
-	if e.sessions != nil {
-		for _, memberName := range player.GroupMembers {
-			for _, p := range e.sessions.OnlinePlayers() {
-				if p.FirstName == memberName {
-					p.Following = ""
-					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s disbands the group.", player.DisplayName())})
-					}
-					break
-				}
-			}
-		}
-	}
-	player.GroupMembers = nil
-	player.IsGroupLeader = false
+	e.disbandGroup(player, fmt.Sprintf("%s disbands the group.", player.DisplayName()))
 	return &CommandResult{
 		Messages:      []string{fmt.Sprintf("You disband your group.")},
 		RoomBroadcast: []string{fmt.Sprintf("%s disbands their group.", player.DisplayName())},
@@ -1345,21 +1371,7 @@ func (e *GameEngine) HandlePlayerDisconnect(player *Player) {
 	e.clearPlayerFromGuards(player.FirstName)
 
 	if player.IsGroupLeader && len(player.GroupMembers) > 0 {
-		if e.sessions != nil {
-			for _, memberName := range player.GroupMembers {
-				for _, p := range e.sessions.OnlinePlayers() {
-					if p.FirstName == memberName {
-						p.Following = ""
-						if e.sendToPlayer != nil {
-							e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("%s has left the Realms. The group is disbanded.", player.DisplayName())})
-						}
-						break
-					}
-				}
-			}
-		}
-		player.GroupMembers = nil
-		player.IsGroupLeader = false
+		e.disbandGroup(player, fmt.Sprintf("%s has left the Realms. The group is disbanded.", player.DisplayName()))
 	} else if player.Following != "" {
 		leaderName := player.Following
 		player.Following = ""

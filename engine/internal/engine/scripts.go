@@ -1046,13 +1046,32 @@ func (sc *ScriptContext) doNewItem(args []string) {
 	}
 }
 
-// doDisband removes the player from their current group (used in scripted portals like the carriage).
+// doDisband removes the player from their current group (used in scripted
+// portals like the carriage, or SALICAE.SCR's pay-to-enter forge arch, so each
+// member has to get through on their own). Both sides of each link are cleared:
+// a leader's members stop following them, and a follower comes off their
+// leader's member list — otherwise the halves disagree and the follower is
+// stuck "already following someone" with no group.
 func (sc *ScriptContext) doDisband() {
-	if sc.Player.IsGroupLeader && len(sc.Player.GroupMembers) > 0 {
-		sc.Player.GroupMembers = nil
-		sc.Player.IsGroupLeader = false
-	} else if sc.Player.Following != "" {
-		sc.Player.Following = ""
+	p := sc.Player
+	if sc.Engine == nil {
+		p.GroupMembers = nil
+		p.IsGroupLeader = false
+		p.Following = ""
+		return
+	}
+	if len(p.GroupMembers) > 0 {
+		sc.Engine.disbandGroup(p, fmt.Sprintf("You are no longer following %s.", p.DisplayName()))
+		sc.Messages = append(sc.Messages, "Your group is disbanded.")
+	}
+	p.IsGroupLeader = false
+	if p.Following != "" {
+		leaderName := p.Following
+		sc.Engine.removeFromGroup(p)
+		sc.Messages = append(sc.Messages, fmt.Sprintf("You are no longer following %s.", sc.Engine.displayNameForOnlinePlayer(leaderName)))
+		if sc.Engine.sendToPlayer != nil {
+			sc.Engine.sendToPlayer(leaderName, []string{fmt.Sprintf("%s is no longer in your group.", p.DisplayName())})
+		}
 	}
 }
 
