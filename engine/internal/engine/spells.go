@@ -125,6 +125,8 @@ func init() {
 		{ID: 304, Name: "Turn Undead III", School: "Necromancy", Level: 16, ManaCost: 18, CastTime: 3, Effect: "damage", DmgMin: 20, DmgMax: 60, DmgType: ""},
 		{ID: 303, Name: "Cure Poison", School: "Necromancy", Level: 11, ManaCost: 12, CastTime: 3, Effect: "utility"},
 		{ID: 319, Name: "Cure Disease", School: "Necromancy", Level: 12, ManaCost: 14, CastTime: 3, Effect: "utility"},
+		{ID: 320, Name: "Contagion", School: "Necromancy", Level: 23, ManaCost: 23, CastTime: 4, Effect: "utility"}, // disease level = Spellcraft rank, cap 50 (castAfflictionSpell)
+		{ID: 321, Name: "Poison", School: "Necromancy", Level: 17, ManaCost: 17, CastTime: 4, Effect: "utility"},    // poison level = Spellcraft rank, cap 50 (castAfflictionSpell)
 		{ID: 313, Name: "Body Destruction I", School: "Necromancy", Level: 1, ManaCost: 3, CastTime: 3, Effect: "damage", DmgMin: 3, DmgMax: 10, DmgType: ""},
 		{ID: 314, Name: "Body Destruction II", School: "Necromancy", Level: 5, ManaCost: 7, CastTime: 3, Effect: "damage", DmgMin: 6, DmgMax: 20, DmgType: ""},
 		{ID: 315, Name: "Body Destruction III", School: "Necromancy", Level: 10, ManaCost: 14, CastTime: 3, Effect: "damage", DmgMin: 12, DmgMax: 35, DmgType: ""},
@@ -1148,6 +1150,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castPlantSnareSpell(player, spell, args)
 		case 522: // Insect Swarm
 			result = e.castInsectSwarmSpell(player, spell, args, castRoll, castChance)
+		case 320, 321: // Contagion, Poison
+			result = e.castAfflictionSpell(player, afflictionForSpell(spell.ID), args, castRoll, castChance)
 		case 501: // Call Storm
 			result = e.castCallStormSpell(player, spell)
 		case 502: // Disperse Storm

@@ -3066,6 +3066,14 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s!", player.DisplayName()))
 		return
 	}
+	if a := afflictionForSpell(spell.ID); a != nil {
+		// Poisoned drinks, tarantula bites and wild-magic items (CHASSO.SCR, SHANTA.SCR, ICE.SCR).
+		if afflictPlayer(player, a, a.itemLevel) {
+			sc.Messages = append(sc.Messages, fmt.Sprintf("You are %s!", a.adj))
+			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s is %s!", player.DisplayName(), a.adj))
+		}
+		return
+	}
 	switch spell.Effect {
 	case "heal":
 		healMin, healMax := spell.HealMin, spell.HealMax

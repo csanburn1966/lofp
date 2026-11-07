@@ -29,6 +29,7 @@ func (e *GameEngine) StartRegenCycle() {
 		defer ticker.Stop()
 		for range ticker.C {
 			e.regenTick()
+			e.monsterAfflictionTick()
 		}
 	}()
 }
@@ -140,38 +141,11 @@ func (e *GameEngine) regenTick() {
 			changed = true
 		}
 
-		// Poison damage — Mist Form / Slime Form take no damage from anything, including DOTs.
-		if p.Poisoned && !died && !p.IsFormLocked() {
-			lvl := p.PoisonLevel
-			if lvl < 1 {
-				lvl = 1
-			}
-			if wasUnconsciousAtZero {
-				died = true
-				changed = true
-				if e.sendToPlayer != nil {
-					e.sendToPlayer(p.FirstName, e.handlePlayerDeath(p, "poison"))
-				}
-			} else {
-				p.BodyPoints -= lvl
-				if p.BodyPoints <= 0 {
-					p.BodyPoints = 0
-					p.Unconscious = true
-					p.Position = 2
-					changed = true
-					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{
-							fmt.Sprintf("The poison courses through your veins! [-%d BP, %d/%d]", lvl, p.BodyPoints, p.MaxBodyPoints),
-							"You collapse, unconscious!",
-						})
-					}
-				} else {
-					changed = true
-					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("The poison courses through your veins! [-%d BP, %d/%d]", lvl, p.BodyPoints, p.MaxBodyPoints)})
-					}
-				}
-			}
+		// Poison damage — a level L poison does L the first minute, then one less
+		// each minute, until it wears off (see affliction.go).
+		if !died {
+			d, c := e.playerAfflictionTick(p, poisonAffliction, wasUnconsciousAtZero)
+			died, changed = d, changed || c
 		}
 
 		// A wound left bleeding from before the player stopped being able to bleed
@@ -223,38 +197,10 @@ func (e *GameEngine) regenTick() {
 			}
 		}
 
-		// Disease damage — Mist Form / Slime Form immune.
-		if p.Diseased && !died && !p.IsFormLocked() {
-			lvl := p.DiseaseLevel
-			if lvl < 1 {
-				lvl = 1
-			}
-			if wasUnconsciousAtZero {
-				died = true
-				changed = true
-				if e.sendToPlayer != nil {
-					e.sendToPlayer(p.FirstName, e.handlePlayerDeath(p, "disease"))
-				}
-			} else {
-				p.BodyPoints -= lvl
-				if p.BodyPoints <= 0 {
-					p.BodyPoints = 0
-					p.Unconscious = true
-					p.Position = 2
-					changed = true
-					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{
-							fmt.Sprintf("The sickness ravages your body! [-%d BP, %d/%d]", lvl, p.BodyPoints, p.MaxBodyPoints),
-							"You collapse, unconscious!",
-						})
-					}
-				} else {
-					changed = true
-					if e.sendToPlayer != nil {
-						e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("The sickness ravages your body! [-%d BP, %d/%d]", lvl, p.BodyPoints, p.MaxBodyPoints)})
-					}
-				}
-			}
+		// Disease damage — decays like poison (affliction.go).
+		if !died {
+			d, c := e.playerAfflictionTick(p, diseaseAffliction, wasUnconsciousAtZero)
+			died, changed = d, changed || c
 		}
 
 		if died {

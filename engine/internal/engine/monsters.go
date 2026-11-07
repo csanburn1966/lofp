@@ -89,6 +89,12 @@ type MonsterInstance struct {
 	Swarmed            bool      `json:"-"` // Insect Swarm: cannot wander or flee, can still fight, bitten every 5s (swarm.go)
 	SwarmExpiry        time.Time `json:"-"`
 	SwarmCasterName    string    `json:"-"` // player who cast Insect Swarm, for death XP attribution on the bite tick
+	Poisoned           bool      `json:"-"` // poisoned by a weapon or Poison (321); ticks once a minute (poison.go)
+	PoisonLevel        int       `json:"-"` // damage on the next tick; drops by 1 each minute until it wears off
+	PoisonCasterName   string    `json:"-"` // player who poisoned it, for death XP attribution on the poison tick
+	Diseased           bool      `json:"-"` // diseased by Contagion (320); ticks and decays like poison
+	DiseaseLevel       int       `json:"-"`
+	DiseaseCasterName  string    `json:"-"` // player who diseased it, for death XP attribution
 
 	// Monster spellcasting (SPELLUSE/SPELL/MANA) and special attacks (SPECUSE/SPECUSES).
 	// CurrentMana is seeded from def.Mana at spawn and never regenerates (per GMSCRIPT.DOC,

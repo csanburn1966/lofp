@@ -999,14 +999,14 @@ func (e *GameEngine) doHealth(player *Player) *CommandResult {
 		if lvl < 1 {
 			lvl = 1
 		}
-		msgs = append(msgs, fmt.Sprintf("You are suffering from poison at a rate of %d/minute.", lvl))
+		msgs = append(msgs, fmt.Sprintf("You are currently suffering from poison (level %d).", lvl))
 	}
 	if player.Diseased {
 		lvl := player.DiseaseLevel
 		if lvl < 1 {
 			lvl = 1
 		}
-		msgs = append(msgs, fmt.Sprintf("You are suffering from disease at a rate of %d/minute.", lvl))
+		msgs = append(msgs, fmt.Sprintf("You are currently suffering from disease (level %d).", lvl))
 	}
 	if len(player.Wounds) > 0 {
 		msgs = append(msgs, "You have "+buildWoundSentence(player.Wounds, "")+".")
@@ -1916,26 +1916,15 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 
 	var msgs []string
 	physicalHarm := false
-	// Undead lack an active life force for poison to act on (GMSCRIPT.DOC immunity
-	// #7, "life affecting") — mirrors the !player.IsUndead() exemptions in combat.go.
-	poisonImmune := player.IsUndead()
+	// poisonPlayer skips the undead, who lack an active life force for poison to
+	// act on (GMSCRIPT.DOC immunity #7, "life affecting").
 	switch {
 	case trapType == 1: // Needle, minor poison
 		msgs = append(msgs, "A needle springs out and pricks your finger!")
-		if !poisonImmune {
-			player.Poisoned = true
-			if 1 > player.PoisonLevel {
-				player.PoisonLevel = 1
-			}
-		}
+		poisonPlayer(player, 1)
 	case trapType == 2: // Gas, minor poison
 		msgs = append(msgs, "A cloud of noxious gas billows out!")
-		if !poisonImmune {
-			player.Poisoned = true
-			if 1 > player.PoisonLevel {
-				player.PoisonLevel = 1
-			}
-		}
+		poisonPlayer(player, 1)
 	case trapType == 3: // Acid
 		dmg := formDamageReduction(player, 10+rand.Intn(15))
 		player.BodyPoints -= dmg
@@ -1954,20 +1943,10 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 		physicalHarm = true
 	case trapType == 5: // Needle, moderate poison
 		msgs = append(msgs, "A poison-coated needle jabs into your hand!")
-		if !poisonImmune {
-			player.Poisoned = true
-			if 2 > player.PoisonLevel {
-				player.PoisonLevel = 2
-			}
-		}
+		poisonPlayer(player, 2)
 	case trapType == 7: // Needle, major poison
 		msgs = append(msgs, "A large needle drives deep into your finger, delivering a potent venom!")
-		if !poisonImmune {
-			player.Poisoned = true
-			if 3 > player.PoisonLevel {
-				player.PoisonLevel = 3
-			}
-		}
+		poisonPlayer(player, 3)
 	case trapType == 8: // Explosive
 		dmg := formDamageReduction(player, 30+rand.Intn(30))
 		player.BodyPoints -= dmg
@@ -1986,12 +1965,7 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 		physicalHarm = true
 	case trapType == 12: // Gas, moderate poison
 		msgs = append(msgs, "A thick cloud of poisonous gas engulfs you!")
-		if !poisonImmune {
-			player.Poisoned = true
-			if 2 > player.PoisonLevel {
-				player.PoisonLevel = 2
-			}
-		}
+		poisonPlayer(player, 2)
 	case trapType == 13: // Black needle, lethal
 		dmg := formDamageReduction(player, 40+rand.Intn(30))
 		player.BodyPoints -= dmg
@@ -1999,12 +1973,7 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 			player.BodyPoints = 0
 		}
 		msgs = append(msgs, fmt.Sprintf("A black needle strikes you, delivering a lethal toxin! [%d Damage]", dmg))
-		if !poisonImmune {
-			player.Poisoned = true
-			if 5 > player.PoisonLevel {
-				player.PoisonLevel = 5
-			}
-		}
+		poisonPlayer(player, 5)
 		physicalHarm = true
 	case trapType >= 1000: // Glyph traps (spell-based)
 		spellDmg := 20 + rand.Intn(40)

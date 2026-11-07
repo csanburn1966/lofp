@@ -1702,8 +1702,10 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 			msgs = append(msgs, fmt.Sprintf("The %s wakes up, startled!", name))
 		}
 
-		// Weapon poison — no effect on undead (RACE 22), which lack a life force for it to act on.
-		if poisonLvl := weaponPoisonLevel(player.Wielded); poisonLvl > 0 && !killed && def.Race != 22 {
+		// Weapon poison — no effect on undead (RACE 22) or anything else immune to
+		// life-affecting magic (monsterAfflictionLevel).
+		if poisonLvl := monsterAfflictionLevel(def, weaponPoisonLevel(player.Wielded)); poisonLvl > 0 && !killed {
+			e.poisonMonster(inst.ID, poisonLvl, player.FirstName)
 			msgs = append(msgs, " Your weapon delivers its venom!")
 		}
 
@@ -1947,8 +1949,9 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 				result.Messages = append(result.Messages, fmt.Sprintf(" The %s wakes up, startled!", name))
 			}
 
-			// Weapon poison (off-hand) — no effect on undead (RACE 22).
-			if ohPoisonLvl := weaponPoisonLevel(player.OffHand); ohPoisonLvl > 0 && !ohKilled && def.Race != 22 {
+			// Weapon poison (off-hand) — same immunities as the main hand.
+			if ohPoisonLvl := monsterAfflictionLevel(def, weaponPoisonLevel(player.OffHand)); ohPoisonLvl > 0 && !ohKilled {
+				e.poisonMonster(inst.ID, ohPoisonLvl, player.FirstName)
 				result.Messages = append(result.Messages, " Your weapon delivers its venom!")
 			}
 
@@ -2412,17 +2415,11 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 		// life force — mirrors the !player.IsUndead() bleeding exemption in wounds.go.
 		if !player.IsUndead() {
 			if def.PoisonChance > 0 && rand.Intn(100) < def.PoisonChance {
-				player.Poisoned = true
-				if 1 > player.PoisonLevel {
-					player.PoisonLevel = 1
-				}
+				poisonPlayer(player, max(def.PoisonLevel, 1))
 				playerMsgs = append(playerMsgs, " You feel poison coursing through your veins!")
 			}
 			if def.DiseaseChance > 0 && rand.Intn(100) < def.DiseaseChance {
-				player.Diseased = true
-				if 1 > player.DiseaseLevel {
-					player.DiseaseLevel = 1
-				}
+				diseasePlayer(player, max(def.DiseaseLevel, 1))
 				playerMsgs = append(playerMsgs, " You feel a sickness taking hold!")
 			}
 		}
@@ -2927,6 +2924,18 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 		roomMsgs = append(roomMsgs, fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s!", target.DisplayName()))
 		playerMsgs = append(playerMsgs, gestureMsg, "Insects suddenly boil up from the ground and swarm over you!")
 		return playerMsgs, roomMsgs, target
+	}
+
+	// Poison (321) and Contagion (320) afflict the target rather than striking once;
+	// the damage comes from the once-a-minute tick. Spell Shield can still turn them.
+	if a := afflictionForSpell(spellID); a != nil {
+		if resist := spellShieldResistBonus(target); resist > 0 && rand.Intn(100) < resist {
+			roomMsgs = append(roomMsgs, fmt.Sprintf("An antimagical field around %s deflects the spell!", target.DisplayName()))
+			playerMsgs = append(playerMsgs, gestureMsg, "Your antimagical field flares and deflects the spell!")
+			return playerMsgs, roomMsgs, target
+		}
+		pMsgs, rMsgs := e.resolveMonsterAfflictionCast(def, a, target, gestureMsg)
+		return append(playerMsgs, pMsgs...), append(roomMsgs, rMsgs...), target
 	}
 
 	// hitFlavor is the actual "X hurls a bolt of lightning at Y!" line — mirrors the
