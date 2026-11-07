@@ -1,5 +1,30 @@
 # Changelog
 
+## v15.9.0 — 2026-11-07
+
+Poison and disease now wear off the way they did in the original game, getting weaker each minute until they’re gone. Necromancers get two new spells, Poison and Contagion, and poisoned weapons finally hurt monsters. GMs can act while dead, and a summoned creature told to speak no longer gives away its master.
+
+### Changed: Poison and Disease Wear Off
+- A poison or disease now does its level in damage the first minute, then one less each minute, until it wears off: a level 20 poison does 20, then 19, then 18, and is gone after 20 minutes. “The poison leaves you.” / “The disease leaves you.” Before, they lasted until someone cured them
+- A new poison or disease only replaces the one you already have if it’s stronger
+- Creatures that poison or sicken with their attacks now do it at their full strength. Before, every one of them did it at level 1
+- The poison tick now reads “Poison burns in your veins.”, as in the original game, and `HEALTH` shows the current level: “You are currently suffering from poison (level 9).”
+
+### New: Poison and Contagion
+- Poison (spell 321, Necromancy level 17) poisons a creature, and Contagion (spell 320, Necromancy level 23) infects it with disease. Both get stronger with your Spellcraft skill, up to level 50
+- The creature takes damage every minute until the poison or disease wears off, and if it kills the creature, you get the experience
+- Undead and creatures without a normal life force can’t be poisoned or diseased
+- Monsters that know these spells now cast them, and so do the items and traps that use them. Cure Poison and Cure Disease still cure them
+
+### Changed: Poisoned Weapons
+- A poisoned weapon now poisons the monster it hits, at the weapon’s poison level. Before, you only saw “Your weapon delivers its venom!” and nothing happened
+
+### Changed: GMs While Dead
+- GM characters can now use any command while dead, unconscious or stunned
+
+### Changed: COMMAND SAY
+- When you tell a summoned or controlled creature to `COMMAND SAY` something, the people around you hear only the creature, not you ordering it to speak. Every other `COMMAND` still shows your order
+
 ## v15.8.0 — 2026-11-06
 
 Necromancers get Wail of the Banshee, a sonic scream that strikes every creature you’ve targeted at once. Insect Swarm now works as it did in the original game: the insects hold their victim in place and keep biting until they die off or are driven away. The meditation in the receding dimension works again.

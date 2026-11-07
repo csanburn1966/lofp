@@ -9,6 +9,50 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.9.0 &mdash; November 7, 2026</h2>
+            <p className="text-gray-400 mb-3">Poison and disease now wear off the way they did in the original game, getting weaker each minute until they&rsquo;re gone. Necromancers get two new spells, Poison and Contagion, and poisoned weapons finally hurt monsters. GMs can act while dead, and a summoned creature told to speak no longer gives away its master.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Poison and Disease Wear Off</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A poison or disease now does its level in damage the first minute, then one less each minute, until it wears off: a level 20 poison does 20, then 19, then 18, and is gone after 20 minutes. &ldquo;The poison leaves you.&rdquo; / &ldquo;The disease leaves you.&rdquo; Before, they lasted until someone cured them</li>
+                  <li>A new poison or disease only replaces the one you already have if it&rsquo;s stronger</li>
+                  <li>Creatures that poison or sicken with their attacks now do it at their full strength. Before, every one of them did it at level 1</li>
+                  <li>The poison tick now reads &ldquo;Poison burns in your veins.&rdquo;, as in the original game, and <code>HEALTH</code> shows the current level: &ldquo;You are currently suffering from poison (level 9).&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Poison and Contagion</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Poison (spell 321, Necromancy level 17) poisons a creature, and Contagion (spell 320, Necromancy level 23) infects it with disease. Both get stronger with your Spellcraft skill, up to level 50</li>
+                  <li>The creature takes damage every minute until the poison or disease wears off, and if it kills the creature, you get the experience</li>
+                  <li>Undead and creatures without a normal life force can&rsquo;t be poisoned or diseased</li>
+                  <li>Monsters that know these spells now cast them, and so do the items and traps that use them. Cure Poison and Cure Disease still cure them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Poisoned Weapons</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A poisoned weapon now poisons the monster it hits, at the weapon&rsquo;s poison level. Before, you only saw &ldquo;Your weapon delivers its venom!&rdquo; and nothing happened</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: GMs While Dead</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>GM characters can now use any command while dead, unconscious or stunned</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: COMMAND SAY</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When you tell a summoned or controlled creature to <code>COMMAND SAY</code> something, the people around you hear only the creature, not you ordering it to speak. Every other <code>COMMAND</code> still shows your order</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.8.0 &mdash; November 6, 2026</h2>
             <p className="text-gray-400 mb-3">Necromancers get Wail of the Banshee, a sonic scream that strikes every creature you&rsquo;ve targeted at once. Insect Swarm now works as it did in the original game: the insects hold their victim in place and keep biting until they die off or are driven away. The meditation in the receding dimension works again.</p>
 
