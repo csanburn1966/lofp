@@ -757,7 +757,7 @@ func (e *GameEngine) tendPlayer(ctx context.Context, healer, target *Player, tar
 	}
 
 	if isSelf {
-		msgs := []string{fmt.Sprintf("You tend to your %s, healing %d body points. [Round: 5 sec] [BP: %d/%d]", woundDesc, heal, target.BodyPoints, target.MaxBodyPoints)}
+		msgs := []string{fmt.Sprintf("You tend to your %s, healing %d body points. [BP: %d/%d]", woundDesc, heal, target.BodyPoints, target.MaxBodyPoints), fmt.Sprintf("[Round: %d sec]", firstAidRT)}
 		if wakeMsg != "" {
 			msgs = append(msgs, wakeMsg)
 		}
@@ -773,7 +773,7 @@ func (e *GameEngine) tendPlayer(ctx context.Context, healer, target *Player, tar
 		targetMsgs = append(targetMsgs, wakeMsg)
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You tend to %s's %s, healing %d body points.", targetName, woundDesc, heal)},
+		Messages:      []string{fmt.Sprintf("You tend to %s's %s, healing %d body points.", targetName, woundDesc, heal), fmt.Sprintf("[Round: %d sec]", firstAidRT)},
 		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.DisplayNameCap(), targetName)},
 		TargetName:    target.FirstName,
 		TargetMsg:     targetMsgs,
@@ -808,7 +808,7 @@ func (e *GameEngine) tendMonster(ctx context.Context, healer *Player, inst *Mons
 	e.SavePlayer(ctx, healer)
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You tend to %s's %s. [Round: 5 sec]", targetName, woundDesc)},
+		Messages:      []string{fmt.Sprintf("You tend to %s's %s.", targetName, woundDesc), fmt.Sprintf("[Round: %d sec]", firstAidRT)},
 		RoomBroadcast: []string{fmt.Sprintf("%s tends to %s's wounds.", healer.DisplayNameCap(), targetName)},
 		PlayerState:   healer,
 	}
