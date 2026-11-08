@@ -121,11 +121,12 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 		skillID      int
 		maxLevel     int
 		roomMaxLevel int
+		teacher      *Player // fellow player extending or providing this offer, if any
 	}
 	var offers []skillOffer
 	if room != nil {
 		for _, ts := range room.TrainingSkills {
-			offers = append(offers, skillOffer{ts.SkillID, ts.MaxLevel, ts.MaxLevel})
+			offers = append(offers, skillOffer{ts.SkillID, ts.MaxLevel, ts.MaxLevel, nil})
 		}
 	}
 
@@ -144,12 +145,13 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 						found = true
 						if p.TeachingLevel > offers[i].maxLevel {
 							offers[i].maxLevel = p.TeachingLevel
+							offers[i].teacher = p
 						}
 						break
 					}
 				}
 				if !found {
-					offers = append(offers, skillOffer{p.Teaching, p.TeachingLevel, 0})
+					offers = append(offers, skillOffer{p.Teaching, p.TeachingLevel, 0, p})
 				}
 			}
 			if p.TeachingSpell > 0 && spellTeacher == nil {
@@ -283,10 +285,19 @@ func (e *GameEngine) doTrainWithBP(ctx context.Context, player *Player, args []s
 		if rankMsg != "" {
 			msgs = append(msgs, rankMsg)
 		}
-		return &CommandResult{
+		result := &CommandResult{
 			Messages:    msgs,
 			PlayerState: player,
 		}
+		if !player.IsConcealed() {
+			// Ranks above the room's own cap come from the fellow player teaching.
+			if o.teacher != nil && currentLvl+1 > o.roomMaxLevel {
+				result.RoomBroadcast = []string{fmt.Sprintf("%s trains in %s with %s.", player.DisplayNameCap(), name, o.teacher.DisplayName())}
+			} else {
+				result.RoomBroadcast = []string{fmt.Sprintf("%s trains in %s.", player.DisplayNameCap(), name)}
+			}
+		}
+		return result
 	}
 	return &CommandResult{Messages: []string{"That skill is not available for training here."}}
 }
