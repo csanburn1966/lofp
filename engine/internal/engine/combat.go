@@ -4385,16 +4385,6 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 		return
 	}
 
-	// Waking up: skip one tick to stand, then resume
-	if inst.SleepStand {
-		inst.SleepStand = false
-		if e.localRoomBroadcast != nil {
-			name := FormatMonsterName(def, e.monAdjs)
-			e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The %s stands erect, looking furious!", strings.ToLower(name))})
-		}
-		return
-	}
-
 	// Webbed: cannot attack or flee
 	if inst.Webbed {
 		return
@@ -4413,6 +4403,19 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 	// Knocked down: cannot attack, move, or flee until KnockedDownExpiry passes
 	// (expired, with its "scrambles back to its feet" broadcast, above).
 	if inst.KnockedDown {
+		return
+	}
+
+	// Waking up: skip one tick to stand, then resume. Checked after the snares,
+	// stun and knockdown above so a monster woken while still webbed or
+	// entangled stays down until that wears off, rather than standing up in
+	// the webs.
+	if inst.SleepStand {
+		inst.SleepStand = false
+		if e.localRoomBroadcast != nil {
+			name := FormatMonsterName(def, e.monAdjs)
+			e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The %s stands erect, looking furious!", strings.ToLower(name))})
+		}
 		return
 	}
 
