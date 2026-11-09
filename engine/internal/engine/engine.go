@@ -615,7 +615,23 @@ func extractOriginalArgs(input string) string {
 const maxInputLength = 500
 
 // ProcessCommand parses and executes a player command.
-func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input string) *CommandResult {
+func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input string) (result *CommandResult) {
+	// Most XP sources outside combat (crafting, TEND, picking locks, script
+	// AWARD, ...) just add to Experience; catch them all here so build points
+	// and level update the moment the XP is earned, not at the next kill or
+	// STATUS/EXP.
+	xpBefore := player.Experience
+	defer func() {
+		if result == nil || player.Experience == xpBefore {
+			return
+		}
+		result.PlayerState = player
+		if msgs := e.applyXPChange(player); len(msgs) > 0 {
+			result.Messages = append(result.Messages, msgs...)
+			e.SavePlayer(ctx, player)
+		}
+	}()
+
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return &CommandResult{Messages: []string{"What would you like to do?"}}

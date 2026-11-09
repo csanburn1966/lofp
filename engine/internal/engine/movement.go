@@ -408,7 +408,12 @@ func (e *GameEngine) scheduleScriptSegments(player *Player, segments []ScriptSeg
 			}
 			// Run remaining steps; if another SETEVENT/CONTEVENT or PLREVENT/CONTPLREVENT
 			// pair is found, more segments are deferred (sc.DeferredSegments, chained below).
+			xpBefore := player.Experience
 			sc.execSteps(seg.Steps)
+			if player.Experience != xpBefore {
+				sc.Messages = append(sc.Messages, e.applyXPChange(player)...)
+				sc.NeedsSave = true
+			}
 			// Persist player state if modified (EQUAL) or moved (MOVE).
 			if sc.NeedsSave || sc.MoveTo > 0 {
 				e.SavePlayer(context.Background(), player)

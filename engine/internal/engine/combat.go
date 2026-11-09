@@ -66,6 +66,33 @@ func getXPPerBP(level int) int {
 	return 170000 + (level-135)*1600
 }
 
+// applyXPChange brings player's build points and level up to date with their
+// Experience and returns the "[+N build points! Total: M]" and level-up lines
+// for them, broadcasting a level-up to the room. Safe to call when nothing
+// changed: it returns nil. Kills call it directly; every other XP source
+// (crafting, TEND, picking locks, script AWARD, ...) is caught by
+// ProcessCommand and scheduleScriptSegments, which call it whenever a command
+// or deferred script segment changed Experience.
+func (e *GameEngine) applyXPChange(p *Player) []string {
+	oldBP := p.BuildPoints
+	leveledUp := recalcBuildPoints(p)
+	var msgs []string
+	if p.BuildPoints > oldBP {
+		msgs = append(msgs, fmt.Sprintf("[+%d build points! Total: %d]", p.BuildPoints-oldBP, p.BuildPoints))
+	}
+	if leveledUp {
+		// Stat bonuses (HP/Fatigue/Mana/Psi) are applied inside recalcBuildPoints
+		// itself — see its doc comment — so only messaging happens here.
+		msgs = append(msgs, fmt.Sprintf("Congratulations! You have advanced to level %d!", p.Level))
+		if e.roomBroadcast != nil && !p.Disguised {
+			e.roomBroadcast(p.RoomNumber, []string{
+				fmt.Sprintf("%s has advanced to level %d!", p.FirstName, p.Level),
+			})
+		}
+	}
+	return msgs
+}
+
 // buildPointsForLevel returns total build points at a given level.
 func buildPointsForLevel(level int) int {
 	return 20 + 10*level
@@ -3695,26 +3722,7 @@ func (e *GameEngine) handleMonsterDeath(recipients []*Player, inst *MonsterInsta
 		}
 
 		// Recalculate build points and check for level-up
-		oldBP := p.BuildPoints
-		leveledUp := recalcBuildPoints(p)
-		newBP := p.BuildPoints
-
-		var xpMsgs []string
-		xpMsgs = append(xpMsgs, fmt.Sprintf("[+%d experience]", xp))
-		if newBP > oldBP {
-			xpMsgs = append(xpMsgs, fmt.Sprintf("[+%d build points! Total: %d]", newBP-oldBP, newBP))
-		}
-
-		if leveledUp {
-			// Stat bonuses (HP/Fatigue/Mana/Psi) are applied inside recalcBuildPoints
-			// itself now — see its doc comment — so only messaging happens here.
-			xpMsgs = append(xpMsgs, fmt.Sprintf("Congratulations! You have advanced to level %d!", p.Level))
-			if e.roomBroadcast != nil && !p.Disguised {
-				e.roomBroadcast(p.RoomNumber, []string{
-					fmt.Sprintf("%s has advanced to level %d!", p.FirstName, p.Level),
-				})
-			}
-		}
+		xpMsgs := append([]string{fmt.Sprintf("[+%d experience]", xp)}, e.applyXPChange(p)...)
 
 		if e.sendToPlayer != nil {
 			e.sendToPlayer(p.FirstName, xpMsgs)
