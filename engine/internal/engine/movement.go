@@ -194,7 +194,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// Each follower's own room render. Everyone's RoomNumber was already
 	// updated above, so each follower's look (and the leader's) correctly
 	// shows the whole group and any summons as present.
-	e.sendFollowerLooks(ctx, player, movedFollowers, dest, result)
+	e.sendFollowerLooks(ctx, player, movedFollowers, dest, dirName, result)
 
 	result.OldRoomMsg = append(result.OldRoomMsg, summonOldMsgs...)
 	result.RoomBroadcast = append(result.RoomBroadcast, summonRoomMsgs...)
@@ -208,14 +208,15 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 }
 
 // sendFollowerLooks shows each group member who followed the leader
-// "You follow <leader>." and their new room, runs their IFENTRY scripts, and
+// "You follow <leader> <how>." (how: "east", "through an archway", "climbing
+// a pile of rubble") and their new room, runs their IFENTRY scripts, and
 // keeps them out of the leader's arrival broadcast — they arrived with the
 // group, so "Chandra's group arrives." is only for those already there.
-func (e *GameEngine) sendFollowerLooks(ctx context.Context, leader *Player, followers []*Player, dest *gameworld.Room, result *CommandResult) {
+func (e *GameEngine) sendFollowerLooks(ctx context.Context, leader *Player, followers []*Player, dest *gameworld.Room, how string, result *CommandResult) {
 	for _, p := range followers {
 		if e.sendToPlayer != nil {
 			followLook := e.doLook(p)
-			msgs := append([]string{fmt.Sprintf("You follow %s.", leader.DisplayName())}, followLook.Messages...)
+			msgs := append([]string{fmt.Sprintf("You follow %s %s.", leader.DisplayName(), how)}, followLook.Messages...)
 			e.sendToPlayer(p.FirstName, msgs)
 		}
 		e.applyEntryScripts(ctx, p, dest, &CommandResult{})
@@ -615,7 +616,7 @@ func (e *GameEngine) doGo(ctx context.Context, player *Player, args []string) *C
 			continue
 		}
 		if isPortal(itemDef.Type) {
-			return e.doGoPortal(ctx, player, room, &room.Items[i], itemDef)
+			return e.doGoPortal(ctx, player, room, &room.Items[i], itemDef, "GO")
 		}
 		// Non-portal item matched — run both IFPREVERB GO and IFVERB GO scripts.
 		// Copy ri so that a REMOVEITEM inside the first script (e.g. the secret-passage
@@ -764,7 +765,9 @@ func (e *GameEngine) runGoItemScripts(ctx context.Context, player *Player, room 
 	return result
 }
 
-func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef) *CommandResult {
+// verb is the command that took the portal ("GO" or "CLIMB"), for the
+// movement echoes and the followers' "You follow" line.
+func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef, verb string) *CommandResult {
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
@@ -938,11 +941,15 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	result.Items = lookResult.Items
 	result.OldRoom = originalRoom
 	// Concealed players (Invisible spell, @hide, @invis) move silently — no exit/entry echoes.
+	portalGoes, portalHow := "goes through "+portalName, "through "+portalName
+	if verb == "CLIMB" {
+		portalGoes, portalHow = "climbs "+portalName, "climbing "+portalName
+	}
 	if !player.IsConcealed() && len(movedFollowers) > 0 {
-		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group goes through %s.", player.DisplayNameCap(), portalName))
+		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group %s.", player.DisplayNameCap(), portalGoes))
 		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
 	} else if !player.IsConcealed() {
-		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s goes through %s.", player.DisplayNameCap(), portalName))
+		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s %s.", player.DisplayNameCap(), portalGoes))
 		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 	}
 
@@ -951,7 +958,7 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 
 	// Each follower's own room render (everyone's RoomNumber was already
 	// updated above, so it correctly shows the group).
-	e.sendFollowerLooks(ctx, player, movedFollowers, dest, result)
+	e.sendFollowerLooks(ctx, player, movedFollowers, dest, portalHow, result)
 
 	result.OldRoomMsg = append(result.OldRoomMsg, summonOldMsgs...)
 	result.RoomBroadcast = append(result.RoomBroadcast, summonRoomMsgs...)
@@ -1071,7 +1078,7 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 
 			// No CLIMB scripts fired — fall back to portal behavior (uses Val2)
 			if isPortal(itemDef.Type) {
-				return e.doGoPortal(ctx, player, room, &room.Items[i], itemDef)
+				return e.doGoPortal(ctx, player, room, &room.Items[i], itemDef, "CLIMB")
 			}
 
 			return &CommandResult{Messages: []string{"You can't climb that."}}
