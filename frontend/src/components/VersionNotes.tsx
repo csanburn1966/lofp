@@ -9,6 +9,58 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.9.1 &mdash; November 9, 2026</h2>
+            <p className="text-gray-400 mb-3">Groups no longer get stuck after a scripted portal breaks them up, and followers now see which way their leader went. Build points update the moment you earn experience, TEND shows its round time, a webbed creature stays down when woken, others see you train, and GMs can pick an item by number with <code>@editem</code>.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Groups Broken by a Portal</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When a portal that makes everyone go through on their own (like the forge arch in the ghoul city) breaks up a group, the group now breaks up cleanly. Before, a follower was left &ldquo;already following someone&rdquo; with no group, and couldn&rsquo;t be held or follow anyone until they typed <code>LEAVE</code></li>
+                  <li>Anyone still stuck this way is freed the next time someone tries to <code>HOLD</code> them, or they try to <code>FOLLOW</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Following</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Followers now see which way their leader went: &ldquo;You follow Moordread east.&rdquo;, &ldquo;You follow Moordread through a black archway.&rdquo; or &ldquo;You follow Moordread, climbing a pile of rubble.&rdquo; Before, it only said &ldquo;You follow Moordread.&rdquo;</li>
+                  <li>Climbing through something now shows &ldquo;Moordread climbs a pile of rubble.&rdquo; to the room, instead of &ldquo;goes through&rdquo;</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Build Points</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Build points and level now update as soon as you earn experience, from crafting, mining, healing, picking locks or anything else, with the same &ldquo;[+3 build points! Total: 33]&rdquo; and level-up messages a kill gives. Before, they only caught up at your next kill or when you checked <code>STATUS</code> or <code>EXP</code></li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: TEND Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>TEND</code> now shows its round time, e.g. &ldquo;[Round: 4 sec]&rdquo;. Tending another player showed none, and tending yourself or a creature always said 5 seconds, even when haste made it shorter</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Web and Sleep</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>A webbed creature that&rsquo;s woken by an attack stays down until the web wears off, then stands up. Before, it stood up while still caught in the web</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Training</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Others in the room now see when you train a skill: &ldquo;Cypress trains in Healing.&rdquo;, or &ldquo;Cypress trains in Healing with Moordread.&rdquo; when another player is teaching it</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM: @editem</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>@editem</code> can now pick one of several matching items by number: <code>@editem 4 ancient scroll val3 119</code>, or <code>fourth</code> or <code>4th</code>. It counts in the order <code>INVENTORY</code> lists them, and now also finds a shield or weapon in your off hand</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.9.0 &mdash; November 7, 2026</h2>
             <p className="text-gray-400 mb-3">Poison and disease now wear off the way they did in the original game, getting weaker each minute until they&rsquo;re gone. Necromancers get two new spells, Poison and Contagion, and poisoned weapons finally hurt monsters. GMs can act while dead, and a summoned creature told to speak no longer gives away its master.</p>
 

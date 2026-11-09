@@ -1,5 +1,32 @@
 # Changelog
 
+## v15.9.1 — 2026-11-09
+
+Groups no longer get stuck after a scripted portal breaks them up, and followers now see which way their leader went. Build points update the moment you earn experience, TEND shows its round time, a webbed creature stays down when woken, others see you train, and GMs can pick an item by number with `@editem`.
+
+### Fixed: Groups Broken by a Portal
+- When a portal that makes everyone go through on their own (like the forge arch in the ghoul city) breaks up a group, the group now breaks up cleanly. Before, a follower was left “already following someone” with no group, and couldn’t be held or follow anyone until they typed `LEAVE`
+- Anyone still stuck this way is freed the next time someone tries to `HOLD` them, or they try to `FOLLOW`
+
+### Changed: Following
+- Followers now see which way their leader went: “You follow Moordread east.”, “You follow Moordread through a black archway.” or “You follow Moordread, climbing a pile of rubble.” Before, it only said “You follow Moordread.”
+- Climbing through something now shows “Moordread climbs a pile of rubble.” to the room, instead of “goes through”
+
+### Fixed: Build Points
+- Build points and level now update as soon as you earn experience, from crafting, mining, healing, picking locks or anything else, with the same “[+3 build points! Total: 33]” and level-up messages a kill gives. Before, they only caught up at your next kill or when you checked `STATUS` or `EXP`
+
+### Fixed: TEND Round Time
+- `TEND` now shows its round time, e.g. “[Round: 4 sec]”. Tending another player showed none, and tending yourself or a creature always said 5 seconds, even when haste made it shorter
+
+### Fixed: Web and Sleep
+- A webbed creature that’s woken by an attack stays down until the web wears off, then stands up. Before, it stood up while still caught in the web
+
+### Changed: Training
+- Others in the room now see when you train a skill: “Cypress trains in Healing.”, or “Cypress trains in Healing with Moordread.” when another player is teaching it
+
+### GM: @editem
+- `@editem` can now pick one of several matching items by number: `@editem 4 ancient scroll val3 119`, or `fourth` or `4th`. It counts in the order `INVENTORY` lists them, and now also finds a shield or weapon in your off hand
+
 ## v15.9.0 — 2026-11-07
 
 Poison and disease now wear off the way they did in the original game, getting weaker each minute until they’re gone. Necromancers get two new spells, Poison and Contagion, and poisoned weapons finally hurt monsters. GMs can act while dead, and a summoned creature told to speak no longer gives away its master.
