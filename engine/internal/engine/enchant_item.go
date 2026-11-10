@@ -16,7 +16,7 @@ import (
 //  1. Rite of Preparation (412) cast at a blank spell-holding item (Val3 == 0)
 //     primes it: Val3 = itemPrimedVal3.
 //  2. Any spell cast at the primed item is bound into it instead of taking
-//     effect: Val3 = that spell's ID, Val2 = 0. The spell can come from memory,
+//     effect: Val3 = that spell's ID, Val2 = itemBoundVal2. The spell can come from memory,
 //     a chanted scroll, or another magic item — anything that sets PreparedSpell.
 //  3. Enchant an Item, prepared with a diamond, cast at the item outdoors during
 //     a storm, drains the caster's remaining mana into charges the same way
@@ -28,6 +28,10 @@ const (
 	// a spell. Negative so every existing "Val3 > 0 means it holds a spell" check
 	// keeps treating it as empty.
 	itemPrimedVal3 = -1
+	// itemBoundVal2 marks an item with a spell bound into it that Enchant an Item
+	// hasn't charged yet. Distinct from a drained item (Val2 == 0), so Charge Wand
+	// can refill a drained one but can't stand in for Enchant an Item.
+	itemBoundVal2 = -1
 )
 
 // Generic magic-item archetypes (ITEM1.SCR/ITEM2.SCR INUMBER 149-189: amulets,
@@ -146,7 +150,7 @@ func (e *GameEngine) tryImprintSpellIntoItem(player *Player, spell *SpellDef, ar
 	}
 
 	item.Val3 = spell.ID
-	item.Val2 = 0
+	item.Val2 = itemBoundVal2
 	msgs = append(msgs, fmt.Sprintf("The magic of %s swirls into %s and settles deep within it, waiting to be bound.", spell.Name, itemName))
 	roomMsgs = append(roomMsgs, fmt.Sprintf("Swirling magic sinks into %s and vanishes.", itemName))
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
@@ -190,7 +194,7 @@ func (e *GameEngine) castEnchantItemSpell(player *Player, spell *SpellDef, args 
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s must first be readied with the Rite of Preparation.", capitalize(itemName))}, TargetNotFound: true}
 	case item.Val3 == itemPrimedVal3:
 		return &CommandResult{Messages: []string{fmt.Sprintf("No spell has been cast into %s yet.", itemName)}, TargetNotFound: true}
-	case item.Val2 > 0:
+	case item.Val2 != itemBoundVal2:
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s is already enchanted.", capitalize(itemName))}, TargetNotFound: true}
 	}
 	storedSpell := FindSpellByID(item.Val3)

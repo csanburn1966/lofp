@@ -2148,6 +2148,7 @@ func isJewelryBeneficialSpell(sp SpellDef) bool {
 		403: true, // Mindlink (communication)
 		406: true, // Dispel Invisibility (targets others)
 		407: true, // Analyze Ore (crafting only)
+		412: true, // Rite of Preparation (Enchant an Item ritual, never held by items)
 		500: true, // Plant Snare
 	}
 	return !excluded[sp.ID]

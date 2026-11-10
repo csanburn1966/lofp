@@ -4939,6 +4939,29 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 		return &CommandResult{Messages: []string{"Charge what? Specify a wand, rod, or trinket you are holding."}, TargetNotFound: true}
 	}
 
+	// The item is checked before the reagent is consumed, so a TargetNotFound
+	// return (which refunds the mana and keeps the spell prepared) keeps the
+	// mandrake root too.
+	item, def := e.findMagicItemTarget(player, strings.Join(args, " "), false)
+	if item == nil {
+		return &CommandResult{Messages: []string{"You aren't holding or wearing that."}, TargetNotFound: true}
+	}
+
+	itemName := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Tail)
+
+	if item.Val3 <= 0 { // 0 = blank, itemPrimedVal3 = readied but no spell bound yet
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s holds no magical energy to recharge.", itemName)}}
+	}
+	// A freshly bound spell has to be charged by Enchant an Item; Charge Wand only
+	// refills an item that has already been enchanted.
+	if item.Val2 == itemBoundVal2 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s has not yet been enchanted, and cannot be charged until it is.", capitalize(itemName))}, TargetNotFound: true}
+	}
+	storedSpell := FindSpellByID(item.Val3)
+	if storedSpell == nil || storedSpell.ManaCost <= 0 {
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s's magic is beyond your comprehension.", itemName)}}
+	}
+
 	// Consume the reagent verified at PREPARE time (mirrors castEnchantmentSpell).
 	var reagentMsg, reagentRoomMsg string
 	if player.PreparedSpellReagentArch != 0 {
@@ -4958,21 +4981,6 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 		player.PreparedSpellReagentArch = 0
 		reagentMsg = spellReagentConsumeMessage(spell.ID)
 		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
-	}
-
-	item, def := e.findMagicItemTarget(player, strings.Join(args, " "), false)
-	if item == nil {
-		return &CommandResult{Messages: []string{"You aren't holding or wearing that."}, TargetNotFound: true}
-	}
-
-	itemName := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Tail)
-
-	if item.Val3 <= 0 { // 0 = blank, itemPrimedVal3 = readied but no spell bound yet
-		return &CommandResult{Messages: []string{fmt.Sprintf("%s holds no magical energy to recharge.", itemName)}}
-	}
-	storedSpell := FindSpellByID(item.Val3)
-	if storedSpell == nil || storedSpell.ManaCost <= 0 {
-		return &CommandResult{Messages: []string{fmt.Sprintf("%s's magic is beyond your comprehension.", itemName)}}
 	}
 
 	charges := (player.Mana + storedSpell.ManaCost - 1) / storedSpell.ManaCost // round up
@@ -6920,6 +6928,13 @@ func (e *GameEngine) castDetectMagic(player *Player, args []string) *CommandResu
 		}
 	}
 
+	if item.Val2 == itemBoundVal2 {
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("%s holds a spell, but its magic has not yet been awakened.", itemName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s.", player.DisplayName(), itemName)},
+		}
+	}
+
 	// Val3 = spell ID, Val2 = charges remaining. A spent item has the spell imprint
 	// but no charges — it shows a faint residual aura.
 	if item.Val2 == 0 {
@@ -7030,6 +7045,12 @@ func (e *GameEngine) castIdentifySpell(player *Player, args []string) *CommandRe
 		spellName = storedSpell.Name
 	}
 
+	if item.Val2 == itemBoundVal2 {
+		return &CommandResult{
+			Messages:      []string{gestureMsg, fmt.Sprintf("%s contains %s, but has not yet been enchanted -- it holds no charges.", capitalize(itemName), spellName)},
+			RoomBroadcast: []string{roomMsg},
+		}
+	}
 	if item.Val2 == 0 {
 		return &CommandResult{
 			Messages:      []string{gestureMsg, fmt.Sprintf("%s contains %s, but has been completely drained -- no charges remain.", itemName, spellName)},

@@ -2998,7 +2998,12 @@ func (sc *ScriptContext) doRoutine(args []string) {
 		itemNoun = sc.Engine.getItemNounName(sc.ItemDef)
 	}
 
-	// Val2 == 0 means exhausted; Val2 > 0 means charges remain.
+	// Val2 == 0 means exhausted; Val2 > 0 means charges remain; itemBoundVal2 means
+	// a spell is bound but Enchant an Item hasn't charged it yet.
+	if sc.ItemRef.Val2 == itemBoundVal2 {
+		sc.Messages = append(sc.Messages, fmt.Sprintf("The %s holds no magical energy.", itemNoun))
+		return
+	}
 	if sc.ItemRef.Val2 == 0 {
 		sc.Messages = append(sc.Messages, fmt.Sprintf("The %s holds no more magical power.", itemNoun))
 		return
