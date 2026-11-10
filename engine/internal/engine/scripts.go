@@ -2982,7 +2982,7 @@ func (sc *ScriptContext) doRoutine(args []string) {
 	}
 
 	spellID := sc.ItemRef.Val3
-	if spellID == 0 {
+	if spellID <= 0 { // 0 = blank, itemPrimedVal3 = readied for Enchant an Item but empty
 		sc.Messages = append(sc.Messages, "The item holds no magical energy.")
 		return
 	}

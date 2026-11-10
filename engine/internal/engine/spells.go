@@ -638,6 +638,8 @@ func spellReagentArch(spellID int) int {
 		return 512 // ghoul dust for Summon Spectral Warrior
 	case 243:
 		return 494 // mandrake root for Charge Wand
+	case enchantItemSpellID:
+		return 107 // diamond for Enchant an Item
 	}
 	return 0
 }
@@ -667,6 +669,8 @@ func spellReagentName(spellID int) string {
 		return "some ghoul dust"
 	case 243:
 		return "some mandrake root"
+	case enchantItemSpellID:
+		return "a diamond"
 	}
 	return ""
 }
@@ -747,6 +751,13 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 	}
 	if player.Mana < spell.ManaCost {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have enough mana. (%s costs %d, you have %d)", spell.Name, spell.ManaCost, player.Mana)}}
+	}
+	// Enchant an Item calls down a storm's lightning; checked again at CAST in
+	// case the weather changes or the caster moves in between.
+	if spell.ID == enchantItemSpellID {
+		if msg := e.enchantItemSkyBlocked(player); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
+		}
 	}
 
 	// Check reagent requirement
@@ -1089,7 +1100,17 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 
 	result := &CommandResult{}
 
-	switch spell.Effect {
+	// A spell cast at an item primed by Rite of Preparation is bound into it
+	// instead of taking effect (Enchant an Item step 2, see enchant_item.go).
+	effect := spell.Effect
+	imprint := e.tryImprintSpellIntoItem(player, spell, args)
+	if imprint != nil {
+		effect = "imprint"
+	}
+
+	switch effect {
+	case "imprint":
+		result = imprint
 	case "damage":
 		if spell.ID == 124 || spell.ID == 125 || spell.ID == 126 { // Inferno/Thunder/Ice Glyph — sigil spells, not direct-damage
 			result = e.castSigilSpell(player, spell, args)
@@ -1207,6 +1228,15 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castDispelLesserMagic(ctx, player, args)
 		case 243: // Charge Wand
 			result = e.castChargeWandSpell(player, spell, args)
+		case enchantItemSpellID: // Enchant an Item
+			result = e.castEnchantItemSpell(player, spell, args)
+		case ritePreparationSpellID: // Rite of Preparation at a blank magic item
+			if r := e.castRiteOfPreparationOnItem(player, args); r != nil {
+				result = r
+			} else {
+				result.Messages = []string{fmt.Sprintf("You gesture and cast %s.", spell.Name)}
+				result.RoomBroadcast = []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayNameCap(), spell.Name)}
+			}
 		case 233: // Disenchant
 			result = e.castDisenchantSpell(player, spell, args)
 		case temperingSpellID:
@@ -4937,7 +4967,7 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 
 	itemName := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Tail)
 
-	if item.Val3 == 0 {
+	if item.Val3 <= 0 { // 0 = blank, itemPrimedVal3 = readied but no spell bound yet
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s holds no magical energy to recharge.", itemName)}}
 	}
 	storedSpell := FindSpellByID(item.Val3)
@@ -6883,6 +6913,12 @@ func (e *GameEngine) castDetectMagic(player *Player, args []string) *CommandResu
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s.", player.DisplayName(), itemName)},
 		}
 	}
+	if item.Val3 == itemPrimedVal3 {
+		return &CommandResult{
+			Messages:      []string{fmt.Sprintf("%s shimmers faintly, hollow and waiting to receive a spell.", itemName)},
+			RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s.", player.DisplayName(), itemName)},
+		}
+	}
 
 	// Val3 = spell ID, Val2 = charges remaining. A spent item has the spell imprint
 	// but no charges — it shows a faint residual aura.
@@ -6978,6 +7014,12 @@ func (e *GameEngine) castIdentifySpell(player *Player, args []string) *CommandRe
 	if item.Val3 == 0 {
 		return &CommandResult{
 			Messages:      []string{gestureMsg, fmt.Sprintf("%s contains no spell.", itemName)},
+			RoomBroadcast: []string{roomMsg},
+		}
+	}
+	if item.Val3 == itemPrimedVal3 {
+		return &CommandResult{
+			Messages:      []string{gestureMsg, fmt.Sprintf("%s contains no spell, but has been prepared to receive one.", itemName)},
 			RoomBroadcast: []string{roomMsg},
 		}
 	}
