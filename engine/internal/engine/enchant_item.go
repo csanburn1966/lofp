@@ -78,6 +78,29 @@ func scriptBlockHasRoutine(b *gameworld.ScriptBlock) bool {
 	return false
 }
 
+// removeInventoryArch removes the first pack item of the given archetype,
+// reporting whether one was found. Removal shifts later pack items down a slot,
+// so callers holding a pointer into player.Inventory (findMagicItemTarget's
+// result) must finish writing through it before calling this.
+func removeInventoryArch(player *Player, arch int) bool {
+	for i, ii := range player.Inventory {
+		if ii.Archetype == arch {
+			player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+func hasInventoryArch(player *Player, arch int) bool {
+	for _, ii := range player.Inventory {
+		if ii.Archetype == arch {
+			return true
+		}
+	}
+	return false
+}
+
 // spellCanBeImprinted reports whether a spell can be bound into a primed item.
 // The three spells of the enchanting ritual itself can't.
 func spellCanBeImprinted(spellID int) bool {
@@ -130,6 +153,10 @@ func (e *GameEngine) tryImprintSpellIntoItem(player *Player, spell *SpellDef, ar
 	}
 	itemName := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Tail)
 
+	// Written before the reagent below is removed — see removeInventoryArch.
+	item.Val3 = spell.ID
+	item.Val2 = itemBoundVal2
+
 	msgs := []string{fmt.Sprintf("You gesture at %s.", itemName)}
 	roomMsgs := []string{fmt.Sprintf("%s gestures at %s.", player.DisplayNameCap(), itemName)}
 
@@ -137,20 +164,12 @@ func (e *GameEngine) tryImprintSpellIntoItem(player *Player, spell *SpellDef, ar
 	// imp toe, spriggan finger) is consumed by the binding instead.
 	if reqArch := player.PreparedSpellReagentArch; reqArch != 0 {
 		player.PreparedSpellReagentArch = 0
-		if !spellConsumesReagentAtPrepare(spell.ID) {
-			for i, ii := range player.Inventory {
-				if ii.Archetype == reqArch {
-					player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
-					msgs = append(msgs, spellReagentConsumeMessage(spell.ID))
-					roomMsgs = append(roomMsgs, spellReagentConsumeMessageRoom(spell.ID, player.DisplayName()))
-					break
-				}
-			}
+		if !spellConsumesReagentAtPrepare(spell.ID) && removeInventoryArch(player, reqArch) {
+			msgs = append(msgs, spellReagentConsumeMessage(spell.ID))
+			roomMsgs = append(roomMsgs, spellReagentConsumeMessageRoom(spell.ID, player.DisplayName()))
 		}
 	}
 
-	item.Val3 = spell.ID
-	item.Val2 = itemBoundVal2
 	msgs = append(msgs, fmt.Sprintf("The magic of %s swirls into %s and settles deep within it, waiting to be bound.", spell.Name, itemName))
 	roomMsgs = append(roomMsgs, fmt.Sprintf("Swirling magic sinks into %s and vanishes.", itemName))
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
@@ -202,20 +221,12 @@ func (e *GameEngine) castEnchantItemSpell(player *Player, spell *SpellDef, args 
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s's magic is beyond your comprehension.", capitalize(itemName))}}
 	}
 
-	// Consume the diamond verified at PREPARE time (mirrors castChargeWandSpell).
-	if reqArch := player.PreparedSpellReagentArch; reqArch != 0 {
-		player.PreparedSpellReagentArch = 0
-		consumed := false
-		for i, ii := range player.Inventory {
-			if ii.Archetype == reqArch {
-				player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
-				consumed = true
-				break
-			}
-		}
-		if !consumed {
-			return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
-		}
+	// The diamond verified at PREPARE time must still be here; it's removed only
+	// after the item is written (see removeInventoryArch).
+	reqArch := player.PreparedSpellReagentArch
+	player.PreparedSpellReagentArch = 0
+	if reqArch != 0 && !hasInventoryArch(player, reqArch) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
 	}
 
 	charges := (player.Mana + storedSpell.ManaCost - 1) / storedSpell.ManaCost // round up, as Charge Wand does
@@ -225,6 +236,9 @@ func (e *GameEngine) castEnchantItemSpell(player *Player, spell *SpellDef, args 
 	player.Mana = 0
 	player.Fatigue = 0
 	item.Val2 = charges
+	if reqArch != 0 {
+		removeInventoryArch(player, reqArch)
+	}
 
 	return &CommandResult{
 		Messages: []string{

@@ -4962,30 +4962,23 @@ func (e *GameEngine) castChargeWandSpell(player *Player, spell *SpellDef, args [
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s's magic is beyond your comprehension.", itemName)}}
 	}
 
-	// Consume the reagent verified at PREPARE time (mirrors castEnchantmentSpell).
+	// The reagent verified at PREPARE time must still be here; it's removed only
+	// after the item is written (see removeInventoryArch).
 	var reagentMsg, reagentRoomMsg string
-	if player.PreparedSpellReagentArch != 0 {
-		reqArch := player.PreparedSpellReagentArch
-		consumed := false
-		for i, ii := range player.Inventory {
-			if ii.Archetype == reqArch {
-				player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
-				consumed = true
-				break
-			}
-		}
-		if !consumed {
-			player.PreparedSpellReagentArch = 0
-			return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
-		}
-		player.PreparedSpellReagentArch = 0
-		reagentMsg = spellReagentConsumeMessage(spell.ID)
-		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
+	reqArch := player.PreparedSpellReagentArch
+	player.PreparedSpellReagentArch = 0
+	if reqArch != 0 && !hasInventoryArch(player, reqArch) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You no longer have the required reagent (%s). The spell fizzles.", spellReagentName(spell.ID))}}
 	}
 
 	charges := (player.Mana + storedSpell.ManaCost - 1) / storedSpell.ManaCost // round up
 	player.Mana = 0
 	item.Val2 += charges
+	if reqArch != 0 {
+		removeInventoryArch(player, reqArch)
+		reagentMsg = spellReagentConsumeMessage(spell.ID)
+		reagentRoomMsg = spellReagentConsumeMessageRoom(spell.ID, player.DisplayName())
+	}
 
 	msgs := []string{fmt.Sprintf("You grasp %s tightly and your hands are surrounded by a bright blue glow that flows into %s and you are left exhausted.", itemName, itemName)}
 	roomMsgs := []string{fmt.Sprintf("%s grasps %s tightly and %s hands are surrounded by a bright blue glow that flows into %s, leaving them looking exhausted.", player.DisplayNameCap(), itemName, player.Possessive(), itemName)}
@@ -6389,8 +6382,9 @@ func (e *GameEngine) castCharmSpell(player *Player, spell *SpellDef, args []stri
 	}
 }
 
-// findMagicItemTarget resolves an item name to a candidate item — checking inventory,
-// worn, wielded, off-hand, then (if includeRoom) room items in that order, respecting
+// findMagicItemTarget resolves an item name to a candidate item — checking wielded,
+// off-hand, worn, inventory (the order INVENTORY lists them in, so "2 wand" means the
+// second wand the player sees there), then (if includeRoom) room items, respecting
 // an ordinal prefix/suffix ("2nd wand") via parseOrdinal. Shared by Detect Magic (400)
 // and Identify (228), which only inspect an item's stored spell (Val3) and charges
 // (Val2) and so are happy to includeRoom=true (a room item is returned as a throwaway
@@ -6410,26 +6404,6 @@ func (e *GameEngine) findMagicItemTarget(player *Player, targetRaw string, inclu
 		return matchesTarget(e.getItemNounName(def), target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3))
 	}
 
-	for i := range player.Inventory {
-		if !matches(&player.Inventory[i]) {
-			continue
-		}
-		if skip > 0 {
-			skip--
-			continue
-		}
-		return &player.Inventory[i], e.items[player.Inventory[i].Archetype]
-	}
-	for i := range player.Worn {
-		if !matches(&player.Worn[i]) {
-			continue
-		}
-		if skip > 0 {
-			skip--
-			continue
-		}
-		return &player.Worn[i], e.items[player.Worn[i].Archetype]
-	}
 	if player.Wielded != nil && matches(player.Wielded) {
 		if skip > 0 {
 			skip--
@@ -6443,6 +6417,26 @@ func (e *GameEngine) findMagicItemTarget(player *Player, targetRaw string, inclu
 		} else {
 			return player.OffHand, e.items[player.OffHand.Archetype]
 		}
+	}
+	for i := range player.Worn {
+		if !matches(&player.Worn[i]) {
+			continue
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		return &player.Worn[i], e.items[player.Worn[i].Archetype]
+	}
+	for i := range player.Inventory {
+		if !matches(&player.Inventory[i]) {
+			continue
+		}
+		if skip > 0 {
+			skip--
+			continue
+		}
+		return &player.Inventory[i], e.items[player.Inventory[i].Archetype]
 	}
 	if !includeRoom {
 		return nil, nil
