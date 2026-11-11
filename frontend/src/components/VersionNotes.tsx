@@ -9,6 +9,45 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.10.0 &mdash; November 11, 2026</h2>
+            <p className="text-gray-400 mb-3">Enchanters can now make their own magic items. Enchant an Item (244) works at last: prepare a blank wand, rod, amulet, orb or other spell-holding item with Rite of Preparation, cast the spell you want into it, then call down a storm&rsquo;s lightning to charge it. Charge Wand no longer loses its mandrake root when you mistype the target, and picking the second of two wands by number now counts the way <code>INVENTORY</code> lists them.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Enchant an Item</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Works on blank amulets, idols, medallions, necklaces, orbs, pendants, rings, rods, talismans and wands. Unique items with their own scripted magic can&rsquo;t be enchanted</li>
+                  <li><strong>Step 1:</strong> <code>PREPARE 412</code> (Rite of Preparation) and <code>CAST</code> it at the blank item: &ldquo;A pale shimmer washes over an ivory wand and fades, leaving it hollow and waiting for a spell.&rdquo;</li>
+                  <li><strong>Step 2:</strong> prepare the spell you want the item to hold and <code>CAST</code> it at the item. Instead of taking effect, it&rsquo;s bound into the item. It can be a spell you know, a scroll you <code>CHANT</code>, or a spell from another magic item. Rite of Preparation, Charge Wand and Enchant an Item themselves can&rsquo;t be bound</li>
+                  <li><strong>Step 3:</strong> outdoors, during a thunderstorm, gale or hurricane, <code>PREPARE 244 WITH DIAMOND</code> and <code>CAST</code> it at the item. A bolt of lightning pours every last ounce of your magic into it: your remaining mana becomes charges (at least one), and you&rsquo;re left with no mana or fatigue. The diamond turns to dust</li>
+                  <li>Wait until your mana is full before step 3: the more you have left, the more charges the item gets</li>
+                  <li>A mistake costs nothing, and your spell stays prepared: the wrong item, an item already prepared or holding a spell, no storm, or not being outdoors</li>
+                  <li><code>IDENTIFY</code> and Detect Magic show when an item has been prepared, or holds a spell that hasn&rsquo;t been enchanted yet</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Charge Wand</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Charge Wand can only recharge an item that has been enchanted. It can&rsquo;t stand in for Enchant an Item on an item whose spell was just bound</li>
+                  <li>Mistyping the item no longer uses up your mandrake root. Before, the mana came back but the root was gone</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Picking a Magic Item by Number</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>CAST 2 WAND</code> with Charge Wand, Identify, Detect Magic, Rite of Preparation or Enchant an Item now counts in the order <code>INVENTORY</code> lists your things: hands first, then what you&rsquo;re wearing, then your pack. Before, it counted your pack first, so &ldquo;2 wand&rdquo; could mean the wand in your hand</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Treasure</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Magic jewelry found as treasure no longer holds Rite of Preparation</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.9.1 &mdash; November 9, 2026</h2>
             <p className="text-gray-400 mb-3">Groups no longer get stuck after a scripted portal breaks them up, and followers now see which way their leader went. Build points update the moment you earn experience, TEND shows its round time, a webbed creature stays down when woken, others see you train, and GMs can pick an item by number with <code>@editem</code>.</p>
 

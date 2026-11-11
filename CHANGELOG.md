@@ -1,5 +1,28 @@
 # Changelog
 
+## v15.10.0 — 2026-11-11
+
+Enchanters can now make their own magic items. Enchant an Item (244) works at last: prepare a blank wand, rod, amulet, orb or other spell-holding item with Rite of Preparation, cast the spell you want into it, then call down a storm's lightning to charge it. Charge Wand no longer loses its mandrake root when you mistype the target, and picking the second of two wands by number now counts the way `INVENTORY` lists them.
+
+### New: Enchant an Item
+- Works on blank amulets, idols, medallions, necklaces, orbs, pendants, rings, rods, talismans and wands. Unique items with their own scripted magic can’t be enchanted
+- **Step 1:** `PREPARE 412` (Rite of Preparation) and `CAST` it at the blank item: “A pale shimmer washes over an ivory wand and fades, leaving it hollow and waiting for a spell.”
+- **Step 2:** prepare the spell you want the item to hold and `CAST` it at the item. Instead of taking effect, it’s bound into the item. It can be a spell you know, a scroll you `CHANT`, or a spell from another magic item. Rite of Preparation, Charge Wand and Enchant an Item themselves can’t be bound
+- **Step 3:** outdoors, during a thunderstorm, gale or hurricane, `PREPARE 244 WITH DIAMOND` and `CAST` it at the item. A bolt of lightning pours every last ounce of your magic into it: your remaining mana becomes charges (at least one), and you’re left with no mana or fatigue. The diamond turns to dust
+- Wait until your mana is full before step 3: the more you have left, the more charges the item gets
+- A mistake costs nothing, and your spell stays prepared: the wrong item, an item already prepared or holding a spell, no storm, or not being outdoors
+- `IDENTIFY` and Detect Magic show when an item has been prepared, or holds a spell that hasn’t been enchanted yet
+
+### Changed: Charge Wand
+- Charge Wand can only recharge an item that has been enchanted. It can’t stand in for Enchant an Item on an item whose spell was just bound
+- Mistyping the item no longer uses up your mandrake root. Before, the mana came back but the root was gone
+
+### Changed: Picking a Magic Item by Number
+- `CAST 2 WAND` with Charge Wand, Identify, Detect Magic, Rite of Preparation or Enchant an Item now counts in the order `INVENTORY` lists your things: hands first, then what you’re wearing, then your pack. Before, it counted your pack first, so “2 wand” could mean the wand in your hand
+
+### Changed: Treasure
+- Magic jewelry found as treasure no longer holds Rite of Preparation
+
 ## v15.9.1 — 2026-11-09
 
 Groups no longer get stuck after a scripted portal breaks them up, and followers now see which way their leader went. Build points update the moment you earn experience, TEND shows its round time, a webbed creature stays down when woken, others see you train, and GMs can pick an item by number with `@editem`.
