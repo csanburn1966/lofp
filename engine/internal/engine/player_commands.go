@@ -737,6 +737,9 @@ func playerBPSpent(player *Player) int {
 			total += 4 * (rank - 1)
 		}
 	}
+	for _, rank := range player.PsiMastery {
+		total += psiMasteryTotalCost(rank)
+	}
 	// 8 BP for first specialization rank, 4 BP for each additional rank
 	for _, rank := range player.WeaponSpecialization {
 		if rank >= 1 {

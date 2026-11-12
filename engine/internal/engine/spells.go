@@ -274,7 +274,13 @@ func spellMasteryLevel(player *Player, spell *SpellDef) int {
 // Max ranks: spellLevel + 1.
 func (e *GameEngine) doMasterSpell(ctx context.Context, player *Player, args []string) *CommandResult {
 	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Master which spell? (MASTER <spell name or number>)"}}}
+		return &CommandResult{Messages: []string{"Master which spell or discipline? (MASTER <spell name or number>, MASTER PSI <discipline name or number>)"}}}
+
+	// MASTER PSI <discipline>: psionic mastery (psi_mastery.go).
+	switch strings.ToUpper(args[0]) {
+	case "PSI", "PSIONIC", "PSIONICS", "DISCIPLINE":
+		return e.doMasterPsi(ctx, player, strings.ToLower(strings.Join(args[1:], " ")))
+	}
 
 	// Resolve spell by number or name
 	query := strings.ToLower(strings.Join(args, " "))
@@ -291,6 +297,10 @@ func (e *GameEngine) doMasterSpell(ctx context.Context, player *Player, args []s
 		}
 	}
 	if spell == nil {
+		// Not one of the player's spells by name: try a psionic discipline.
+		if _, err := strconv.Atoi(query); err != nil && resolveKnownPsi(player, query) != nil {
+			return e.doMasterPsi(ctx, player, query)
+		}
 		return &CommandResult{Messages: []string{"You don't know that spell."}}
 	}
 	if !player.KnownSpells[spell.ID] {

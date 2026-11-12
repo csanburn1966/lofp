@@ -298,6 +298,7 @@ func (e *GameEngine) gmHelp() *CommandResult {
 		"@look <record#>        - Look inside a container",
 		"@lsk                   - List all skills with IDs",
 		"@mastery <plr> [sp [n]]- List/set spell mastery ranks for a player",
+		"@mastery <plr> psi <d> <n> - Set psionic mastery rank for a player",
 		"@lwho                  - Detailed player list with rooms",
 		"@mlist                 - List all spawned monsters",
 		"@monitor [room#|plr|off] - Relay all activity in a room (or the room a named online player is in) back to you as \"** \" lines; no args shows current status",
@@ -3079,17 +3080,26 @@ func (e *GameEngine) gmEds(ctx context.Context, args []string) *CommandResult {
 
 func (e *GameEngine) gmMastery(ctx context.Context, args []string) *CommandResult {
 	if len(args) < 1 {
-		return &CommandResult{Messages: []string{"Usage: @mastery <player> [<spell# or name> <level>]"}}
+		return &CommandResult{Messages: []string{"Usage: @mastery <player> [<spell# or name> <level>] | @mastery <player> psi <discipline# or name> <level>"}}
 	}
 	target, err := e.resolvePlayerArg(ctx, args)
 	if err != nil {
 		return &CommandResult{Messages: []string{err.Error()}}
 	}
 
+	// Psionic mastery: @mastery <player> psi <discipline# or name> <level>
+	if len(args) >= 2 && strings.EqualFold(args[1], "psi") {
+		return e.gmPsiMastery(ctx, target, args)
+	}
+
 	// List mode: @mastery <player>
 	if len(args) < 3 {
+		psiLines := psiMasteryListLines(target)
 		if len(target.SpellMastery) == 0 {
-			return &CommandResult{Messages: []string{fmt.Sprintf("%s has no spell mastery.", target.FullName())}}
+			if psiLines != nil {
+				return &CommandResult{Messages: append([]string{fmt.Sprintf("%s has no spell mastery.", target.FullName())}, psiLines...)}
+			}
+			return &CommandResult{Messages: []string{fmt.Sprintf("%s has no spell or psionic mastery.", target.FullName())}}
 		}
 		type mastEntry struct {
 			id      int
@@ -3114,7 +3124,7 @@ func (e *GameEngine) gmMastery(ctx context.Context, args []string) *CommandResul
 		for _, me := range entries {
 			msgs = append(msgs, fmt.Sprintf("  #%-4d %-35s rank %d / %d", me.id, me.name, me.rank, me.maxRank))
 		}
-		return &CommandResult{Messages: msgs}
+		return &CommandResult{Messages: append(msgs, psiLines...)}
 	}
 
 	// Set mode: @mastery <player> <spell# or name> <level>

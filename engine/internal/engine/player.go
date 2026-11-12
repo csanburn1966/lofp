@@ -544,6 +544,7 @@ type Player struct {
 	UnlearnLevel int `bson:"unlearnLevel,omitempty" json:"unlearnLevel,omitempty"`
 	KnownSpells  map[int]bool `bson:"knownSpells,omitempty" json:"knownSpells,omitempty"` // spell# -> known
 	SpellMastery map[int]int  `bson:"spellMastery,omitempty" json:"spellMastery,omitempty"` // spell# -> mastery rank
+	PsiMastery   map[int]int  `bson:"psiMastery,omitempty" json:"psiMastery,omitempty"`     // psi discipline ID -> mastery rank
 	WeaponSpecialization map[int]int `bson:"weaponSpecialization,omitempty" json:"weaponSpecialization,omitempty"` // weapon noun ID -> specialization rank
 
 	// Internal variables (INTNUM0-99, flags, etc.)

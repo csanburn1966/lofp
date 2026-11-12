@@ -1148,6 +1148,7 @@ var helpTopics = map[string][]string{
 		"",
 		"PSI [Discipline#]: Show current psi statistics, or ready a discipline",
 		"PROJECT <target>:  Direct a psionic discipline at a creature",
+		"MASTER PSI <discipline>: Attempt to master a discipline you already know",
 	},
 	"SPELLS": {
 		"Spells related commands:",

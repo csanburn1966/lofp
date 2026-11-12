@@ -172,15 +172,16 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandRe
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't know a discipline called '%s'.", input)}}
 	}
 
-	if player.Psi < disc.PsiCost {
-		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough psi points. (%s costs %d, you have %d)", disc.Name, disc.PsiCost, player.Psi)}}
+	psiCost := playerPsiCost(player, disc)
+	if player.Psi < psiCost {
+		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough psi points. (%s costs %d, you have %d)", disc.Name, psiCost, player.Psi)}}
 	}
 
 	committed = true
 
 	// Instantaneous powers that don't need a target activate immediately
 	if isMaintained {
-		player.Psi -= disc.PsiCost
+		player.Psi -= psiCost
 
 		// Speed (42) is the one maintained MoM buff with a real chance of failure —
 		// per the skill-check shape used elsewhere in this file (see doProjectPsi and
@@ -377,7 +378,11 @@ func (e *GameEngine) listPsiDisciplines(player *Player) *CommandResult {
 			schoolAbbr = "MoMnd"
 		}
 
-		msgs = append(msgs, fmt.Sprintf("%-4d %-25s %-6d %-6s %s", disc.ID, disc.Name, disc.PsiCost, schoolAbbr, status))
+		name := disc.Name
+		if rank := psiMasteryLevel(player, &disc); rank > 0 {
+			name += " (" + strings.Repeat("*", rank) + ")"
+		}
+		msgs = append(msgs, fmt.Sprintf("%-4d %-25s %-6d %-6s %s", disc.ID, name, playerPsiCost(player, &disc), schoolAbbr, status))
 	}
 
 	return &CommandResult{Messages: msgs}
@@ -429,9 +434,10 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 		return &CommandResult{Messages: []string{"Your focus dissipates."}}
 	}
 
-	if player.Psi < disc.PsiCost {
+	psiCost := playerPsiCost(player, disc)
+	if player.Psi < psiCost {
 		player.PreparedPsi = 0
-		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough psi points! (%s requires %d, you have %d)", disc.Name, disc.PsiCost, player.Psi)}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough psi points! (%s requires %d, you have %d)", disc.Name, psiCost, player.Psi)}}
 	}
 
 	// Check roundtime
@@ -441,7 +447,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 	}
 
 	// Deduct psi — keep discipline prepared for re-use (psi retains last power)
-	player.Psi -= disc.PsiCost
+	player.Psi -= psiCost
 	committed = true
 
 	// Skill check
@@ -660,6 +666,7 @@ func (e *GameEngine) projectDamage(player *Player, disc *PsiDiscipline, args []s
 	name := FormatMonsterName(def, e.monAdjs)
 
 	dmg := rand.Intn(disc.DmgMax-disc.DmgMin+1) + disc.DmgMin
+	dmg += masteryDamageBonus(psiMasteryLevel(player, disc), player)
 
 	// Psi resistance
 	resist := def.PsiResist
