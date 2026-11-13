@@ -17,8 +17,9 @@ import (
 //     Mind) at 2 × the discipline's level, the same threshold MASTER uses
 //     for a spell's school.
 //   - Each rank cuts the psi cost by 1, down to half the base cost.
-//   - Damage disciplines deal +1.5 damage per rank (haste cancels it, as for
-//     spell mastery).
+//   - Damage disciplines deal +1.5 damage per rank.
+//   - Haste (the spell or psionic Speed) cancels all of it, as it cancels
+//     spell mastery (MAGIC.TXT).
 
 // psiMasteryLevel returns the player's purchased mastery rank for a discipline.
 func psiMasteryLevel(player *Player, disc *PsiDiscipline) int {
@@ -68,8 +69,12 @@ func effectivePsiCost(disc *PsiDiscipline, mastery int) int {
 	return cost
 }
 
-// playerPsiCost is the psi the player pays for disc right now.
+// playerPsiCost is the psi the player pays for disc right now: full price
+// while hasted, since haste cancels mastery.
 func playerPsiCost(player *Player, disc *PsiDiscipline) int {
+	if isHasted(player) {
+		return disc.PsiCost
+	}
 	return effectivePsiCost(disc, psiMasteryLevel(player, disc))
 }
 
@@ -147,7 +152,7 @@ func (e *GameEngine) doMasterPsi(ctx context.Context, player *Player, query stri
 		msgs = append(msgs, fmt.Sprintf("Mastery damage bonus: +%d (when not hasted).", newRank*3/2))
 	}
 	if disc.PsiCost > 0 {
-		msgs = append(msgs, fmt.Sprintf("Psi cost for %s is now %d.", disc.Name, effectivePsiCost(disc, newRank)))
+		msgs = append(msgs, fmt.Sprintf("Psi cost for %s is now %d (when not hasted).", disc.Name, effectivePsiCost(disc, newRank)))
 	}
 
 	e.SavePlayer(ctx, player)

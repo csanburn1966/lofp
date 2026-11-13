@@ -355,7 +355,7 @@ func (e *GameEngine) doMasterSpell(ctx context.Context, player *Player, args []s
 		msgs = append(msgs, fmt.Sprintf("Mastery damage bonus: +%d (when not hasted).", dmgBonus))
 	}
 	newCost := effectiveManaCost(spell, newRank)
-	msgs = append(msgs, fmt.Sprintf("Mana cost for %s is now %d.", spell.Name, newCost))
+	msgs = append(msgs, fmt.Sprintf("Mana cost for %s is now %d (when not hasted).", spell.Name, newCost))
 
 	e.SavePlayer(ctx, player)
 	return &CommandResult{Messages: msgs}
@@ -979,8 +979,12 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		return &CommandResult{Messages: []string{"Your spell fizzles."}}
 	}
 
-	// Mana cost = spell level, reduced by mastery (from LEGENDS.DOC)
+	// Mana cost = spell level, reduced by mastery (from LEGENDS.DOC). Haste
+	// cancels mastery (MAGIC.TXT), so a hasted caster pays full price.
 	mastery := spellMasteryLevel(player, spell)
+	if isHasted(player) {
+		mastery = 0
+	}
 	manaCost := effectiveManaCost(spell, mastery)
 	if player.Mana < manaCost {
 		player.PreparedSpell = 0
