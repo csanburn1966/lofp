@@ -1,5 +1,27 @@
 # Changelog
 
+## v15.11.0 — 2026-11-13
+
+Psionicists finally have something to spend build points on besides skills. Psionic mastery works like spell mastery: each rank in a discipline lowers its psi cost, and attack disciplines hit harder. `PROJECT` and `PSI` now show their round time, and the Mind over Mind attacks take a round like everything else.
+
+### New: Psionic Mastery
+- `MASTER PSI <discipline name or number>` buys a rank of mastery in a discipline you know. `MASTER <discipline name>` also works when the name isn’t one of your spells
+- Costs 8 build points for the first rank and 4 for each rank after. A discipline can be mastered up to its level plus one
+- Requires the discipline’s school (Mind over Matter or Mind over Mind) at twice the discipline’s level, the same rule as spell mastery
+- Each rank lowers the discipline’s psi cost by 1, down to half its base cost
+- Attack disciplines deal +1.5 damage per rank. As with spell mastery, haste (including Speed) cancels the bonus
+- For disciplines that don’t do damage, mastery stops once the cost is halved, so you never spend build points on a rank that does nothing
+- `PSI` shows each discipline’s cost after mastery, with a star for each rank
+
+### Changed: Psionic Round Time
+- `PROJECT`, and `PSI` when it readies an attack, now show their round time: `[Round: 5 sec]`
+- Psychic Blast, Psychic Crush, Terror, Pain, Confuse, Disruption and Warp Mind now take 5 seconds of round time, like the Mind over Matter attacks. Before, they took none
+- Haste and slow now change `PROJECT`’s round time, as they already did for `PSI`
+- A projection that fails to focus now takes round time too. Before, the psi was spent with no round time
+
+### GM: @mastery
+- `@mastery <player> psi <discipline # or name> <level>` sets a player’s psionic mastery rank, refunding build points when it’s lowered. `@mastery <player>` lists psionic mastery after spell mastery
+
 ## v15.10.0 — 2026-11-11
 
 Enchanters can now make their own magic items. Enchant an Item (244) works at last: prepare a blank wand, rod, amulet, orb or other spell-holding item with Rite of Preparation, cast the spell you want into it, then call down a storm's lightning to charge it. Charge Wand no longer loses its mandrake root when you mistype the target, and picking the second of two wands by number now counts the way `INVENTORY` lists them.

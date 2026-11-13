@@ -9,6 +9,41 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.11.0 &mdash; November 13, 2026</h2>
+            <p className="text-gray-400 mb-3">Psionicists finally have something to spend build points on besides skills. Psionic mastery works like spell mastery: each rank in a discipline lowers its psi cost, and attack disciplines hit harder. <code>PROJECT</code> and <code>PSI</code> now show their round time, and the Mind over Mind attacks take a round like everything else.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Psionic Mastery</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>MASTER PSI &lt;discipline name or number&gt;</code> buys a rank of mastery in a discipline you know. <code>MASTER &lt;discipline name&gt;</code> also works when the name isn&rsquo;t one of your spells</li>
+                  <li>Costs 8 build points for the first rank and 4 for each rank after. A discipline can be mastered up to its level plus one</li>
+                  <li>Requires the discipline&rsquo;s school (Mind over Matter or Mind over Mind) at twice the discipline&rsquo;s level, the same rule as spell mastery</li>
+                  <li>Each rank lowers the discipline&rsquo;s psi cost by 1, down to half its base cost</li>
+                  <li>Attack disciplines deal +1.5 damage per rank. As with spell mastery, haste (including Speed) cancels the bonus</li>
+                  <li>For disciplines that don&rsquo;t do damage, mastery stops once the cost is halved, so you never spend build points on a rank that does nothing</li>
+                  <li><code>PSI</code> shows each discipline&rsquo;s cost after mastery, with a star for each rank</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Psionic Round Time</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>PROJECT</code>, and <code>PSI</code> when it readies an attack, now show their round time: <code>[Round: 5 sec]</code></li>
+                  <li>Psychic Blast, Psychic Crush, Terror, Pain, Confuse, Disruption and Warp Mind now take 5 seconds of round time, like the Mind over Matter attacks. Before, they took none</li>
+                  <li>Haste and slow now change <code>PROJECT</code>&rsquo;s round time, as they already did for <code>PSI</code></li>
+                  <li>A projection that fails to focus now takes round time too. Before, the psi was spent with no round time</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">GM: @mastery</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>@mastery &lt;player&gt; psi &lt;discipline # or name&gt; &lt;level&gt;</code> sets a player&rsquo;s psionic mastery rank, refunding build points when it&rsquo;s lowered. <code>@mastery &lt;player&gt;</code> lists psionic mastery after spell mastery</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.10.0 &mdash; November 11, 2026</h2>
             <p className="text-gray-400 mb-3">Enchanters can now make their own magic items. Enchant an Item (244) works at last: prepare a blank wand, rod, amulet, orb or other spell-holding item with Rite of Preparation, cast the spell you want into it, then call down a storm&rsquo;s lightning to charge it. Charge Wand no longer loses its mandrake root when you mistype the target, and picking the second of two wands by number now counts the way <code>INVENTORY</code> lists them.</p>
 
