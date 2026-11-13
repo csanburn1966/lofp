@@ -59,19 +59,19 @@ func init() {
 		{50, "Telepathy", "Mind over Mind", 1, 2, 5, "utility", 0, 0, "", 0, 0, 0},
 		{51, "Contact", "Mind over Mind", 2, 3, 5, "utility", 0, 0, "", 0, 0, 0},
 		{52, "Psychic Probe", "Mind over Mind", 3, 5, 5, "utility", 0, 0, "", 0, 0, 0},
-		{53, "Psychic Blast", "Mind over Mind", 4, 8, 0, "damage", 5, 20, "", 0, 0, 0},
+		{53, "Psychic Blast", "Mind over Mind", 4, 8, 5, "damage", 5, 20, "", 0, 0, 0},
 		{54, "Psychic Screen", "Mind over Mind", 5, 6, 5, "defense", 0, 0, "", 15, 0, 0},
-		{55, "Psychic Crush", "Mind over Mind", 11, 14, 0, "damage", 10, 35, "", 0, 0, 0},
-		{56, "Terror", "Mind over Mind", 15, 16, 0, "damage", 8, 25, "", 0, 0, 0},
+		{55, "Psychic Crush", "Mind over Mind", 11, 14, 5, "damage", 10, 35, "", 0, 0, 0},
+		{56, "Terror", "Mind over Mind", 15, 16, 5, "damage", 8, 25, "", 0, 0, 0},
 		{57, "Psychic Shield", "Mind over Mind", 10, 10, 5, "defense", 0, 0, "", 25, 0, 0},
 		{58, "Psychic Barrier", "Mind over Mind", 16, 14, 5, "defense", 0, 0, "", 35, 0, 0},
-		{59, "Confuse", "Mind over Mind", 13, 12, 0, "utility", 0, 0, "", 0, 0, 0},
+		{59, "Confuse", "Mind over Mind", 13, 12, 5, "utility", 0, 0, "", 0, 0, 0},
 		{60, "Focus Skill", "Mind over Mind", 14, 8, 5, "buff", 0, 0, "", 0, 0, 0},
 		{61, "Domination", "Mind over Mind", 18, 20, 5, "utility", 0, 0, "", 0, 0, 0},
-		{62, "Disruption", "Mind over Mind", 19, 16, 0, "utility", 0, 0, "", 0, 0, 0},
+		{62, "Disruption", "Mind over Mind", 19, 16, 5, "utility", 0, 0, "", 0, 0, 0},
 		{63, "Psychic Fortress", "Mind over Mind", 20, 18, 5, "defense", 0, 0, "", 50, 0, 0},
-		{64, "Warp Mind", "Mind over Mind", 22, 22, 0, "utility", 0, 0, "", 0, 0, 0},
-		{65, "Pain", "Mind over Mind", 21, 20, 0, "damage", 20, 50, "", 0, 0, 0},
+		{64, "Warp Mind", "Mind over Mind", 22, 22, 5, "utility", 0, 0, "", 0, 0, 0},
+		{65, "Pain", "Mind over Mind", 21, 20, 5, "damage", 20, 50, "", 0, 0, 0},
 	}
 	psiRegistry = append(psiRegistry, mom...)
 	psiRegistry = append(psiRegistry, moo...)
@@ -278,13 +278,15 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandRe
 
 	// Offensive/utility powers that need a target: prepare for PROJECT
 	player.PreparedPsi = disc.ID
+	prepMsgs := []string{fmt.Sprintf("You focus your mind on %s... (type PROJECT to release, or PROJECT <target>)", disc.Name)}
 	if disc.RoundSec > 0 {
 		psiRT2 := applyRoundTime(player, disc.RoundSec)
 		player.RoundTimeExpiry = time.Now().Add(time.Duration(psiRT2) * time.Second)
+		prepMsgs = append(prepMsgs, fmt.Sprintf("[Round: %d sec]", psiRT2))
 	}
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You focus your mind on %s... (type PROJECT to release, or PROJECT <target>)", disc.Name)},
+		Messages:      prepMsgs,
 		RoomBroadcast: []string{fmt.Sprintf("%s closes %s eyes in concentration.", player.FirstName, player.Possessive())},
 	}
 }
@@ -465,12 +467,24 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 	if player.IsGM {
 		castChance = 100
 	}
+	// Round time for the projection itself (haste/slow applied), set and shown
+	// whether or not it succeeds — the attempt is the action.
+	projectRT := func(r *CommandResult) *CommandResult {
+		if disc.RoundSec > 0 {
+			rt := applyRoundTime(player, disc.RoundSec)
+			player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
+			r.Messages = append(r.Messages, fmt.Sprintf("[Round: %d sec]", rt))
+		}
+		return r
+	}
+
 	psiRoll := rand.Intn(100)
 	if psiRoll >= castChance {
-		return &CommandResult{
+		e.SavePlayer(ctx, player)
+		return projectRT(&CommandResult{
 			Messages:      []string{fmt.Sprintf("You project %s but fail to focus the energy!", disc.Name)},
 			RoomBroadcast: []string{fmt.Sprintf("%s concentrates intensely but nothing happens.", player.FirstName)},
-		}
+		})
 	}
 
 	result := &CommandResult{}
@@ -502,9 +516,7 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 		result.RoomBroadcast = []string{fmt.Sprintf("%s concentrates intensely.", player.FirstName)}
 	}
 
-	if disc.RoundSec > 0 {
-		player.RoundTimeExpiry = time.Now().Add(time.Duration(disc.RoundSec) * time.Second)
-	}
+	result = projectRT(result)
 	e.SavePlayer(ctx, player)
 
 	return result
