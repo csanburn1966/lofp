@@ -1,0 +1,57 @@
+; HAVARTHITEMS.SCR — permanent definitions for the New Havarth Mining Company quests
+; ==================================================================================
+; The things players carry away from "The Surveyor's Commission": the surveyor's
+; instrument and the Havarth Masterwork Mining Axe, plus their vocabulary. Like
+; FESTITEMS.SCR, this belongs in LEGENDS.CFG once the quest goes live, so items
+; players own keep their names and scripts even if HAVARTH.SCR is ever disabled.
+; While testing, upload it as a GM script alongside HAVARTH.SCR (give it the
+; higher priority so it loads first). See original/HAVARTH_RUNBOOK.md.
+;
+; ID ranges (the 94xx block is reserved for the New Havarth quests):
+;   NOUNDEF 9400        ADJDEF 9400-9402        INUMBER 9400-9401
+; ==================================================================================
+
+; ── Vocabulary ────────────────────────────────────────────────────────────────
+NOUNDEF 9400 cleft
+ADJDEF 9400 surveyor's
+ADJDEF 9401 masterwork
+ADJDEF 9402 mining
+
+; ── The Havarth surveyor's instrument ─────────────────────────────────────────
+; Issued by Mara Havarth (NEWITEM -1 9400 ADJ1=32 ADJ2=9400: "a brass surveyor's
+; instrument"). SURVEY runs MACRO 9400 in HAVARTH.SCR, which takes the reading
+; and ends with CLEARVERB so the normal mining survey doesn't follow. If
+; HAVARTH.SCR isn't loaded the macro is missing, nothing is cleared, and SURVEY
+; behaves as it always has. LOOK/EXAMINE adds the progress list (MACRO 9404).
+INUMBER 9400
+NAME 501
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE METAL
+*DESCRIPTION_START EXAMINE
+A finely crafted brass surveying instrument fitted with a rotating compass, a mineral-sensitive needle under glass, a calibrated sighting lens, and several delicate measuring dials. "New Havarth Mining Co." is stamped into its base. It's used with SURVEY at the places the company has asked you to measure.
+*DESCRIPTION_END
+IFPREVERB SURVEY -1
+  CALL 9400
+ENDIF
+IFPREVERB LOOK -1
+  CALL 9404
+ENDIF
+;
+; ── The Havarth Masterwork Mining Axe ─────────────────────────────────────────
+; Reward for the fourth survey (NEWITEM -1 9401 ADJ1=9401 ADJ2=9402: "a
+; masterwork mining axe"). A MINETOOL's PARAMETER3 is the ranks of Mining it adds
+; while it's the tool in use: MINE uses the first mining tool you carry, or the
+; one named with MINE WITH <tool>. +2 ranks is +10% to the chance of finding ore.
+INUMBER 9401
+NAME 10
+MINETOOL
+WEIGHT 5
+VOLUME 5
+SUBSTANCE METAL
+PARAMETER3 2
+*DESCRIPTION_START EXAMINE
+A finely balanced mining axe of exceptional craftsmanship, its polished steel head engraved with the crest of the Havarth family: a pick and hammer crossed beneath a mountain peak. The ash handle is wrapped in oiled leather and looks as if it will outlast most miners.
+*DESCRIPTION_END
+;

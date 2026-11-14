@@ -1926,6 +1926,23 @@ func (sc *ScriptContext) getVar(name string) int {
 			return count
 		}
 		return 1
+	case "INCOMBAT":
+		// 1 while the player is fighting: a living monster in their room has them
+		// as its target, or they have a living monster here as theirs. Lets item
+		// and room scripts refuse an action mid-fight (e.g. the Havarth
+		// surveyor's instrument).
+		if sc.Engine.monsterMgr == nil {
+			return 0
+		}
+		for _, inst := range sc.Engine.monsterMgr.MonstersInRoom(sc.Player.RoomNumber) {
+			if strings.EqualFold(inst.Target, sc.Player.FirstName) {
+				return 1
+			}
+			if ct := sc.Player.CombatTarget; ct != nil && ct.IsMonster && ct.MonsterID == inst.ID {
+				return 1
+			}
+		}
+		return 0
 	case "MONINROOM":
 		roomNum := sc.Player.RoomNumber
 		if sc.Room != nil {

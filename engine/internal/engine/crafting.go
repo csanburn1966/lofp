@@ -232,12 +232,19 @@ func roomMineGrade(room *gameworld.Room) string {
 // Per GM Pages updates.html, SURVEY reveals a hidden character, like MINE/FORAGE.
 func (e *GameEngine) doSurvey(ctx context.Context, player *Player) *CommandResult {
 	room := e.rooms[player.RoomNumber]
-	if player.Skills[35] < 1 {
-		return &CommandResult{Messages: []string{"You do not know enough about mining to survey this area."}}
-	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := time.Until(player.RoundTimeExpiry).Seconds()
 		return &CommandResult{Messages: []string{fmt.Sprintf("You must wait %.0f more seconds.", remaining)}}
+	}
+	// A carried item with its own IFPREVERB SURVEY -1 script (e.g. the Havarth
+	// surveyor's instrument) handles the command first, for anyone, with or
+	// without Mining skill. If it ends with CLEARVERB the normal mining survey
+	// is skipped.
+	if res := e.runCarriedSurveyScripts(ctx, player, room); res != nil {
+		return res
+	}
+	if player.Skills[35] < 1 {
+		return &CommandResult{Messages: []string{"You do not know enough about mining to survey this area."}}
 	}
 
 	player.Hidden = false
@@ -290,6 +297,111 @@ func (e *GameEngine) doSurvey(ctx context.Context, player *Player) *CommandResul
 	return result
 }
 
+// runCarriedSurveyScripts gives each carried item (hands, then worn, then
+// pack) a chance to handle SURVEY with its own IFPREVERB SURVEY -1 script.
+// Returns the result of the first one that blocks the verb, or nil.
+func (e *GameEngine) runCarriedSurveyScripts(ctx context.Context, player *Player, room *gameworld.Room) *CommandResult {
+	if room == nil {
+		return nil
+	}
+	var carried []InventoryItem
+	if player.Wielded != nil {
+		carried = append(carried, *player.Wielded)
+	}
+	if player.OffHand != nil {
+		carried = append(carried, *player.OffHand)
+	}
+	carried = append(carried, player.Inventory...)
+	for _, ii := range carried {
+		def := e.items[ii.Archetype]
+		if def == nil || !itemScriptsHandleVerb(def.Scripts, "SURVEY") {
+			continue
+		}
+		tempRI := gameworld.RoomItem{Ref: -1, Archetype: ii.Archetype,
+			Adj1: ii.Adj1, Adj2: ii.Adj2, Adj3: ii.Adj3,
+			Val1: ii.Val1, Val2: ii.Val2, Val3: ii.Val3, Val4: ii.Val4, Val5: ii.Val5, CraftedValue: ii.CraftedValue,
+			ItemBits: ii.ItemBits, State: ii.State}
+		sc := e.RunPreverbScripts(player, room, "SURVEY", &tempRI, def)
+		if len(sc.DeferredSegments) > 0 {
+			e.scheduleScriptSegments(player, sc.DeferredSegments)
+		}
+		if !sc.Blocked {
+			continue
+		}
+		if sc.NeedsSave || sc.MoveTo > 0 {
+			e.SavePlayer(ctx, player)
+		}
+		result := &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs, PlayerState: player}
+		if sc.MoveTo > 0 {
+			e.applySayMove(ctx, player, sc, result)
+		}
+		return result
+	}
+	return nil
+}
+
+// itemScriptsHandleVerb reports whether any of an item's script blocks is an
+// IFVERB/IFPREVERB <verb> -1, at the top level or nested in a conditional.
+func itemScriptsHandleVerb(blocks []gameworld.ScriptBlock, verb string) bool {
+	for _, b := range blocks {
+		if scriptBlockHandlesVerb(b, verb) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMiningTool reports whether def can be used to MINE.
+func (e *GameEngine) isMiningTool(def *gameworld.ItemDef) bool {
+	if def == nil {
+		return false
+	}
+	noun := strings.ToLower(e.nouns[def.NameID])
+	return noun == "pickaxe" || noun == "pick-axe" || noun == "hammer" || noun == "shovel" || def.Type == "MINETOOL"
+}
+
+// findMiningTool picks the tool for MINE. With args ("with masterwork axe",
+// "axe") it's the carried item that matches; without, the first mining tool
+// in INVENTORY order: wielded, off-hand, then pack. Returns a refusal message
+// instead when there's no usable tool.
+func (e *GameEngine) findMiningTool(player *Player, args []string) (*gameworld.ItemDef, string) {
+	if len(args) > 0 && strings.EqualFold(args[0], "with") {
+		args = args[1:]
+	}
+	var carried []InventoryItem
+	if player.Wielded != nil {
+		carried = append(carried, *player.Wielded)
+	}
+	if player.OffHand != nil {
+		carried = append(carried, *player.OffHand)
+	}
+	carried = append(carried, player.Inventory...)
+
+	if len(args) > 0 {
+		target, skip := parseOrdinal(strings.ToLower(strings.Join(args, " ")))
+		for _, ii := range carried {
+			def := e.items[ii.Archetype]
+			if def == nil {
+				continue
+			}
+			if !matchesTargetOrdinal(e.getItemNounName(def), target, &skip, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+				continue
+			}
+			if !e.isMiningTool(def) {
+				return nil, "You can't mine with that."
+			}
+			return def, ""
+		}
+		return nil, "You don't have that."
+	}
+	for _, ii := range carried {
+		if def := e.items[ii.Archetype]; e.isMiningTool(def) {
+			return def, ""
+		}
+	}
+	return nil, "You need a mining tool (pickaxe, hammer, or shovel) to mine."
+}
+
 // scriptBlockHandlesVerb reports whether a top-level room script block is an
 // IFVERB/IFPREVERB <verb> -1, or a conditional that has one nested inside it.
 func scriptBlockHandlesVerb(block gameworld.ScriptBlock, verb string) bool {
@@ -306,7 +418,7 @@ func scriptBlockHandlesVerb(block gameworld.ScriptBlock, verb string) bool {
 	return false
 }
 
-func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandResult {
+func (e *GameEngine) doMineReal(ctx context.Context, player *Player, args []string) *CommandResult {
 	room := e.rooms[player.RoomNumber]
 	if room == nil {
 		return &CommandResult{Messages: []string{"You can't mine here."}}
@@ -317,28 +429,17 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 		return &CommandResult{Messages: []string{"There is nothing to mine here."}}
 	}
 
-	// Check for mining tool (wielded or in inventory)
-	isMiningTool := func(def *gameworld.ItemDef) bool {
-		if def == nil {
-			return false
-		}
-		noun := strings.ToLower(e.nouns[def.NameID])
-		return noun == "pickaxe" || noun == "pick-axe" || noun == "hammer" || noun == "shovel" || def.Type == "MINETOOL"
+	// The mining tool: MINE WITH <tool> (or MINE <tool>) picks a carried one,
+	// otherwise the first carried in INVENTORY order (hands, then pack).
+	toolDef, toolMsg := e.findMiningTool(player, args)
+	if toolMsg != "" {
+		return &CommandResult{Messages: []string{toolMsg}}
 	}
-	hasTool := false
-	if player.Wielded != nil && isMiningTool(e.items[player.Wielded.Archetype]) {
-		hasTool = true
-	}
-	if !hasTool {
-		for _, ii := range player.Inventory {
-			if isMiningTool(e.items[ii.Archetype]) {
-				hasTool = true
-				break
-			}
-		}
-	}
-	if !hasTool {
-		return &CommandResult{Messages: []string{"You need a mining tool (pickaxe, hammer, or shovel) to mine."}}
+	// A MINETOOL's PARAMETER3 adds that many ranks of Mining while it's the
+	// tool in use (the Havarth Masterwork Mining Axe gives +2).
+	toolBonus := 0
+	if toolDef.Type == "MINETOOL" && toolDef.Parameter3 > 0 {
+		toolBonus = toolDef.Parameter3
 	}
 
 	// Mining skill check
@@ -358,7 +459,8 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 	}
 
 	// Success chance: base 30% + mining*5 + STR/10
-	chance := 30 + miningSkill*5 + player.Strength/10 + unemoteSkillBonus(player)
+	effMining := miningSkill + toolBonus
+	chance := 30 + effMining*5 + player.Strength/10 + unemoteSkillBonus(player)
 	if chance > 90 {
 		chance = 90
 	}
@@ -520,7 +622,7 @@ func (e *GameEngine) doMineReal(ctx context.Context, player *Player) *CommandRes
 
 	// Purity based on grade: A=50-100, B=30-70, C=10-40
 	// Mining skill adds 1% purity per 2 skill levels (capped at 100).
-	skillBonus := miningSkill / 2
+	skillBonus := effMining / 2
 	purity := 0
 	switch grade {
 	case "A":

@@ -1593,7 +1593,7 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "TRAIN":
 		return e.doTrainWithBP(ctx, player, args)
 	case "MINE":
-		return e.doMineReal(ctx, player)
+		return e.doMineReal(ctx, player, args)
 	case "FORAGE":
 		return e.doForageReal(ctx, player)
 	case "SMELT":

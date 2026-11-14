@@ -1,0 +1,1205 @@
+; HAVARTH.SCR — The New Havarth Mining Company: "The Surveyor's Commission"
+; =============================================================================
+; Four surveying assignments for the New Havarth Mining Company in Fayd's North
+; Bazaar, each unlocked by finishing the one before. No GM is needed: the
+; Havarths are room messages, not NPCs, and every step is scripted.
+;
+;   1. The Inner Sea caves        3 readings   100 gold crowns    1,000 XP
+;   2. The Abandoned Dig          4 readings   250 gold crowns    2,000 XP
+;   3. Beneath the Matriarch      3 readings   500 gold crowns    4,000 XP
+;   4. The Teeth of Shartan       5 readings 1,000 gold crowns    8,000 XP
+;                                            + Havarth Masterwork Mining Axe
+;
+; Needs HAVARTHITEMS.SCR (the instrument and the axe) loaded first.
+; See original/HAVARTH_RUNBOOK.md for the walkthrough and GM fix-ups.
+;
+; Per character (INTNUM, persistent):
+;   1040  stage: 0 none, 1/3/5/7 assignment 1-4 under way, 2/4/6 assignment
+;         1-3 paid, 8 all four done (axe given)
+;   1041-1045  readings taken this assignment (1 = taken), one per survey spot
+;   1046  1 = Mara has compiled this assignment's report for Edric
+;   1049  scratch: 1 = the reading just taken finished the assignment
+; One-time experience: AWARD 1040-1043.
+;
+; ID ranges (the 94xx block is reserved for the New Havarth quests):
+;   NUMBER 9400-9402 (company offices), 9410-9413 (the Shartan prospect)
+;   MACRO 9400-9407   CEVENT 9400
+; Overrides: room 394 (adds the staircase up, Bram, and his lines) and the
+; newsboard, item 304 (adds a "Surveyors Wanted" page).
+; =============================================================================
+
+; ── The company building ──────────────────────────────────────────────────────
+
+; Room 394, copied from FAYDINDR.SCR. Changes: Bram Havarth at the counter, a
+; staircase up to the offices (EXIT U 9400), and his IFSAY lines.
+NUMBER 394
+NAME New Havarth Mining Company
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+The wooden floor creaks under the strain of miners carrying their heavy ore. From behind a counter, Bram Havarth, the company's grizzled treasurer, weighs each load over the top of his rather dusty spectacles, counts out the coins with visible reluctance, and notes everything in a small brown book. With their newly earned wealth, miners can purchase the provisions on sale here. A sign details the prices. There is a door here with something written on it, and a sturdy staircase climbs to the company offices above.
+*DESCRIPTION_END
+TRAINING 35 30
+EXIT O 207
+EXIT U 9400
+BUY_ORE
+ITEM 0 204 ADJ1=355
+ITEM 1 852
+ITEM 2 1432 ADJ1=288 ADJ2=192
+ITEM 3 943 VAL2=395 UNLOCKED
+ITEM 9 693 ADJ1=10
+
+IFENTRY
+	IFVAR NIGHT = 1
+		IFITEM 3 OPEN
+			CLOSE 3
+			AFFECT 395
+			CLOSE 1
+			ECHO ALL The clerk speaks up brightly, " Closing time! Everybody out!"
+			MOVEALL 394
+			AFFECT 394
+			ECHO ALL Everyone in the claims office suddenly arrives, and the door slams shut behind them.
+		ENDIF
+	ENDIF
+ENDIF
+IFPREVERB OPEN 3
+	IFVAR NIGHT = 1
+		ECHO ALL You hear a voice from behind the door, "Go away, we're closed."
+		CLEARVERB
+	ENDIF
+ENDIF
+*DESCRIPTION_START ITEM READ 3
+   Royal Land Office
+    Claims Division
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 2
+The shiny metal scale has a large platform on the top for placing bulky items. The weight of the items depresses a spring that moves an arrow to a number corresponding with the weight. After making sure only the item you want to weigh is on the scale, you can take a reading.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM ON 1
+You see a working scale.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM READ 0
+Item             Price
+----             -----
+Lantern        20 crowns
+Torch           1 crown
+Sack            4 crowns
+Backpack        5 crowns
+Sheath          2 crowns
+Pick-axe       20 crowns
+Shovel         20 crowns
+Miner's Hammer 10 crowns
+*DESCRIPTION_END
+STOREITEM 89 -1 2000
+STOREITEM 466 -1 100
+STOREITEM 95 -1 400
+STOREITEM 491 -1 500
+STOREITEM 467 -1 200
+STOREITEM 1506 -1 2000
+STOREITEM 484 -1 2000
+STOREITEM 766 796 10
+IFSAY WORK
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9405
+  ENDIF
+ENDIF
+IFSAY JOB
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9405
+  ENDIF
+ENDIF
+IFSAY SURVEY
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9405
+  ENDIF
+ENDIF
+IFSAY EDRIC
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9405
+  ENDIF
+ENDIF
+;
+NUMBER 9400
+NAME New Havarth Mining Company, main office
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+Large maps of the lands surrounding Fayd cover the walls of this busy office, and tables hold mineral samples, surveying instruments and stacks of carefully organized documents. Behind a broad oak desk, Master Edric Havarth, a shrewd highlander in his late forties, looks up from a ledger with the air of a man who expects good news. A heavy ironbound strongbox squats in the corner. The sound of hammering drifts in from the scaffolding outside. Doorways lead west to the surveying room and east to the workshop, and a staircase goes down to the counter.
+*DESCRIPTION_END
+EXIT D 394
+EXIT W 9401
+EXIT E 9402
+ITEM 0 1060
+ITEM 1 69 ADJ1=216
+ITEM 2 228 ADJ1=9311
+*DESCRIPTION_START ITEM EXAM 0
+The largest map shows Fayd at its center, with the Inner Sea to the south, the Grymwood to the west and the jagged Teeth of Shartan to the north. Pins with little paper flags mark the caves beneath the Inner Sea, an old dig east of the city, and the Matriarch Tree. A great many pins have been stuck into the mountains, pulled out again, and stuck in somewhere else.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 1
+The broad oak desk is buried in ledgers, contracts and letters. A neatly lettered card propped against the inkwell reads: "A pickaxe earns a day's wage. Knowing where to swing it earns a fortune."
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 2
+The heavy ironbound strongbox is secured with three locks. Edric keeps the keys on a chain around his neck.
+*DESCRIPTION_END
+IFENTRY
+  IFVAR INTNUM1040 = 0
+    ECHO PLAYER Edric Havarth sets down his pen. "Looking for work? Say so, then. I've no time for guessing games."
+  ENDIF
+  IFVAR INTNUM1040 = 2
+    ECHO PLAYER Edric Havarth beckons you over. "There you are! I've another assignment, if you're ready for work."
+  ENDIF
+  IFVAR INTNUM1040 = 4
+    ECHO PLAYER Edric Havarth beckons you over. "There you are! I've another assignment, if you're ready for work."
+  ENDIF
+  IFVAR INTNUM1040 = 6
+    ECHO PLAYER Edric Havarth rises from his chair. "Ah. I've been hoping you'd come by. Tell me you're ready for work."
+  ENDIF
+  IFVAR INTNUM1046 = 1
+    ECHO PLAYER Edric Havarth has your survey report spread open on his desk. "Mara's sent your report through. Shall we settle up? Tell me about your survey."
+  ENDIF
+ENDIF
+IFSAY WORK
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY JOB
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY ASSIGNMENT
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY SURVEY
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY REPORT
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY READY
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY COMPLETE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+IFSAY FINISHED
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9401
+  ENDIF
+ENDIF
+;
+NUMBER 9401
+NAME New Havarth Mining Company, surveying room
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+A broad wooden desk is covered with geological charts, brass instruments and trays of labeled stone samples, and several partially completed survey reports await examination. Mara Havarth, the company's chief surveyor, bends over a chart with a magnifying lens, muttering figures under her breath. She is practical, meticulous, and visibly impatient with anyone who wastes her time. A small sign is propped on the corner of the desk. A doorway leads east to the main office.
+*DESCRIPTION_END
+EXIT E 9400
+ITEM 0 69 ADJ1=355
+ITEM 1 187
+*DESCRIPTION_START ITEM EXAM 0
+Charts, rock samples in labeled trays, and a half-finished brass instrument with its dials taken apart cover every inch of the desk.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM READ 1
+ SURVEYORS: tell Mara when your readings are COMPLETE.
+ Need directions? Ask her WHERE to take them.
+ LOST INSTRUMENTS replaced: 5 gold crowns.
+       "Stone doesn't lie. Surveyors sometimes do."
+*DESCRIPTION_END
+IFSAY REPORT
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY SURVEY
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY READINGS
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY COMPLETE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY FINISHED
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY DONE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9402
+  ENDIF
+ENDIF
+IFSAY INSTRUMENT
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9403
+  ENDIF
+ENDIF
+IFSAY LOST
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9403
+  ENDIF
+ENDIF
+IFSAY REPLACE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9403
+  ENDIF
+ENDIF
+IFSAY WHERE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9406
+  ENDIF
+ENDIF
+IFSAY DIRECTIONS
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9406
+  ENDIF
+ENDIF
+IFSAY HELP
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9406
+  ENDIF
+ENDIF
+;
+NUMBER 9402
+NAME New Havarth Mining Company, workshop
+DEEPCAVE
+FIXED_LIGHT
+CALL 33
+*DESCRIPTION_START
+The smell of oil and worked metal fills this crowded workshop. Picks, hammers and other mining tools hang neatly from racks beside a sturdy workbench, where Tessa Havarth, Edric's daughter, frowns at the edge of a battered pickaxe and reaches for a whetstone. A doorway leads west to the main office.
+*DESCRIPTION_END
+EXIT W 9400
+ITEM 0 471
+ITEM 1 225 ADJ1=1225
+*DESCRIPTION_START ITEM EXAM 0
+Pickaxes, shovels, hammers and pry bars hang in neat rows, each tagged with a scrap of paper naming the miner who signed it out and the day it is due back.
+*DESCRIPTION_END
+*DESCRIPTION_START ITEM EXAM 1
+The workbench is scarred from years of use. A vise holds a pickaxe head, and a row of files and whetstones is laid out in order of coarseness.
+*DESCRIPTION_END
+IFSAY AXE
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9407
+  ENDIF
+ENDIF
+IFSAY PICK
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9407
+  ENDIF
+ENDIF
+IFSAY TOOL
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9407
+  ENDIF
+ENDIF
+IFSAY WORK
+  IFVAR DUMMY8 = 0
+    EQUAL DUMMY8 1
+    CALL 9407
+  ENDIF
+ENDIF
+;
+
+; ── The Shartan prospect ──────────────────────────────────────────────────────
+; There is no way in from the mountain itself. With the first four Shartan
+; readings taken, SURVEY on the Lakeside Road above the dam (room 740) points
+; the instrument at a cleft behind the boulders and takes the surveyor in
+; (MACRO 9400). The fifth and final reading is taken in room 9413. Finished
+; surveyors can get back in the same way. The way out is OUT from 9410.
+NUMBER 9410
+NAME Teeth of Shartan, hidden cleft
+CAVE
+INDOOR_GROUND
+PARTIAL_DARKNESS
+*DESCRIPTION_START
+Behind a tumble of fallen boulders, a narrow cleft splits the mountainside. Cold air breathes out of the darkness beyond, smelling of wet stone and iron, and the daylight fails a few steps in. Fresh scratches on the rock show that something larger than you has squeezed through here, and recently. The way out leads back to the Lakeside Road.
+*DESCRIPTION_END
+EXIT O 740
+EXIT N 9411
+;
+NUMBER 9411
+NAME Shartan cleft, narrow passage
+CAVE
+INDOOR_GROUND
+DARKNESS
+MINEB
+MONSTER_GROUP 26
+*DESCRIPTION_START
+The passage twists between walls of dark, glittering rock, so narrow in places that you have to turn sideways. Water drips somewhere ahead. The scattered bones of a mountain goat lie in a hollow by the wall, gnawed clean, and deep claw marks score the stone above them.
+*DESCRIPTION_END
+EXIT S 9410
+EXIT NE 9412
+;
+NUMBER 9412
+NAME Shartan cleft, banded gallery
+CAVE
+INDOOR_GROUND
+DARKNESS
+MINEB
+MONSTER_GROUP 26
+*DESCRIPTION_START
+The passage opens into a long gallery whose walls are striped with bands of rust red, copper green and glossy black, the mountain's insides laid bare. A seam of quartz glitters in your light. At the far end, the floor drops away into a steep shaft with enough rough handholds to climb down.
+*DESCRIPTION_END
+EXIT SW 9411
+EXIT D 9413
+;
+NUMBER 9413
+NAME Shartan cleft, deep chamber
+CAVE
+INDOOR_GROUND
+DARKNESS
+MINEA
+*DESCRIPTION_START
+At the bottom of the shaft lies a natural chamber, deep within the mountain. Veins of ore as thick as a man's arm wind through the walls, glinting gold and silver and a deep, unfamiliar blue. In one corner an ancient iron spike, rusted almost to nothing, has been driven into the rock. Someone found this place long before the Havarths did.
+*DESCRIPTION_END
+EXIT U 9412
+;
+
+; ── The newsboard ─────────────────────────────────────────────────────────────
+; Item 304, copied from NEWS.SCR, with the company's poster added as page 8 of
+; the Fayd (REGION 0) newsboard. Reading the board pages through the notices.
+INUMBER 304
+NAME 1595
+WEIGHT 1000
+VOLUME 1000
+IFPREVERB LOOK -1
+        CLEARVERB
+        ECHO PLAYER Various pieces of paper have been tacked up on the board, waiting to be read.
+ENDIF
+IFPREVERB READ -1
+  CLEARVERB
+  IFVAR INTNUM3 ! 1
+    ECHO OTHERS %N consults the newsboard.
+  ENDIF
+  IFVAR REGION = 0
+      ECHO PLAYER         ********************************************
+      ECHO PLAYER         *        The Andoran Chronicle             *
+      ECHO PLAYER         ********************************************
+      ECHO PLAYER         %c
+  IFVAR FLAG2 = 0
+    ECHO PLAYER Affixed to the newsboard, you see a parchment scroll bearing the seal of the King.
+    ECHO PLAYER It reads%c%c
+    ECHO PLAYER Hear ye, Hear ye!%cIt is with great joy that We announce the safe return
+    ECHO PLAYER of Reisa, Lady High Chamberlain. Lady Riesa appears unharmed and healthy
+    ECHO PLAYER and is resting comfortably, attended by Our Royal physicians.%c
+    ECHO PLAYER All Honor and Our gratitude to Taliesin Pendragon, Maland Pathwalker,
+    ECHO PLAYER Winter Xavior, Dane Stonebreaker and Garin Stonehand, whose fearless 
+    ECHO PLAYER actions led to the Lady High Chamberlain's safe return.%c
+    ECHO PLAYER %cAffixed to the bottom of the parchment is the Royal Seal and below it
+    ECHO PLAYER in a bold hand, is the signature,
+    ECHO PLAYER %c                                         Frederick Kentaurus
+    ECHO PLAYER                                         King Frederick IV of Fayd
+  ENDIF                  
+  IFVAR FLAG2 = 1
+     ECHO PLAYER Occupying the central spot on the newsboard is a new poster,
+     ECHO PLAYER obviously professionally screenprinted. It reads:
+     ECHO PLAYER          &&& MORGAN CONSTRUCTION COMPANY &&&
+     ECHO PLAYER                is pleased to announce   
+     ECHO PLAYER            the addition of Morgaly Morgan
+     ECHO PLAYER            to their highly trained staff.
+     ECHO PLAYER   %c
+     ECHO PLAYER  With the addition of Ms. Morgan, we are now constructing
+     ECHO PLAYER  new homes in and around Fayd. Special arrangements can be
+     ECHO PLAYER  made with the governments of most other areas of Andor. MCC is
+     ECHO PLAYER  is experienced in the construction of all types of houses,
+     ECHO PLAYER  castles, keeps and beyond.
+     ECHO PLAYER  To arrange an interview with one of our highly qualified
+     ECHO PLAYER  consultants, send a courier to Morgan@lofp.com.
+     ECHO PLAYER  We look forward to doing business with you.
+     ECHO PLAYER  A second glance shows that this sign is newer than the previous one.
+     ECHO PLAYER  A carefully lettered paragraph has been added. It reads:
+     ECHO PLAYER  Due to circumstances beyond our control, we have found it impossible to obtain commercial building permits.
+     ECHO PLAYER  We regret the inconvenience to those who have contacted us about taverns and other commercial establishments.
+     ECHO PLAYER  At this time, however, our business is perforce limited to private residences and refurbishing existing properties.
+  ENDIF
+  IFVAR FLAG2 = 2
+    ECHO PLAYER  Your eyes are immediately drawn to the large drawing of a gold band tacked
+    ECHO PLAYER  to the news board.  Upon closer inspection you notice that it's an exact match
+    ECHO PLAYER  of the ring of Reisa, Lady High Chamberlain.  A spiraled block letter message
+    ECHO PLAYER  is written inside the ring:%C
+    ECHO PLAYER  %c
+    ECHO PLAYER  To Fayd:  If you wish the safe return of the one known as Reisa, you will
+    ECHO PLAYER  follow my instructions without deviation.   Post upon the general message
+    ECHO PLAYER  boards your willingness to pay me the 250,000 gold required for her safe
+    ECHO PLAYER  return.%C
+    ECHO PLAYER  You have 5 old calander days to respond.  I do not wish to be forced
+    ECHO PLAYER  to take any more steps than required for this equitable exchange.
+    ECHO PLAYER  %C
+    ECHO PLAYER (Attached below the picture is a lock of short black hair)
+  ENDIF
+  IFVAR FLAG2 = 3
+      ECHO PLAYER The Faydian Department of Crafting (FDC) would like to announce the official
+      ECHO PLAYER designation as Masters of the Craft for the following individuals:%c
+      ECHO PLAYER Alchemist: Coal Fire                   Phineas
+      ECHO PLAYER            Raningeth Ironheart         Kalyn Dug
+      ECHO PLAYER            %c
+      ECHO PLAYER Bowyer   : Lelldorin                   Nexus Mindbender
+      ECHO PLAYER            Glenn                       Stolar Carbokin
+      ECHO PLAYER            %c
+      ECHO PLAYER Jeweler  : Farley                      Snafu D'Selinor-Starslayer
+      ECHO PLAYER            Grond                       Vixen Starslayer-McFearless
+      ECHO PLAYER            Kalus                       Ender
+      ECHO PLAYER            Arleez
+      ECHO PLAYER            %c
+      ECHO PLAYER Miner    : Carow Cherlitz              Miner
+      ECHO PLAYER            Tharin                      Martha DeMock
+      ECHO PLAYER            %c
+      ECHO PLAYER Smith    : Angus McCaffrey             Delran Centari
+      ECHO PLAYER            Durek                       Durnik
+      ECHO PLAYER            Jedico                      Rughar Metalbender
+      ECHO PLAYER            Miner                       Smithra Anvillar
+      ECHO PLAYER            Seithr                      Kimo Illyt'oo
+      ECHO PLAYER            Saxon Sunstar               Sean
+      ECHO PLAYER            Coal Fire                   Mortif Macabre
+      ECHO PLAYER            Brad
+      ECHO PLAYER            %c
+      ECHO PLAYER Weaver  : Alita Sebastian              Alshani Moonstar
+      ECHO PLAYER           Delight D'Marcan             Savannah
+      ECHO PLAYER           Miki                         Penelope
+      ECHO PLAYER           Desiree
+      ECHO PLAYER           %c
+      ECHO PLAYER These crafters are all to be shown the respect they deserve for their years
+      ECHO PLAYER of work at their respective crafts and should be seen regardings any requests
+      ECHO PLAYER for special labors within their field.%c
+      ECHO PLAYER Written on this day, Manta 21, 1038 by <unreadable scribble>
+    ENDIF
+  IFVAR FLAG2 = 4
+      ECHO PLAYER Be it known that due to abhorable actions by the Order of the Way, the 
+      ECHO PLAYER T'Kasta refuse to welcome them as brothers. Let none that wear the sash  
+      ECHO PLAYER enter the gardens and Temple of the T'kasta. The Order of the Way is without
+      ECHO PLAYER honor, and we will treat it as such.  %c
+      ECHO PLAYER Vran Barak-tu%c
+      ECHO PLAYER Temple of the T'kasta
+    ENDIF
+   IFVAR FLAG2 = 5
+      ECHO PLAYER Wanted - Intelligent minded followers of the Light to join the Temple of
+      ECHO PLAYER Amilor. Priest, Knight, and Craftsman candidates should seek out
+      ECHO PLAYER Jasmine, Hunan, Taliesin, or any current Temple member for information.
+    ENDIF
+    IFVAR FLAG2 = 6
+      ECHO PLAYER %cANNOUNCEMENT%c
+     ECHO PLAYER If you have an announcement for your guild or temple,
+      ECHO PLAYER or some tidbit of news you wish to see on the board
+      ECHO PLAYER please email kahlua@novalink.com
+    ENDIF
+    IFVAR FLAG2 = 7
+      IFVAR ORG = 13
+        ECHO PLAYER Looking carefully at the articles across the newsboard, you realize that
+        ECHO PLAYER there is a hidden message from the thieves guild!%c
+        ECHO PLAYER Carefully looking it over, you realize it says, "Rob 'em blind!"%C
+      ENDIF
+    ENDIF
+    IFVAR FLAG2 = 8
+      ECHO PLAYER A fresh poster, its ink still sharp, has been tacked over the older notices:
+      ECHO PLAYER %c                         SURVEYORS WANTED
+      ECHO PLAYER        Capable adventurers to survey mining sites for the
+      ECHO PLAYER                   NEW HAVARTH MINING COMPANY
+      ECHO PLAYER         Good coin paid for reliable readings. Inquire at the
+      ECHO PLAYER      company offices in the North Bazaar, up the stairs.%c
+      ECHO PLAYER              "Prosperity Beneath Our Feet"
+    ENDIF
+; Last message #
+    IFVAR FLAG2 = 8
+      EQUAL FLAG2 -1
+      ECHO PLAYER (That was the last page.)
+    ENDIF
+    ADD FLAG2 1
+    ECHO PLAYER =============================================================================
+  ENDIF                 
+ENDIF
+;
+
+; ── Macros ────────────────────────────────────────────────────────────────────
+; Each body is wrapped in an always-true IFVAR so every action parses as part of
+; a nested block. DUMMY variables last only for the one command.
+
+; MACRO 9400: SURVEY with the instrument (from HAVARTHITEMS.SCR item 9400).
+;   DUMMY1 = which survey spot this room is in the current assignment (0 = none)
+;   DUMMY2 = readings the assignment needs, DUMMY3 = readings taken so far
+;   DUMMY4 = 1 if this spot's reading is already taken
+;   DUMMY5 = the first four readings taken (assignment 4's way into the prospect)
+;   DUMMY6 = 1 when this is the Lakeside Road spot that leads into the prospect
+MACRO 9400
+IFVAR DUMMY9 = 0
+  CLEARVERB
+  EQUAL DUMMY1 0
+  EQUAL DUMMY2 0
+  IFVAR INTNUM1040 = 1
+    EQUAL DUMMY2 3
+    IFVAR RNUM = 978
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR RNUM = 981
+      EQUAL DUMMY1 2
+    ENDIF
+    IFVAR RNUM = 953
+      EQUAL DUMMY1 3
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 3
+    EQUAL DUMMY2 4
+    IFVAR RNUM = 3402
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR RNUM = 3403
+      EQUAL DUMMY1 2
+    ENDIF
+    IFVAR RNUM = 3404
+      EQUAL DUMMY1 3
+    ENDIF
+    IFVAR RNUM = 3405
+      EQUAL DUMMY1 4
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 5
+    EQUAL DUMMY2 3
+    IFVAR RNUM = 110
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR RNUM = 109
+      EQUAL DUMMY1 2
+    ENDIF
+    IFVAR RNUM = 103
+      EQUAL DUMMY1 3
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 7
+    EQUAL DUMMY2 5
+    IFVAR RNUM = 627
+      EQUAL DUMMY1 1
+    ENDIF
+    IFVAR RNUM = 636
+      EQUAL DUMMY1 2
+    ENDIF
+    IFVAR RNUM = 712
+      EQUAL DUMMY1 3
+    ENDIF
+    IFVAR RNUM = 732
+      EQUAL DUMMY1 4
+    ENDIF
+    IFVAR RNUM = 9413
+      EQUAL DUMMY1 5
+    ENDIF
+  ENDIF
+  EQUAL DUMMY5 INTNUM1041
+  ADD DUMMY5 INTNUM1042
+  ADD DUMMY5 INTNUM1043
+  ADD DUMMY5 INTNUM1044
+  EQUAL DUMMY3 DUMMY5
+  ADD DUMMY3 INTNUM1045
+  EQUAL DUMMY4 0
+  IFVAR DUMMY1 = 1
+    IFVAR INTNUM1041 = 1
+      EQUAL DUMMY4 1
+    ENDIF
+  ENDIF
+  IFVAR DUMMY1 = 2
+    IFVAR INTNUM1042 = 1
+      EQUAL DUMMY4 1
+    ENDIF
+  ENDIF
+  IFVAR DUMMY1 = 3
+    IFVAR INTNUM1043 = 1
+      EQUAL DUMMY4 1
+    ENDIF
+  ENDIF
+  IFVAR DUMMY1 = 4
+    IFVAR INTNUM1044 = 1
+      EQUAL DUMMY4 1
+    ENDIF
+  ENDIF
+  IFVAR DUMMY1 = 5
+    IFVAR INTNUM1045 = 1
+      EQUAL DUMMY4 1
+    ENDIF
+  ENDIF
+  EQUAL DUMMY6 0
+  IFVAR RNUM = 740
+    IFVAR INTNUM1040 = 7
+      EQUAL DUMMY6 1
+    ENDIF
+    IFVAR INTNUM1040 = 8
+      EQUAL DUMMY6 1
+    ENDIF
+  ENDIF
+  IFVAR INCOMBAT = 1
+    ECHO PLAYER You try to steady the instrument, but the needle jumps with every move you make. You'll have to deal with the danger first.
+  ELSE
+    IFVAR DUMMY6 = 1
+      IFVAR DUMMY5 < 4
+        IFVAR INTNUM1040 = 7
+          ECHO PLAYER The mineral needle twitches toward a tumble of boulders beside the road, then sags back. It needs more readings from the mountains below before it can tell you anything.
+          ECHO OTHERS %N fiddles with the dials of a brass instrument.
+          EQUAL ROUNDTIME 2
+          ECHO PLAYER [Round: 2 sec]
+        ENDIF
+      ENDIF
+      IFVAR DUMMY5 >= 4
+        EQUAL DUMMY7 1
+      ENDIF
+      IFVAR INTNUM1040 = 8
+        EQUAL DUMMY7 1
+      ENDIF
+      IFVAR DUMMY7 = 1
+        ECHO PLAYER The mineral needle swings hard toward a tumble of boulders beside the road and stays there, quivering. Behind the boulders you find a narrow cleft in the mountainside, just wide enough to squeeze through, and you squeeze through it.
+        ECHO OTHERS %N follows the needle of a brass instrument behind a tumble of boulders and is gone.
+        MOVE 9410
+        AFFECT 9410
+        ECHO OTHERS %N squeezes in through the cleft, a brass instrument in hand.
+      ENDIF
+    ELSE
+      IFVAR DUMMY2 = 0
+        IFVAR INTNUM1040 = 8
+          ECHO PLAYER The needle settles, as it always does now, toward the Teeth of Shartan. Your surveying for the New Havarth Mining Company is done.
+        ELSE
+          ECHO PLAYER You turn the brass dials this way and that, but without an assignment from the New Havarth Mining Company you have no idea what you're meant to measure.
+        ENDIF
+      ELSE
+        IFVAR DUMMY1 = 0
+          ECHO PLAYER You take a few measurements. The mineral needle wanders aimlessly; nothing here is of interest to the company.
+          ECHO OTHERS %N takes some measurements with a brass instrument.
+          EQUAL ROUNDTIME 2
+          ECHO PLAYER [Round: 2 sec]
+        ELSE
+          IFVAR DUMMY4 = 1
+            ECHO PLAYER You've already recorded a reading here. The company needs measurements from other places.
+          ELSE
+            EQUAL INTNUM1049 0
+            ADD DUMMY3 1
+            IFVAR DUMMY3 >= DUMMY2
+              EQUAL INTNUM1049 1
+            ENDIF
+            IFVAR DUMMY1 = 1
+              EQUAL INTNUM1041 1
+            ENDIF
+            IFVAR DUMMY1 = 2
+              EQUAL INTNUM1042 1
+            ENDIF
+            IFVAR DUMMY1 = 3
+              EQUAL INTNUM1043 1
+            ENDIF
+            IFVAR DUMMY1 = 4
+              EQUAL INTNUM1044 1
+            ENDIF
+            IFVAR DUMMY1 = 5
+              EQUAL INTNUM1045 1
+            ENDIF
+            EQUAL DUMMY7 0
+            IFVAR INTNUM1040 = 7
+              IFVAR DUMMY1 = 5
+                EQUAL DUMMY7 1
+              ENDIF
+            ENDIF
+            IFVAR DUMMY7 = 1
+              ECHO PLAYER The instrument's mineral needle swings violently before settling into a steady position. Several brass indicators register unusually strong readings.
+            ELSE
+              ECHO PLAYER You carefully adjust the instrument's brass dials and take a series of measurements. The mineral needle trembles briefly before settling into position.
+            ENDIF
+            ECHO OTHERS %N carefully adjusts the dials of a brass instrument and takes a series of measurements.
+            CALL 9404
+            EQUAL ROUNDTIME 5
+            ECHO PLAYER [Round: 5 sec]
+            PLREVENT 5
+            CONTPLREVENT
+            IFVAR INTNUM1040 = 7
+              IFVAR INTNUM1049 = 1
+                ECHO PLAYER Your measurements indicate a substantial mineral deposit beneath the surrounding stone. This location may be suitable for a new mining operation.
+                ECHO PLAYER All required surveys have been completed. Return to the New Havarth Mining Company in Fayd.
+              ELSE
+                ECHO PLAYER A geological reading has been successfully recorded.
+              ENDIF
+            ELSE
+              ECHO PLAYER A geological reading has been successfully recorded.
+              IFVAR INTNUM1049 = 1
+                ECHO PLAYER All required surveys have been completed. Return to the New Havarth Mining Company in Fayd.
+              ENDIF
+            ENDIF
+          ENDIF
+        ENDIF
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9401: talking to Edric about work, a survey or a report. The stage
+; checks run from 8 down to 1, so starting assignment N+1 (which raises the
+; stage) can't also trigger a later check in the same call.
+MACRO 9401
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 0
+    ECHO PLAYER Edric Havarth leans back in his chair. "Welcome to New Havarth Mining! You'll forgive the scaffolding. We intend to be around long enough to finish the building."
+    ECHO PLAYER "My sister Mara has developed a surveying instrument, and I need someone willing to put it to use. The caves south of Fayd are our first concern. Take some readings, return with your findings, and I'll see you're properly compensated."
+    ECHO PLAYER Mara Havarth bustles in from the surveying room and presses a brass instrument into your hands. "Three readings from the Inner Sea caves. The way in is the opening in the rocks at the water's edge. Use the instrument with SURVEY, and don't drop it down a hole."
+    ECHO OTHERS Edric Havarth offers %N an assignment, and Mara hands %i a brass instrument.
+    NEWITEM -1 9400 ADJ1=32 ADJ2=9400
+    EQUAL INTNUM1040 1
+    CALL 9408
+  ELSE
+    IFVAR INTNUM1046 = 1
+      CALL 9409
+    ELSE
+      IFVAR INTNUM1040 = 8
+        ECHO PLAYER Edric Havarth grins and taps a fresh pin deep in the Teeth of Shartan. "The expedition is being outfitted as we speak. Bram is having palpitations. When we break ground up there, it'll be on your readings, and I won't forget it."
+      ENDIF
+      IFVAR INTNUM1040 = 7
+        ECHO PLAYER Edric taps the mountains on his map. "The Teeth of Shartan. Five readings. Ask Mara where, if you've forgotten, and come back alive."
+      ENDIF
+      IFVAR INTNUM1040 = 6
+        ECHO PLAYER Edric Havarth stands and spreads his hands across the mountains on his map. "You've surveyed our caves, investigated a forgotten mine, and returned from the Grymwood with findings that have my sister practically sleeping over her maps."
+        ECHO PLAYER "Now comes the real opportunity. The Teeth of Shartan. Dangerous country, certainly, but I believe those mountains conceal deposits that could make this company the wealthiest mining concern in Fayd."
+        ECHO PLAYER "I need someone capable of exploring those mountains and returning alive with reliable geological readings. Find me a place worth digging, and you'll receive considerably more than a handful of coins."
+        ECHO PLAYER Mara joins him at the map. "The mountains are vast, and you'll need readings from several elevations. Don't mistake a single rich vein for a workable deposit. We need evidence of something substantial. Come and ask me where, and I'll show you." She pauses. "And please, remember that a dead surveyor is of very little use to us."
+        ECHO OTHERS Edric Havarth gives %N a new assignment.
+        EQUAL INTNUM1040 7
+        CALL 9408
+      ENDIF
+      IFVAR INTNUM1040 = 5
+        ECHO PLAYER Edric taps the pin marking the Matriarch Tree. "The Grymwood. Three readings around the Matriarch, then back to Mara."
+      ENDIF
+      IFVAR INTNUM1040 = 4
+        ECHO PLAYER Edric Havarth lowers his voice. "Mara's been studying some rather peculiar geological accounts from the Grymwood. Apparently, the earth surrounding the great Matriarch Tree contains stone unlike anything found nearer Fayd."
+        ECHO PLAYER "I want you to investigate. Mind you, we're looking for minerals, not trouble with whatever calls that forest home. Take your readings and leave the tree standing."
+        ECHO PLAYER Mara looks in from the doorway. "Three readings: one at the foot of the Matriarch, one in the room beneath her roots, and one in the little chamber at the end of the crevice below that. And Edric, she means it about the tree."
+        ECHO OTHERS Edric Havarth gives %N a new assignment.
+        EQUAL INTNUM1040 5
+        CALL 9408
+      ENDIF
+      IFVAR INTNUM1040 = 3
+        ECHO PLAYER Edric taps the pin marking the old dig east of the city. "The Abandoned Dig, one reading on each level. When you're done, see Mara."
+      ENDIF
+      IFVAR INTNUM1040 = 2
+        ECHO PLAYER Edric Havarth rubs his chin. "You've proven you can handle yourself underground. Now I have something a little less pleasant."
+        ECHO PLAYER "There's an old excavation east of Fayd, abandoned years ago. Nobody seems entirely certain why the operation ceased. I'd like to know whether the stone is exhausted or the previous owners simply lost their nerve."
+        ECHO PLAYER Mara calls from the next room, "Four readings from the Abandoned Dig, one on each level of the shaft. The old platform still works, if you don't mind the ropes."
+        ECHO OTHERS Edric Havarth gives %N a new assignment.
+        EQUAL INTNUM1040 3
+        CALL 9408
+      ENDIF
+      IFVAR INTNUM1040 = 1
+        ECHO PLAYER Edric taps the pin on his map marking the Inner Sea caves. "The caves are waiting. When you have your readings, take them to Mara."
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9402: telling Mara the readings are done.
+MACRO 9402
+IFVAR DUMMY9 = 0
+  EQUAL DUMMY2 0
+  IFVAR INTNUM1040 = 1
+    EQUAL DUMMY2 3
+  ENDIF
+  IFVAR INTNUM1040 = 3
+    EQUAL DUMMY2 4
+  ENDIF
+  IFVAR INTNUM1040 = 5
+    EQUAL DUMMY2 3
+  ENDIF
+  IFVAR INTNUM1040 = 7
+    EQUAL DUMMY2 5
+  ENDIF
+  EQUAL DUMMY3 INTNUM1041
+  ADD DUMMY3 INTNUM1042
+  ADD DUMMY3 INTNUM1043
+  ADD DUMMY3 INTNUM1044
+  ADD DUMMY3 INTNUM1045
+  STRCVT 0 DUMMY3
+  STRCVT 1 DUMMY2
+  IFVAR DUMMY2 = 0
+    IFVAR INTNUM1040 = 8
+      ECHO PLAYER Mara Havarth doesn't look up from her charts. "Those Shartan readings... I still can't sleep for thinking about them. Thank you."
+    ELSE
+      IFVAR INTNUM1040 = 0
+        ECHO PLAYER Mara Havarth glances up. "Edric hands out the assignments. Talk to him first, in the main office."
+      ELSE
+        ECHO PLAYER Mara Havarth nods toward the main office. "Your report's been paid. Edric has your next assignment whenever you're ready."
+      ENDIF
+    ENDIF
+  ELSE
+    IFVAR INTNUM1046 = 1
+      ECHO PLAYER Mara Havarth waves you toward the door. "I've already sent your report through to Edric. Go and see him."
+    ELSE
+      IFVAR DUMMY3 < DUMMY2
+        ECHO PLAYER Mara Havarth checks the dials of your instrument against her charts. "%0 of the %1 readings. Not done yet. Ask me WHERE if you need directions."
+      ELSE
+        IFVAR INTNUM1040 = 1
+          ECHO PLAYER Mara Havarth checks the dials of your instrument against her charts and nods. "Excellent. The readings suggest several deposits worth investigating. I'll prepare the report for Edric."
+        ENDIF
+        IFVAR INTNUM1040 = 3
+          ECHO PLAYER Mara Havarth studies your readings for a long moment. "Interesting. The old miners may have overlooked something. These readings deserve a closer examination. I'll prepare the report for Edric."
+        ENDIF
+        IFVAR INTNUM1040 = 5
+          ECHO PLAYER Mara Havarth stares at the dials, then at you. "These readings are extraordinary. Whatever lies beneath that forest may extend much farther than we imagined. I'll prepare the report for Edric."
+        ENDIF
+        IFVAR INTNUM1040 = 7
+          ECHO PLAYER Mara Havarth reads the dials once, then again, very slowly. "Let me see those readings... By the mountains themselves!" She snatches up the report and hurries next door. "Edric, you need to look at this!"
+        ELSE
+          ECHO PLAYER She scribbles out a report and carries it through to the main office. "Edric is waiting for you."
+        ENDIF
+        ECHO OTHERS Mara Havarth checks %N's instrument and writes up a report.
+        EQUAL INTNUM1046 1
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9403: a lost instrument. Mara replaces it for 5 gold crowns (500 copper),
+; between or during assignments. Progress is on the character, not the
+; instrument, so nothing is lost with it.
+MACRO 9403
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 0
+    ECHO PLAYER Mara Havarth sniffs. "Instruments are for company surveyors. Talk to Edric if you want work."
+  ELSE
+    IFVAR INTNUM1040 = 8
+      ECHO PLAYER Mara Havarth smiles thinly. "Your surveying days are done. Keep the instrument, if you still have it, as a memento."
+    ELSE
+      IFCARRY 9400
+        ECHO PLAYER Mara Havarth eyes the brass instrument you're carrying. "You already have one. Try not to lose it."
+      ELSE
+        IFVAR WEALTH < 500
+          ECHO PLAYER Mara Havarth folds her arms. "A replacement costs five gold crowns. Brass and glass don't grow on trees. Come back when you have it."
+        ELSE
+          SUB WEALTH 500
+          NEWITEM -1 9400 ADJ1=32 ADJ2=9400
+          ECHO PLAYER Mara Havarth sighs, takes five gold crowns from you, and hands over a new brass instrument from a drawer. "Your readings are all in the company's books, so you've lost nothing but money. Try to keep hold of this one."
+          ECHO OTHERS Mara Havarth sells %N a replacement brass instrument, with a sigh.
+        ENDIF
+      ENDIF
+    ENDIF
+  ENDIF
+ENDIF
+
+; MACRO 9404: what the instrument shows (LOOK at it, and after a reading).
+MACRO 9404
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 0
+    ECHO PLAYER The dials are all at rest. You have no assignment from the New Havarth Mining Company.
+  ENDIF
+  IFVAR INTNUM1040 = 1
+    ECHO PLAYER Survey journal: the Inner Sea caves.
+    IFVAR INTNUM1041 = 1
+      ECHO PLAYER   [recorded] the cave entrance
+    ELSE
+      ECHO PLAYER   [ needed ] the cave entrance
+    ENDIF
+    IFVAR INTNUM1042 = 1
+      ECHO PLAYER   [recorded] the tunnel where water streams down the walls
+    ELSE
+      ECHO PLAYER   [ needed ] the tunnel where water streams down the walls
+    ENDIF
+    IFVAR INTNUM1043 = 1
+      ECHO PLAYER   [recorded] the deep caverns, where the warm and cold springs meet
+    ELSE
+      ECHO PLAYER   [ needed ] the deep caverns, where the warm and cold springs meet
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 3
+    ECHO PLAYER Survey journal: the Abandoned Dig.
+    IFVAR INTNUM1041 = 1
+      ECHO PLAYER   [recorded] the upper shaft
+    ELSE
+      ECHO PLAYER   [ needed ] the upper shaft
+    ENDIF
+    IFVAR INTNUM1042 = 1
+      ECHO PLAYER   [recorded] the middle shaft
+    ELSE
+      ECHO PLAYER   [ needed ] the middle shaft
+    ENDIF
+    IFVAR INTNUM1043 = 1
+      ECHO PLAYER   [recorded] the lower shaft
+    ELSE
+      ECHO PLAYER   [ needed ] the lower shaft
+    ENDIF
+    IFVAR INTNUM1044 = 1
+      ECHO PLAYER   [recorded] the bottom of the shaft
+    ELSE
+      ECHO PLAYER   [ needed ] the bottom of the shaft
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 5
+    ECHO PLAYER Survey journal: beneath the Matriarch.
+    IFVAR INTNUM1041 = 1
+      ECHO PLAYER   [recorded] the foot of the Matriarch Tree
+    ELSE
+      ECHO PLAYER   [ needed ] the foot of the Matriarch Tree
+    ENDIF
+    IFVAR INTNUM1042 = 1
+      ECHO PLAYER   [recorded] the room beneath her roots
+    ELSE
+      ECHO PLAYER   [ needed ] the room beneath her roots
+    ENDIF
+    IFVAR INTNUM1043 = 1
+      ECHO PLAYER   [recorded] the chamber at the end of the crevice
+    ELSE
+      ECHO PLAYER   [ needed ] the chamber at the end of the crevice
+    ENDIF
+    IFVAR RNUM >= 103
+      IFVAR RNUM <= 110
+        ECHO PLAYER The needle behaves strangely here. It wavers, then swings away from north toward the distant Teeth of Shartan, and holds there for a moment before it settles.
+      ENDIF
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1040 = 7
+    ECHO PLAYER Survey journal: the Teeth of Shartan.
+    IFVAR INTNUM1041 = 1
+      ECHO PLAYER   [recorded] the ledge path, below the Padima Bridge
+    ELSE
+      ECHO PLAYER   [ needed ] the ledge path, below the Padima Bridge
+    ENDIF
+    IFVAR INTNUM1042 = 1
+      ECHO PLAYER   [recorded] the boulder heights past the Paegar Bridge
+    ELSE
+      ECHO PLAYER   [ needed ] the boulder heights past the Paegar Bridge
+    ENDIF
+    IFVAR INTNUM1043 = 1
+      ECHO PLAYER   [recorded] the landslides in the upper valley
+    ELSE
+      ECHO PLAYER   [ needed ] the landslides in the upper valley
+    ENDIF
+    IFVAR INTNUM1044 = 1
+      ECHO PLAYER   [recorded] the foot of the great dam
+    ELSE
+      ECHO PLAYER   [ needed ] the foot of the great dam
+    ENDIF
+    IFVAR INTNUM1045 = 1
+      ECHO PLAYER   [recorded] the prospect
+    ELSE
+      ECHO PLAYER   [ needed ] the prospect: survey along the Lakeside Road once the first four are done
+    ENDIF
+  ENDIF
+  IFVAR INTNUM1046 = 1
+    ECHO PLAYER Mara has your readings. Edric is waiting to see you.
+  ENDIF
+  IFVAR INTNUM1040 = 2
+    ECHO PLAYER Your last report has been paid. Edric Havarth has more work for you.
+  ENDIF
+  IFVAR INTNUM1040 = 4
+    ECHO PLAYER Your last report has been paid. Edric Havarth has more work for you.
+  ENDIF
+  IFVAR INTNUM1040 = 6
+    ECHO PLAYER Your last report has been paid. Edric Havarth has more work for you.
+  ENDIF
+  IFVAR INTNUM1040 = 8
+    ECHO PLAYER All four surveys are complete. The needle points, as it always does now, toward the Teeth of Shartan.
+  ENDIF
+ENDIF
+
+; MACRO 9405: Bram Havarth, at the counter in room 394.
+MACRO 9405
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 8
+    ECHO PLAYER Bram Havarth peers at you over his spectacles. "Ah, the surveyor. Do you know what it'll cost to put a camp in those mountains? No, of course you don't. Nobody in this family does."
+  ELSE
+    ECHO PLAYER Bram Havarth jerks a thumb toward the staircase without looking up from his book. "Master Edric's upstairs, if it's work you're after. Mind you don't track mud on the steps."
+  ENDIF
+ENDIF
+
+; MACRO 9406: where to take the readings (asking Mara WHERE).
+MACRO 9406
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 1
+    ECHO PLAYER Mara Havarth pulls a chart toward you. "The Inner Sea caves: go in through the opening in the rocks at the water's edge. One reading just inside the entrance, one in the old tunnel further down where the water streams down the walls, and one in the deep caverns through the hole at the end, where the hot and cold springs come together."
+  ENDIF
+  IFVAR INTNUM1040 = 3
+    ECHO PLAYER Mara Havarth pulls a chart toward you. "The Abandoned Dig is east of the city, past the grasslands. Ride the old platform down the shaft and take one reading on each level: upper, middle, lower and the very bottom. Pull the ropes to move it."
+  ENDIF
+  IFVAR INTNUM1040 = 5
+    ECHO PLAYER Mara Havarth pulls a chart toward you. "The Matriarch Tree, in the Grymwood. One reading at the foot of the tree, one in the room beneath her roots, and one in the little chamber at the end of the crevice below it. The tree's a dangerous place. Watch yourself."
+  ENDIF
+  IFVAR INTNUM1040 = 7
+    ECHO PLAYER Mara Havarth unrolls her largest map of the Teeth of Shartan. "Two readings in the lower mountains, before the trail up from the canyon: one on the ledge path below the Padima Bridge, and one up among the boulder heights past the Paegar Bridge."
+    ECHO PLAYER "Two more beyond the canyon trail: one where the landslides have torn open the upper valley, and one at the foot of the great dam."
+    ECHO PLAYER "When you have those four, climb to the dam top and follow the Lakeside Road, surveying as you go. Where the instrument finds something worth finding, it will show you. Take the last reading there."
+  ENDIF
+  IFVAR INTNUM1040 = 0
+    ECHO PLAYER Mara Havarth glances up. "Directions? To what? Edric hands out the assignments."
+  ENDIF
+  IFVAR INTNUM1040 = 2
+    ECHO PLAYER Mara Havarth points at the main office. "Edric has your next assignment."
+  ENDIF
+  IFVAR INTNUM1040 = 4
+    ECHO PLAYER Mara Havarth points at the main office. "Edric has your next assignment."
+  ENDIF
+  IFVAR INTNUM1040 = 6
+    ECHO PLAYER Mara Havarth points at the main office. "Edric has your next assignment."
+  ENDIF
+  IFVAR INTNUM1040 = 8
+    ECHO PLAYER Mara Havarth smiles faintly. "You've been everywhere I'd send you. For now."
+  ENDIF
+ENDIF
+
+; MACRO 9407: Tessa Havarth, in the workshop.
+MACRO 9407
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 8
+    ECHO PLAYER Tessa Havarth looks up from the whetstone. "How's the axe treating you? If you ever strike something truly valuable, remember who made it."
+  ELSE
+    ECHO PLAYER Tessa Havarth holds up a battered pickaxe. "Whoever returned this ought to be ashamed of themselves. Look at that edge!" She lowers her voice. "Father has me making something special for whoever finishes his surveys. Don't ask. It isn't done."
+  ENDIF
+ENDIF
+
+; MACRO 9408: start a fresh assignment (clear the readings and the report).
+MACRO 9408
+IFVAR DUMMY9 = 0
+  EQUAL INTNUM1041 0
+  EQUAL INTNUM1042 0
+  EQUAL INTNUM1043 0
+  EQUAL INTNUM1044 0
+  EQUAL INTNUM1045 0
+  EQUAL INTNUM1046 0
+  EQUAL INTNUM1049 0
+ENDIF
+
+; MACRO 9409: Edric accepts the report and pays. Stage goes from odd to the
+; next even number, so a report can't be paid twice. AWARD ids 1040-1043 make
+; the experience once per character even if a GM resets the stage.
+MACRO 9409
+IFVAR DUMMY9 = 0
+  IFVAR INTNUM1040 = 1
+    ECHO PLAYER Edric Havarth reads the report and slaps the desk. "A promising beginning! Bram will see you're paid. Now, I have another location that requires your attention, when you're ready for more work."
+    ECHO PLAYER Bram Havarth puffs up the stairs, counts one hundred gold crowns into your hand, and winces at every one.
+    ECHO OTHERS Edric Havarth accepts %N's survey report, and Bram pays %i, wincing.
+    ADD WEALTH 10000
+    AWARD 1040 1000
+    EQUAL INTNUM1040 2
+  ENDIF
+  IFVAR INTNUM1040 = 3
+    ECHO PLAYER Edric Havarth reads the report twice. "Well done! Perhaps there's life left in that old hole after all. Your next assignment takes you somewhere rather less conventional, when you're ready for work."
+    ECHO PLAYER Bram Havarth puffs up the stairs, counts two hundred and fifty gold crowns into your hand, and mutters about expedition expenses.
+    ECHO OTHERS Edric Havarth accepts %N's survey report, and Bram pays %i, muttering.
+    ADD WEALTH 25000
+    AWARD 1041 2000
+    EQUAL INTNUM1040 4
+  ENDIF
+  IFVAR INTNUM1040 = 5
+    ECHO PLAYER Edric Havarth sets the report down very carefully. "Three successful expeditions! You've earned my confidence, and I don't extend that lightly. I believe you're ready for the assignment that truly matters, when you're ready for work."
+    ECHO PLAYER Bram Havarth puffs up the stairs and counts five hundred gold crowns into your hand. "Gold coming in is business," he grumbles. "Gold going out is a tragedy."
+    ECHO OTHERS Edric Havarth accepts %N's survey report, and Bram pays %i, grumbling.
+    ADD WEALTH 50000
+    AWARD 1042 4000
+    EQUAL INTNUM1040 6
+  ENDIF
+  IFVAR INTNUM1040 = 7
+    ECHO PLAYER Edric Havarth pores over the report, and his face splits into a grin. "Remarkable. Absolutely remarkable! You've done more than locate another vein of ore. You've found us a potential future."
+    ECHO PLAYER Bram Havarth, peering over his shoulder, sniffs. "And an expensive future, judging by what it'll cost to establish an operation up there."
+    ECHO PLAYER "For once, Uncle, stop counting coins and consider how many we stand to earn!" Edric turns back to you. "You've served this company exceptionally well. Bram has your payment, and Tessa has prepared something special for you. Consider it a token of our gratitude, and a reminder that you'll always have friends at New Havarth Mining."
+    ECHO PLAYER Bram counts one thousand gold crowns into your hands, very slowly.
+    ECHO PLAYER Tessa Havarth comes in from the workshop carrying a mining axe wrapped in oilcloth. "Father asked me to make you something worthy of the work you've done. Best steel we could obtain, properly balanced, and fitted with a handle that'll outlast most miners." She hands it to you. "Treat it well. And if you ever strike something truly valuable, remember who gave you the axe."
+    ECHO OTHERS Edric Havarth accepts %N's report from the Teeth of Shartan. Bram pays %i, and Tessa presents %i with a masterwork mining axe.
+    ADD WEALTH 100000
+    AWARD 1043 8000
+    NEWITEM -1 9401 ADJ1=9401 ADJ2=9402
+    EQUAL INTNUM1040 8
+  ENDIF
+  EQUAL INTNUM1046 0
+  EQUAL INTNUM1049 0
+ENDIF
+
+; ── Cyclic events ─────────────────────────────────────────────────────────────
+; Keep these LAST: a CEVENT body runs until the next NUMBER/INUMBER/MNUMBER/
+; CEVENT/MACRO line, so anything after one would be swallowed into it.
+
+; CEVENT 9400 (every ~2m): a Havarth says something, in a company room with
+; someone in it.
+CEVENT 9400 40 394
+IFVAR DUMMY9 = 0
+RANDOM DUMMY1 1 8
+IFVAR DUMMY1 = 1
+  AFFECT 9400
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Edric Havarth gazes at the map on the wall. "There's wealth beneath these lands. We merely need the courage to find it."
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 2
+  AFFECT 9401
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Mara Havarth frowns at a chart. "If the latest measurements are accurate, we're looking in entirely the wrong direction."
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 3
+  AFFECT 394
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Bram Havarth glares at a delivery slip. "Another shipment of equipment? Does nobody in this family understand a budget?"
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 4
+  AFFECT 9402
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Tessa Havarth holds a pickaxe up to the light. "Whoever returned this pickaxe ought to be ashamed of themselves. Look at that edge!"
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 5
+  AFFECT 394
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Hammering and sawing echo down from the scaffolding outside, followed by a shout and a clatter of dropped tools.
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 6
+  AFFECT 9400
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Edric Havarth moves a pin on his map, frowns, and moves it back.
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 7
+  AFFECT 9401
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Mara Havarth taps a brass instrument, holds it to her ear, and sighs. "Stone doesn't lie. Surveyors sometimes do."
+  ENDIF
+ENDIF
+IFVAR DUMMY1 = 8
+  AFFECT 9402
+  IFVAR PLRSINROOM > 0
+    ECHO ALL Tessa Havarth tests the edge of a freshly ground pick with her thumb. "Good steel lasts longer than good intentions."
+  ENDIF
+ENDIF
+ENDIF
