@@ -1,5 +1,29 @@
 # Changelog
 
+## v15.12.0 — 2026-11-15
+
+Scripted traps across the realms finally hurt: falling rocks, boiling oil, firepots and more now deal the damage they always promised. Rooms that react to `DIG`, `CLIMB` and other bare commands work again, `SEARCH` no longer doubles up in rooms with their own search, `MINE WITH` lets you choose your tool, and haste now cancels every benefit of mastery.
+
+### Fixed: Scripted Traps
+- Traps that damage everyone in a room did nothing at all. About 70 of them now work: falling rocks, boiling oil, firepots, flying shrapnel, poison dust, the ceiling that slams down, and more
+- A trap can also hit the room next door. Digging out the counterweight in the Abandoned Dig rains rocks on anyone in the shaft bottom below
+
+### Fixed: Room Commands
+- `DIG`, `CLIMB`, `DRINK`, `DROP`, `GET`, `PULL`, `PUSH`, `READ`, `RUB`, `THUMP`, `TURN`, `USE`, `YELL`, `GO`, `BUY`, `GIVE` and `WIELD` on their own answered “Dig what?” even in rooms built to react to them. Those rooms respond again, like digging in the Abandoned Dig’s lower shaft
+- Rooms can now react before you `SIT`, `KNEEL`, `LAY`, `STAND`, `PRAY` or `RECALL`, not only after
+- In a room with its own search, `SEARCH` gave the ordinary search and then the room’s, with two round times. Now you get only the room’s
+
+### New: Choosing a Mining Tool
+- `MINE WITH <tool>` mines with a particular tool you carry. Plain `MINE` uses the first mining tool in the order `INVENTORY` lists them
+- Some special mining tools add ranks of Mining while you use them
+
+### Changed: Haste and Mastery
+- Haste, from the spell or psionic Speed, now cancels the psi and mana discount from psionic and spell mastery, not just the damage bonus. While hasted you pay full price
+
+### For GMs: New Havarth Mining Company quests (not live yet)
+- Four automated surveying quests for the New Havarth Mining Company, in `original/scripts/HAVARTHITEMS.SCR` and `HAVARTH.SCR`. They aren't loaded by default: load them in the GM Scripts panel to test. See `original/HAVARTH_RUNBOOK.md`
+- SURVEY now lets a carried item with its own SURVEY script handle the command, and scripts can check `INCOMBAT`
+
 ## v15.11.0 — 2026-11-13
 
 Psionicists finally have something to spend build points on besides skills. Psionic mastery works like spell mastery: each rank in a discipline lowers its psi cost, and attack disciplines hit harder. `PROJECT` and `PSI` now show their round time, and the Mind over Mind attacks take a round like everything else.

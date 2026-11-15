@@ -9,6 +9,42 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.12.0 &mdash; November 15, 2026</h2>
+            <p className="text-gray-400 mb-3">Scripted traps across the realms finally hurt: falling rocks, boiling oil, firepots and more now deal the damage they always promised. Rooms that react to <code>DIG</code>, <code>CLIMB</code> and other bare commands work again, <code>SEARCH</code> no longer doubles up in rooms with their own search, <code>MINE WITH</code> lets you choose your tool, and haste now cancels every benefit of mastery.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Scripted Traps</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Traps that damage everyone in a room did nothing at all. About 70 of them now work: falling rocks, boiling oil, firepots, flying shrapnel, poison dust, the ceiling that slams down, and more</li>
+                  <li>A trap can also hit the room next door. Digging out the counterweight in the Abandoned Dig rains rocks on anyone in the shaft bottom below</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Room Commands</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>DIG</code>, <code>CLIMB</code>, <code>DRINK</code>, <code>DROP</code>, <code>GET</code>, <code>PULL</code>, <code>PUSH</code>, <code>READ</code>, <code>RUB</code>, <code>THUMP</code>, <code>TURN</code>, <code>USE</code>, <code>YELL</code>, <code>GO</code>, <code>BUY</code>, <code>GIVE</code> and <code>WIELD</code> on their own answered &ldquo;Dig what?&rdquo; even in rooms built to react to them. Those rooms respond again, like digging in the Abandoned Dig&rsquo;s lower shaft</li>
+                  <li>Rooms can now react before you <code>SIT</code>, <code>KNEEL</code>, <code>LAY</code>, <code>STAND</code>, <code>PRAY</code> or <code>RECALL</code>, not only after</li>
+                  <li>In a room with its own search, <code>SEARCH</code> gave the ordinary search and then the room&rsquo;s, with two round times. Now you get only the room&rsquo;s</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Choosing a Mining Tool</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>MINE WITH &lt;tool&gt;</code> mines with a particular tool you carry. Plain <code>MINE</code> uses the first mining tool in the order <code>INVENTORY</code> lists them</li>
+                  <li>Some special mining tools add ranks of Mining while you use them</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Haste and Mastery</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Haste, from the spell or psionic Speed, now cancels the psi and mana discount from psionic and spell mastery, not just the damage bonus. While hasted you pay full price</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.11.0 &mdash; November 13, 2026</h2>
             <p className="text-gray-400 mb-3">Psionicists finally have something to spend build points on besides skills. Psionic mastery works like spell mastery: each rank in a discipline lowers its psi cost, and attack disciplines hit harder. <code>PROJECT</code> and <code>PSI</code> now show their round time, and the Mind over Mind attacks take a round like everything else.</p>
 
