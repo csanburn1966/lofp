@@ -1029,6 +1029,24 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	// Resolve verb abbreviations — try exact match first, then unique prefix
 	verb = resolveVerb(verb)
 
+	// Room scripts for a bare verb the handler below wouldn't run them for
+	// (see bare_verbs.go). Text from a non-blocking IFPREVERB block goes
+	// ahead of the command's own output.
+	if len(args) == 0 {
+		res, preMsgs, preRoom := e.runBareVerbRoomScripts(ctx, player, verb)
+		if res != nil {
+			return res
+		}
+		if len(preMsgs) > 0 || len(preRoom) > 0 {
+			defer func() {
+				if result != nil {
+					result.Messages = append(append([]string{}, preMsgs...), result.Messages...)
+					result.RoomBroadcast = append(append([]string{}, preRoom...), result.RoomBroadcast...)
+				}
+			}()
+		}
+	}
+
 	switch verb {
 	case "LOOK", "EXAMINE", "INSPECT":
 		if len(args) == 0 {
@@ -1484,6 +1502,20 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				return result
 			}
 			return e.doItemInteraction(ctx, player, verb, args)
+		}
+		// A room's bare SEARCH script that ends in CLEARVERB (e.g. KARTHEM.SCR
+		// room 3404's "careful search", with its own round time) replaces the
+		// generic search instead of following it.
+		if room := e.rooms[player.RoomNumber]; room != nil {
+			if sc := e.RunRoomVerbScripts(player, room, "SEARCH"); sc.Blocked {
+				if len(sc.DeferredSegments) > 0 {
+					e.scheduleScriptSegments(player, sc.DeferredSegments)
+				}
+				if sc.NeedsSave {
+					e.SavePlayer(ctx, player)
+				}
+				return &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs, PlayerState: player}
+			}
 		}
 		// Bare SEARCH: scan the area for hidden players
 		searchRT := applyRoundTime(player, 5)

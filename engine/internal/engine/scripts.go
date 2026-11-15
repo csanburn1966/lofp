@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -761,6 +762,8 @@ func (sc *ScriptContext) execAction(action gameworld.ScriptAction) {
 		sc.doRandom(action.Args)
 	case "DAMAGEPLR":
 		sc.doDamagePlr(action.Args)
+	case "DAMAGEALL":
+		sc.doDamageAll(action.Args)
 	case "AWARD":
 		sc.doAward(action.Args)
 	case "STRCVT":
@@ -2640,6 +2643,75 @@ func (sc *ScriptContext) doDamagePlr(args []string) {
 	if idx+1 < len(args) {
 		text := strings.Join(args[idx+1:], " ")
 		sc.Messages = append(sc.Messages, sc.expandScriptText(text))
+	}
+}
+
+// doDamageAll handles DAMAGEALL [type] <amount> <text...>: DAMAGEPLR for every
+// living player in the script's current room (sc.Room, so an AFFECT before it
+// aims it at another room), e.g. KARTHEM.SCR room 3404's falling rocks
+// ("DAMAGEALL CRUSH 10 %n is struck!"). Each victim takes the damage and sees
+// the text with %n etc. filled in for themselves. Like DAMAGEPLR, body points
+// stop at 0.
+func (sc *ScriptContext) doDamageAll(args []string) {
+	if len(args) < 2 || sc.Engine == nil {
+		return
+	}
+	idx := 0
+	if _, err := strconv.Atoi(args[0]); err != nil {
+		idx = 1
+	}
+	if idx >= len(args) {
+		return
+	}
+	amount, err := strconv.Atoi(args[idx])
+	if err != nil {
+		return
+	}
+	text := ""
+	if idx+1 < len(args) {
+		text = strings.Join(args[idx+1:], " ")
+	}
+	roomNum := sc.Player.RoomNumber
+	if sc.Room != nil {
+		roomNum = sc.Room.Number
+	}
+	hit := func(victim *Player) string {
+		victim.BodyPoints -= amount
+		if victim.BodyPoints < 0 {
+			victim.BodyPoints = 0
+		}
+		if text == "" {
+			return ""
+		}
+		vsc := *sc
+		vsc.Player = victim
+		return vsc.expandScriptText(text)
+	}
+	actorHit := false
+	if sc.Engine.sessions != nil {
+		for _, p := range sc.Engine.sessions.OnlinePlayers() {
+			if p.RoomNumber != roomNum || p.Dead {
+				continue
+			}
+			if p == sc.Player || p.FirstName == sc.Player.FirstName {
+				actorHit = true
+				continue
+			}
+			msg := hit(p)
+			sc.Engine.SavePlayer(context.Background(), p)
+			if msg != "" && sc.Engine.sendToPlayer != nil {
+				sc.Engine.sendToPlayer(p.FirstName, []string{msg})
+			}
+		}
+	}
+	// The player running the script is hit through sc so the change is saved
+	// and the text arrives with the rest of their command output. Covers the
+	// session list being unavailable, too.
+	if (actorHit || sc.Player.RoomNumber == roomNum) && !sc.Player.Dead {
+		if msg := hit(sc.Player); msg != "" {
+			sc.Messages = append(sc.Messages, msg)
+		}
+		sc.NeedsSave = true
 	}
 }
 
