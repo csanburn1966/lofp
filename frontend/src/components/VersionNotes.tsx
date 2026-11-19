@@ -9,6 +9,45 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.13.0 &mdash; November 19, 2026</h2>
+            <p className="text-gray-400 mb-3">Your Spellcraft now matters long after the cast: beneficial spells last longer the more Spellcraft you have and the more you have mastered them. Stalker lips, the Teiw healer and other magic finally staunch bleeding wounds with the long-lost Staunch Flow, magic items and places now cast their spells every time, and the Library of Fayd has a new entry on the city of Nyraine.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Spell Duration Grows With Spellcraft</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Beneficial timed spells (Mystic Armor, the Globes, Strength, Agility, Haste, Fly, Light, Night Vision, Camouflage, the elemental shields and the rest) now last longer as your Spellcraft rises. Up to Spellcraft 10 you get the usual duration; each 60 ranks above that adds the base duration again, so Spellcraft 70 doubles it and Spellcraft 116 nearly triples it</li>
+                  <li>Each rank of mastery in a spell adds another tenth of its duration, as the manual always promised</li>
+                  <li>Durations never stretch past three times the base, and recasting still adds one cast&rsquo;s worth up to the 4-hour limit</li>
+                  <li>Cast messages now show how long your spell will really last, and Divine Blessing shows seconds when needed (&ldquo;90 seconds&rdquo;)</li>
+                  <li>Hostile spells such as Slow, Silence, Paranoia and Imprison are unchanged</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Staunch Flow</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The long-lost spell #342, Staunch Flow, stops your wounds from draining body points while it lasts. The wounds stay open, so they bleed again when the magic fades unless they&rsquo;ve been tended</li>
+                  <li>Eating stalker lips, invoking the bloodied armor and paying the healer in Teiw all grant it. <code>HEALTH</code> tells you when your bleeding has been staunched</li>
+                  <li>Staunch Flow cannot be learned from scrolls or teachers and never turns up in treasure</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Magic Items and Places Always Cast</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Spells cast by items, rooms and quests sometimes failed to happen at all. They now always take effect, and the strength they were scripted with sets how long they last, just like a caster&rsquo;s Spellcraft</li>
+                  <li>This means the Teiw healer, who used to take your coins and do nothing, now actually tends your wounds</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: The City of Nyraine in the Library</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li><code>SAY NYRAINE</code> in the Library of Fayd&rsquo;s people and places room for a traveler&rsquo;s account of the rebuilt coastal city. It is also listed under <code>SAY INDEX</code></li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.12.1 &mdash; November 19, 2026</h2>
             <p className="text-gray-400 mb-3">Doors, ropes and passages that move you now behave: pushing the door out of the Hall of Statues actually takes you to the ledge, pulling the Abandoned Dig&rsquo;s ropes shows its round time, and people left behind can see which way you went. Hasted casters are now told why their mastered spells cost more.</p>
 

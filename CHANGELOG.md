@@ -1,5 +1,28 @@
 # Changelog
 
+## v15.13.0 — 2026-11-19
+
+Your Spellcraft now matters long after the cast: beneficial spells last longer the more Spellcraft you have and the more you have mastered them. Stalker lips, the Teiw healer and other magic finally staunch bleeding wounds with the long-lost Staunch Flow, magic items and places now cast their spells every time, and the Library of Fayd has a new entry on the city of Nyraine.
+
+### New: Spell Duration Grows With Spellcraft
+- Beneficial timed spells (Mystic Armor, the Globes, Strength, Agility, Haste, Fly, Light, Night Vision, Camouflage, the elemental shields and the rest) now last longer as your Spellcraft rises. Up to Spellcraft 10 you get the usual duration; each 60 ranks above that adds the base duration again, so Spellcraft 70 doubles it and Spellcraft 116 nearly triples it
+- Each rank of mastery in a spell adds another tenth of its duration, as the manual always promised
+- Durations never stretch past three times the base, and recasting still adds one cast's worth up to the 4-hour limit
+- Cast messages now show how long your spell will really last, and Divine Blessing shows seconds when needed ("90 seconds")
+- Hostile spells such as Slow, Silence, Paranoia and Imprison are unchanged
+
+### New: Staunch Flow
+- The long-lost spell #342, Staunch Flow, stops your wounds from draining body points while it lasts. The wounds stay open, so they bleed again when the magic fades unless they've been tended
+- Eating stalker lips, invoking the bloodied armor and paying the healer in Teiw all grant it. `HEALTH` tells you when your bleeding has been staunched
+- Staunch Flow cannot be learned from scrolls or teachers and never turns up in treasure
+
+### Changed: Magic Items and Places Always Cast
+- Spells cast by items, rooms and quests sometimes failed to happen at all. They now always take effect, and the strength they were scripted with sets how long they last, just like a caster's Spellcraft
+- This means the Teiw healer, who used to take your coins and do nothing, now actually tends your wounds
+
+### New: The City of Nyraine in the Library
+- `SAY NYRAINE` in the Library of Fayd's people and places room for a traveler's account of the rebuilt coastal city. It is also listed under `SAY INDEX`
+
 ## v15.12.1 — 2026-11-19
 
 Doors, ropes and passages that move you now behave: pushing the door out of the Hall of Statues actually takes you to the ledge, pulling the Abandoned Dig's ropes shows its round time, and people left behind can see which way you went. Hasted casters are now told why their mastered spells cost more.
