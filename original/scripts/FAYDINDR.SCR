@@ -590,6 +590,15 @@ IFSAY Deep_Realms
   ECHO PLAYER A vast network of natural caverns and passageways combine to form the Deep Realms. Within its dark depths can be found many creatures and many mysteries. The beauty of the Crystal Caverns is said to be breathtaking and amongst the other places to visit are Kragenholm, the town of the Deeplanders and the Gurkan Village. It is said that through the Deep Realms one can find paths that lead to the realm of the Sharkhor and also to alternate planes.
   ECHO PLAYER The entrance to the Deep Realms is well hidden, but some say that Menelian the Sage of the Grymwood can aid the intrepid adventurer.
 ENDIF
+IFSAY Nyraine
+  ECHO PLAYER A Lorekeeper brings you a well-worn journal titled "The City of Nyraine"...
+  ECHO PLAYER %c
+  ECHO PLAYER An excerpt from the collected observations of an unnamed traveler.
+  ECHO PLAYER %c
+  ECHO PLAYER West of the ancient woodlands, where the forest meets the rugged coastline, stands the picturesque city of Nyraine, a settlement recently restored from the ravages of some past calamity. Approaching along Forest Road, the traveler passes beneath towering trees adorned in autumn's crimson and gold, their fallen leaves concealing old scorch marks upon the earth. Beyond the western gates, Cherry Street welcomes visitors with rows of newly rebuilt homes, their open windows carrying the cheerful sounds of a community reborn. A restored General Store occupies the northwest corner near the entrance, while farther north, at the intersection of Cherry and Elder Streets, stands the city's tavern amid pleasant residences, carefully tended gardens, and young shade trees. Eastward along Elder Street, the intersection with Larch Street is bordered by handsome three-story dwellings, their uniform construction reflecting the practical spirit of Nyraine's rebuilding. Dominating the northern quarter is the magnificent Keep of Nyraine, a red-stone fortress set against a towering white rock formation, its restored walls and crystal windows guarded by sentries wearing black-and-white livery. A massive white steel gate protects its entrance, while a well-traveled path winds northward toward the rocky heights.
+  ECHO PLAYER %c
+  ECHO PLAYER To the south, Larch Street leads toward the city's protective walls and a charming garden park, where delicate woodland plants flourish under the watchful care of elder members of the Amber Eye's pack. Here, carefully laid cobblestones wind among transplanted forest growth, offering a peaceful refuge from the surrounding wilderness. Beyond the southern walls, jagged coastal rocks rise above the crashing surf, and the salt-laden mist of the nearby ocean occasionally drifts across the streets. Elsewhere, sturdy iron gates, newly restored buildings, and well-maintained thoroughfares bear witness to a people determined to reclaim their home. The ancient forests beyond the northern walls stand in striking contrast to the freshly constructed city, their towering boughs sheltering a settlement that has clearly endured considerable hardship. Though the scars of destruction remain visible along the western approaches, Nyraine is a city of renewal, where industry, natural beauty, and the resilience of its inhabitants have transformed a place once scarred by ruin into a flourishing coastal refuge.
+ENDIF
 IFSAY index
   ECHO PLAYER A Lorekeeper informs you that the following subjects can be found at this time...
   ECHO PLAYER ...SIRYX
@@ -604,6 +613,7 @@ IFSAY index
   ECHO PLAYER ...HEROES HILL
   ECHO PLAYER ...SHARTAN
   ECHO PLAYER ...DEEP REALMS
+  ECHO PLAYER ...NYRAINE
 ENDIF
 ;
 NUMBER 39
