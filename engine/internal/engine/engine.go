@@ -966,7 +966,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 						if len(sc.PreMoveMsgs) > 0 {
 							result.OldRoomMsg = sc.PreMoveMsgs
 						} else {
-							result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+							// A scripted exit still names its direction ("X goes north."),
+							// as an unscripted one does.
+							exitMsg, _ := npcStyleMovementText(player, strings.ToLower(canonicalVerb))
+							result.OldRoomMsg = []string{exitMsg}
 						}
 						result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 						e.applyEntryScripts(ctx, player, dest, result)
@@ -987,7 +990,10 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 						if len(sc.PreMoveMsgs) > 0 {
 							result.OldRoomMsg = sc.PreMoveMsgs
 						} else {
-							result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+							// A scripted exit still names its direction ("X goes north."),
+							// as an unscripted one does.
+							exitMsg, _ := npcStyleMovementText(player, strings.ToLower(canonicalVerb))
+							result.OldRoomMsg = []string{exitMsg}
 						}
 						result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 						e.applyEntryScripts(ctx, player, dest, result)
@@ -1712,7 +1718,12 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 					flyResult.Exits = flyLook.Exits
 					flyResult.Items = flyLook.Items
 					flyResult.OldRoom = flyOrigRoom
-					flyResult.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+					flyDir := "upward"
+					if verb == "DESCEND" {
+						flyDir = "downward"
+					}
+					flyExit, _ := npcStyleMovementText(player, flyDir)
+					flyResult.OldRoomMsg = []string{flyExit}
 					flyResult.RoomBroadcast = append(flyResult.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 					e.applyEntryScripts(ctx, player, flyDest, flyResult)
 				}

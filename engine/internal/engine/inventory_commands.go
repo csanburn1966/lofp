@@ -89,6 +89,7 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 		}
 		result.Messages = append(result.Messages, sc2.Messages...)
 		result.GMBroadcast = append(result.GMBroadcast, sc2.GMMsgs...)
+		appendScriptRoundTime(result, sc0, sc, sc2)
 		// PLREVENT/CONTPLREVENT-deferred actions (e.g. a multi-stage scripted sequence)
 		// must be scheduled, or everything after the delay is lost.
 		for _, segs := range [][]ScriptSegment{sc0.DeferredSegments, sc.DeferredSegments, sc2.DeferredSegments} {
@@ -101,6 +102,12 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 		// later save that a crash or redeploy could pre-empt.
 		if sc0.NeedsSave || sc.NeedsSave || sc2.NeedsSave {
 			e.SavePlayer(ctx, player)
+		}
+		// MOVEGROUP (e.g. KARTHEM.SCR room 3406's PUSH DOOR spilling everyone out
+		// onto the ledge) used to be dropped here: only MoveTo was honored, so the
+		// player saw the exit message but never left the room.
+		if dest := scriptMoveGroupDest(sc0, sc, sc2); dest > 0 {
+			return e.finishItemMoveGroup(ctx, player, result, dest, sc0, sc, sc2)
 		}
 		moveTo := sc0.MoveTo
 		if sc.MoveTo > 0 {
@@ -237,6 +244,7 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 			// Run IFVERB blocks
 			sc2 := e.RunVerbScripts(player, room, verb, &tempRI, itemDef)
 			result.Messages = append(result.Messages, sc2.Messages...)
+			appendScriptRoundTime(result, sc0, sc1, sc2)
 			// Persist player state if ROUTINE or similar modified it
 			if sc0.NeedsSave || sc1.NeedsSave || sc2.NeedsSave {
 				e.SavePlayer(ctx, player)
@@ -247,6 +255,9 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 				if len(segs) > 0 {
 					e.scheduleScriptSegments(player, segs)
 				}
+			}
+			if dest := scriptMoveGroupDest(sc0, sc1, sc2); dest > 0 {
+				return e.finishItemMoveGroup(ctx, player, result, dest, sc0, sc1, sc2)
 			}
 			moveTo := sc0.MoveTo
 			if sc1.MoveTo > 0 {
@@ -312,6 +323,52 @@ func (e *GameEngine) doItemInteraction(ctx context.Context, player *Player, verb
 	}
 
 	return &CommandResult{Messages: []string{"You don't see that here."}}
+}
+
+// appendScriptRoundTime shows the round time a script set with EQUAL ROUNDTIME
+// (e.g. KARTHEM.SCR's platform ropes, PULL ROPE → 20 sec) as the usual
+// "[Round: N sec]" line, unless a message already carries one. The longest
+// stage wins.
+func appendScriptRoundTime(result *CommandResult, scs ...*ScriptContext) {
+	rt := 0
+	for _, sc := range scs {
+		if sc != nil && sc.RoundTimeSet > rt {
+			rt = sc.RoundTimeSet
+		}
+	}
+	if rt > 0 && !messagesHaveRoundTime(result.Messages) {
+		result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", rt))
+	}
+}
+
+// scriptMoveGroupDest returns the last MOVEGROUP destination set by any of the
+// script stages, or 0 if none fired.
+func scriptMoveGroupDest(scs ...*ScriptContext) int {
+	dest := 0
+	for _, sc := range scs {
+		if sc != nil && sc.MoveGroupTo > 0 {
+			dest = sc.MoveGroupTo
+		}
+	}
+	return dest
+}
+
+// finishItemMoveGroup completes an item verb whose script fired MOVEGROUP: the
+// script's room echoes go to the room being left, and everyone in it (the actor
+// included) is moved to dest, each getting the new room's look from moveGroupToRoom.
+// result already holds the actor's script messages.
+func (e *GameEngine) finishItemMoveGroup(ctx context.Context, player *Player, result *CommandResult, dest int, scs ...*ScriptContext) *CommandResult {
+	for _, sc := range scs {
+		if sc != nil {
+			result.OldRoomMsg = append(result.OldRoomMsg, sc.RoomMsgs...)
+		}
+	}
+	if len(result.OldRoomMsg) > 0 {
+		result.OldRoom = player.RoomNumber
+	}
+	appendScriptRoundTime(result, scs...)
+	e.moveGroupToRoom(ctx, player.RoomNumber, dest)
+	return result
 }
 
 // doBreak handles the BREAK verb (synonym DESTROY). Scripted reactions to BREAK

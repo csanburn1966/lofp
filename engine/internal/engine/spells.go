@@ -379,6 +379,15 @@ func effectiveManaCost(spell *SpellDef, mastery int) int {
 	return cost
 }
 
+// hasteNegatesMasteryMsg tells a hasted caster why a mastered spell costs full
+// price, naming the source: maintained psionic Speed (42) or the Haste spell.
+func hasteNegatesMasteryMsg(player *Player) string {
+	if player.ActivePsi[42] {
+		return "Your mastery of that spell is negated by your psionic speed."
+	}
+	return "Your mastery of that spell is negated by your haste spell."
+}
+
 // isHasted returns true if the player is currently under any haste effect (spell or psionic).
 func isHasted(player *Player) bool {
 	return !player.HasteExpiry.IsZero() && time.Now().Before(player.HasteExpiry)
@@ -923,7 +932,11 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	// A cast that actually goes off (mana spent, target found) keeps an Ephemeral
 	// on the physical plane — see ephemeral.go.
 	committed := false
+	masteryNote := "" // set below when haste negates this spell's mastery
 	defer func() {
+		if committed && res != nil && masteryNote != "" {
+			res.Messages = append([]string{masteryNote}, res.Messages...)
+		}
 		if committed && res != nil && !res.TargetNotFound {
 			res = ephemeralGoOnOffense(player, res)
 		}
@@ -983,12 +996,19 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 	// cancels mastery (MAGIC.TXT), so a hasted caster pays full price.
 	mastery := spellMasteryLevel(player, spell)
 	if isHasted(player) {
+		if mastery > 0 {
+			masteryNote = hasteNegatesMasteryMsg(player)
+		}
 		mastery = 0
 	}
 	manaCost := effectiveManaCost(spell, mastery)
 	if player.Mana < manaCost {
 		player.PreparedSpell = 0
-		return &CommandResult{Messages: []string{fmt.Sprintf("Not enough mana! (%s requires %d, you have %d)", spell.Name, manaCost, player.Mana)}}
+		msgs := []string{fmt.Sprintf("Not enough mana! (%s requires %d, you have %d)", spell.Name, manaCost, player.Mana)}
+		if masteryNote != "" {
+			msgs = append([]string{masteryNote}, msgs...)
+		}
+		return &CommandResult{Messages: msgs}
 	}
 
 	// Check roundtime

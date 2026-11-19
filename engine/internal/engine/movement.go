@@ -759,7 +759,9 @@ func (e *GameEngine) runGoItemScripts(ctx context.Context, player *Player, room 
 			result.Exits = lookResult.Exits
 			result.Items = lookResult.Items
 			result.OldRoom = originalRoom
-			result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+			// Name what they went through, as doGoPortal does ("X goes through a hole.").
+			result.OldRoomMsg = []string{fmt.Sprintf("%s goes through %s.", player.DisplayNameCap(),
+				e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))}
 			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 			e.applyEntryScripts(ctx, player, dest, result)
 		}
@@ -1063,7 +1065,9 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 						if len(sc.PreMoveMsgs) > 0 {
 							result.OldRoomMsg = sc.PreMoveMsgs
 						} else {
-							result.OldRoomMsg = []string{fmt.Sprintf("%s leaves.", player.DisplayNameCap())}
+							// Name what they climbed, as doGoPortal's CLIMB does ("X climbs a rope.").
+							result.OldRoomMsg = []string{fmt.Sprintf("%s climbs %s.", player.DisplayNameCap(),
+								e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))}
 						}
 						result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
 						e.applyEntryScripts(ctx, player, dest, result)

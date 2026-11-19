@@ -581,9 +581,13 @@ func (e *GameEngine) runPutIntoTargetScripts(ctx context.Context, player *Player
 	// no-CLEARVERB success branch (e.g. one that echoes progress and defers the rest via
 	// PLREVENT) falls through to the generic container-transfer code below, which
 	// silently discards the script's messages and duplicates/overrides its own handling.
-	if !sc.Blocked && sc.MoveTo == 0 && len(sc.Messages) == 0 && len(sc.RoomMsgs) == 0 &&
+	if !sc.Blocked && sc.MoveTo == 0 && sc.MoveGroupTo == 0 && len(sc.Messages) == 0 && len(sc.RoomMsgs) == 0 &&
 		len(sc.GMMsgs) == 0 && len(sc.DeferredSegments) == 0 {
 		return nil, false
+	}
+	if sc.MoveGroupTo > 0 {
+		result = &CommandResult{Messages: sc.Messages, GMBroadcast: sc.GMMsgs}
+		return e.finishItemMoveGroup(ctx, player, result, sc.MoveGroupTo, sc), true
 	}
 	result = &CommandResult{Messages: sc.Messages, RoomBroadcast: sc.RoomMsgs, GMBroadcast: sc.GMMsgs}
 	if sc.MoveTo > 0 {
