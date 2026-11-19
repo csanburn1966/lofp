@@ -9,6 +9,39 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.12.1 &mdash; November 19, 2026</h2>
+            <p className="text-gray-400 mb-3">Doors, ropes and passages that move you now behave: pushing the door out of the Hall of Statues actually takes you to the ledge, pulling the Abandoned Dig&rsquo;s ropes shows its round time, and people left behind can see which way you went. Hasted casters are now told why their mastered spells cost more.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Doors and Passages That Move a Group</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Pushing the door in Karthemos, Hall of Statues gave the message about spilling out onto the ledge, but left everyone in the room. It now takes you, and anyone with you, out to the ledge</li>
+                  <li>The same applied to every <code>PUSH</code>, <code>PULL</code>, <code>TOUCH</code>, <code>TURN</code>, <code>TAP</code>, <code>RUB</code>, <code>KICK</code> or <code>PUT</code> that is meant to move everyone in the room. Those all move the group now</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Round Time on Scripted Objects</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Pulling the ropes in the Abandoned Dig, and other scripted <code>PUSH</code>, <code>PULL</code>, <code>TURN</code> and similar actions, set a round time without showing it. They now show <code>[Round: N sec]</code> like everything else</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Fixed: Seeing Where People Went</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>When someone left through a scripted exit, a passage, or something they climbed, everyone left behind only saw &ldquo;X leaves.&rdquo; Now you see &ldquo;X goes north.&rdquo;, &ldquo;X goes through a narrow crack.&rdquo; or &ldquo;X climbs a frayed rope.&rdquo;, the same as ordinary movement. This matters most when you aren&rsquo;t in their group, or after a group disbands</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: Haste and Mastery</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Casting a mastered spell while hasted now tells you why it costs full price: &ldquo;Your mastery of that spell is negated by your haste spell.&rdquo; (or &ldquo;by your psionic speed.&rdquo;)</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.12.0 &mdash; November 15, 2026</h2>
             <p className="text-gray-400 mb-3">Scripted traps across the realms finally hurt: falling rocks, boiling oil, firepots and more now deal the damage they always promised. Rooms that react to <code>DIG</code>, <code>CLIMB</code> and other bare commands work again, <code>SEARCH</code> no longer doubles up in rooms with their own search, <code>MINE WITH</code> lets you choose your tool, and haste now cancels every benefit of mastery.</p>
 

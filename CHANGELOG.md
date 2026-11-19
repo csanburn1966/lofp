@@ -1,5 +1,22 @@
 # Changelog
 
+## v15.12.1 — 2026-11-19
+
+Doors, ropes and passages that move you now behave: pushing the door out of the Hall of Statues actually takes you to the ledge, pulling the Abandoned Dig's ropes shows its round time, and people left behind can see which way you went. Hasted casters are now told why their mastered spells cost more.
+
+### Fixed: Doors and Passages That Move a Group
+- Pushing the door in Karthemos, Hall of Statues gave the message about spilling out onto the ledge, but left everyone in the room. It now takes you, and anyone with you, out to the ledge
+- The same applied to every `PUSH`, `PULL`, `TOUCH`, `TURN`, `TAP`, `RUB`, `KICK` or `PUT` that is meant to move everyone in the room. Those all move the group now
+
+### Fixed: Round Time on Scripted Objects
+- Pulling the ropes in the Abandoned Dig, and other scripted `PUSH`, `PULL`, `TURN` and similar actions, set a round time without showing it. They now show `[Round: N sec]` like everything else
+
+### Fixed: Seeing Where People Went
+- When someone left through a scripted exit, a passage, or something they climbed, everyone left behind only saw "X leaves." Now you see "X goes north.", "X goes through a narrow crack." or "X climbs a frayed rope.", the same as ordinary movement. This matters most when you aren't in their group, or after a group disbands
+
+### Changed: Haste and Mastery
+- Casting a mastered spell while hasted now tells you why it costs full price: "Your mastery of that spell is negated by your haste spell." (or "by your psionic speed.")
+
 ## v15.12.0 — 2026-11-15
 
 Scripted traps across the realms finally hurt: falling rocks, boiling oil, firepots and more now deal the damage they always promised. Rooms that react to `DIG`, `CLIMB` and other bare commands work again, `SEARCH` no longer doubles up in rooms with their own search, `MINE WITH` lets you choose your tool, and haste now cancels every benefit of mastery.
