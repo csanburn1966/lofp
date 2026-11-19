@@ -159,8 +159,9 @@ func (e *GameEngine) regenTick() {
 			changed = true
 		}
 
-		// Bleeding damage (from unhealed slash/puncture wounds) — Mist Form / Slime Form immune.
-		if p.Bleeding && !died && !p.IsFormLocked() {
+		// Bleeding damage (from unhealed slash/puncture wounds) — Mist Form / Slime Form
+		// immune, and stopped while Staunch Flow (342) is active.
+		if p.Bleeding && !died && !p.IsFormLocked() && !hasStaunchFlow(p) {
 			total := 0
 			for _, w := range p.Wounds {
 				if w.Bleeding {
@@ -297,7 +298,11 @@ func (e *GameEngine) regenTick() {
 				}
 				changed = true
 				if e.sendToPlayer != nil {
-					e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("The %s fades.", b.SpellName)})
+					msg := fmt.Sprintf("The %s fades.", b.SpellName)
+					if b.SpellID == staunchFlowSpellID && p.Bleeding {
+						msg = "The magic staunching your wounds fades, and they begin to bleed again."
+					}
+					e.sendToPlayer(p.FirstName, []string{msg})
 				}
 			} else {
 				activeBuffs = append(activeBuffs, b)

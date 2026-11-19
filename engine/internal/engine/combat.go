@@ -2754,8 +2754,8 @@ func (e *GameEngine) monsterTryStartCast(inst *MonsterInstance, def *gameworld.M
 	// "Spell attacks should work like any normal spell casting"), not CASTLEVEL: despite
 	// GMSCRIPT.DOC's "defines the duration of a creature's spell," testing showed a
 	// black muldragun's Lightning Bolt (CastTime 3) resolving in ~3 seconds, not
-	// CASTLEVEL's 20 — CASTLEVEL appears to govern something else (likely a buff/DoT
-	// spell's effect duration once cast, not yet implemented) rather than windup time.
+	// CASTLEVEL's 20. CASTLEVEL is the monster's cast level, which stretches a timed
+	// spell's duration (spellDurationMult) — unused until monsters cast timed spells.
 	castSeconds := sp.CastTime
 	if castSeconds <= 0 {
 		castSeconds = 3
@@ -4444,7 +4444,7 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 
 	// Continue or resolve an in-progress spell cast before anything else this tick —
 	// see monsterTryStartCast/resolveMonsterCast. A cast in progress fully occupies the
-	// monster (no melee, no starting a second cast) until CASTLEVEL seconds pass or it's
+	// monster (no melee, no starting a second cast) until its CastTime passes or it's
 	// disrupted by taking damage (damageMonster).
 	if inst.Casting {
 		if now.Before(inst.CastExpiry) {

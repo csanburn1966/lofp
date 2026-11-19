@@ -27,6 +27,77 @@ type SpellDef struct {
 	HealMax  int
 	DefBonus int
 	DmgType  string // "heat", "cold", "electric", "crushing", ""
+	// Unlearnable keeps a spell out of players' hands: it can't be studied from a
+	// scroll or taught with TRAIN, and random loot (scrolls, magic jewelry) never
+	// carries it. Item and room scripts (SPELL <id>) and GMs can still cast it.
+	Unlearnable bool
+}
+
+// spellDurationMult is how much a caster stretches a timed spell's normal
+// duration. Cast level is the caster's Spellcraft rank (or a script's SPELL
+// cast level, or a monster's CASTLEVEL): rank 10 or less casts at 1x, and each
+// 60 ranks above that adds another 1x, so Spellcraft 70 doubles the duration
+// and the Silver Arcana's ~116 training cap gives about 2.8x. Each rank of
+// mastery in the spell adds 0.1x — LEGENDS.DOC: mastery "will increase damage
+// and duration of the spell proportionally". The total is capped at 3x, and the
+// usual 4-hour cap on stacked recasts still applies on top.
+func spellDurationMult(castLevel, mastery int) float64 {
+	m := 1 + float64(castLevel-10)/60
+	if m < 1 {
+		m = 1
+	}
+	m += 0.1 * float64(mastery)
+	if m > 3 {
+		m = 3
+	}
+	return m
+}
+
+// spellDurationMult returns the multiplier p's casts of spell get from their
+// Spellcraft rank and mastery of that spell (see the package-level function).
+func (p *Player) spellDurationMult(spell *SpellDef) float64 {
+	return spellDurationMult(p.Skills[23], spellMasteryLevel(p, spell))
+}
+
+// scaleSpellDuration stretches a spell's base duration by mult (1x when mult
+// is unset), rounded to the second.
+func scaleSpellDuration(base time.Duration, mult float64) time.Duration {
+	if mult < 1 {
+		mult = 1
+	}
+	return time.Duration(float64(base) * mult).Round(time.Second)
+}
+
+// durationMinutes rounds d to whole minutes, at least 1, for duration messages.
+func durationMinutes(d time.Duration) int {
+	m := int((d + 30*time.Second) / time.Minute)
+	if m < 1 {
+		m = 1
+	}
+	return m
+}
+
+// minutesText formats a minute count for duration messages: "1 minute", "35 minutes".
+func minutesText(mins int) string {
+	if mins == 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", mins)
+}
+
+// blessingDurationText formats Divine Blessing's short duration, which scales
+// from a 1-minute base: "1 minute", "90 seconds", "3 minutes".
+func blessingDurationText(d time.Duration) string {
+	if d%time.Minute == 0 {
+		return minutesText(int(d / time.Minute))
+	}
+	return fmt.Sprintf("%d seconds", int(d.Round(time.Second)/time.Second))
+}
+
+// spellObtainable reports whether a spell may be learned by players or rolled
+// onto random loot — false for Unlearnable spells.
+func spellObtainable(sp SpellDef) bool {
+	return !sp.Unlearnable
 }
 
 // spellRegistry holds all defined spells.
@@ -143,6 +214,7 @@ func init() {
 		{ID: 339, Name: "Destroy Undead I", School: "Necromancy", Level: 3, ManaCost: 5, CastTime: 3, Effect: "damage", DmgMin: 8, DmgMax: 20, DmgType: ""},
 		{ID: 340, Name: "Destroy Undead II", School: "Necromancy", Level: 8, ManaCost: 12, CastTime: 3, Effect: "damage", DmgMin: 15, DmgMax: 40, DmgType: ""},
 		{ID: 341, Name: "Destroy Undead III", School: "Necromancy", Level: 13, ManaCost: 20, CastTime: 3, Effect: "damage", DmgMin: 25, DmgMax: 60, DmgType: ""},
+		{ID: 342, Name: "Staunch Flow", School: "Necromancy", Level: 6, ManaCost: 8, CastTime: 3, Effect: "defense", Unlearnable: true}, // spells.txt "342: Staunch Flow ?" (no level: never on the learnable list). Stops bleeding damage for 20 min per cast, 4-hour cap; cast by stalker lips, armor and healer scripts (castStaunchFlowSpell)
 		{ID: 343, Name: "Regeneration", School: "Necromancy", Level: 27, ManaCost: 35, CastTime: 4, Effect: "heal", HealMin: 40, HealMax: 80},
 		{ID: 345, Name: "Spectral Sword", School: "Necromancy", Level: 7, ManaCost: 10, CastTime: 3, Effect: "damage", DmgMin: 6, DmgMax: 22, DmgType: ""},
 		{ID: 347, Name: "Divine Blessing", School: "Necromancy", Level: 10, ManaCost: 12, CastTime: 3, Effect: "buff"},
@@ -498,7 +570,7 @@ func (e *GameEngine) doLearn(ctx context.Context, player *Player, args []string)
         }
 
         spell := FindSpellByID(spellNum)
-        if spell == nil {
+        if spell == nil || !spellObtainable(*spell) {
             return &CommandResult{Messages: []string{"The scroll's magic is beyond comprehension."}}
         }
 
@@ -570,6 +642,9 @@ func schoolSkillID(school string) int {
 
 // trainSpellFromTeacher handles learning a spell from a player teacher via TRAIN.
 func (e *GameEngine) trainSpellFromTeacher(ctx context.Context, player *Player, teacher *Player, spell *SpellDef) *CommandResult {
+	if !spellObtainable(*spell) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s cannot be taught.", spell.Name)}}
+	}
 	if player.KnownSpells[spell.ID] {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You already know %s.", spell.Name)}}
 	}
@@ -1162,6 +1237,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castSpellShieldSpell(player, spell, args)
 		} else if spell.ID == 235 { // Cloak Mind — psi resistance, grants no defense bonus
 			result = e.castCloakMindSpell(player, spell, args)
+		} else if spell.ID == staunchFlowSpellID { // Staunch Flow — stops bleeding damage, grants no defense bonus
+			result = e.castStaunchFlowSpell(player, spell, args)
 		} else {
 			result = e.castTimedDefenseSpell(player, spell, args)
 		}
@@ -1396,6 +1473,9 @@ func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spel
 		}
 		if spell.ID == 235 {
 			return e.castCloakMindSpell(player, spell, nil)
+		}
+		if spell.ID == staunchFlowSpellID {
+			return e.castStaunchFlowSpell(player, spell, nil)
 		}
 		return e.castTimedDefenseSpell(player, spell, nil)
 	case "buff":
@@ -3271,9 +3351,9 @@ func (e *GameEngine) notifySummonerOfBuff(caster *Player, inst *MonsterInstance,
 // buff. Shared by CAST (castMysticArmor) and item-triggered casts
 // (applyItemSpellOnPlayer) so a Mystic Armor potion behaves like the spell.
 // Returns minutes remaining and whether this was a brand-new buff.
-func applyMysticArmorBuff(target *Player, spell *SpellDef) (mins int, applied bool) {
+func applyMysticArmorBuff(target *Player, spell *SpellDef, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	curActive := target.MysticArmorBonus > 0 && !target.MysticArmorExpiry.IsZero() && time.Now().Before(target.MysticArmorExpiry)
 	if curActive {
@@ -3290,7 +3370,7 @@ func applyMysticArmorBuff(target *Player, spell *SpellDef) (mins int, applied bo
 	target.MysticArmorBonus = bonus
 	target.MysticArmorExpiry = time.Now().Add(stackDuration)
 	target.DefenseBonus += bonus
-	return 20, true
+	return durationMinutes(stackDuration), true
 }
 
 // castMysticArmor handles Mystic Armor (spell 102) as a temporary defense buff.
@@ -3305,7 +3385,7 @@ func (e *GameEngine) castMysticArmor(player *Player, spell *SpellDef, args []str
 		return e.castMysticArmorOnMonster(player, spell, mInst, mDef)
 	}
 
-	mins, applied := applyMysticArmorBuff(target, spell)
+	mins, applied := applyMysticArmorBuff(target, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		if isSelf {
@@ -3332,7 +3412,7 @@ func (e *GameEngine) castMysticArmor(player *Player, spell *SpellDef, args []str
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and a shimmering barrier surrounds %s.", player.DisplayName(), target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you! (+%d defense, 20 minutes)", player.FirstName, spell.Name, spell.DefBonus)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you! (+%d defense, %s)", player.FirstName, spell.Name, spell.DefBonus, minutesText(mins))},
 	}
 }
 
@@ -3349,9 +3429,9 @@ func (e *GameEngine) castMysticArmor(player *Player, spell *SpellDef, args []str
 // comment describes. This re-resolves by ID under the lock and writes the real instance,
 // matching castSlowSpellOnMonster's pattern. Reported: Haste/Strength/Agility/Mystic
 // Armor/Globe of Protection etc. "don't seem to take affect" on a controlled creature.
-func (e *GameEngine) applyMysticArmorBuffMonster(inst *MonsterInstance, spell *SpellDef) (mins int, applied bool) {
+func (e *GameEngine) applyMysticArmorBuffMonster(inst *MonsterInstance, spell *SpellDef, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	e.monsterMgr.mu.Lock()
 	defer e.monsterMgr.mu.Unlock()
@@ -3372,14 +3452,14 @@ func (e *GameEngine) applyMysticArmorBuffMonster(inst *MonsterInstance, spell *S
 		}
 		cur.MysticArmorBonus = spell.DefBonus
 		cur.MysticArmorExpiry = time.Now().Add(stackDuration)
-		return 20, true
+		return durationMinutes(stackDuration), true
 	}
 	return 0, false
 }
 
 // castMysticArmorOnMonster handles Mystic Armor cast on a summoned/controlled creature.
 func (e *GameEngine) castMysticArmorOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
-	mins, applied := e.applyMysticArmorBuffMonster(inst, spell)
+	mins, applied := e.applyMysticArmorBuffMonster(inst, spell, player.spellDurationMult(spell))
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 	article := articleFor(name, def.Unique)
 
@@ -3402,9 +3482,9 @@ func (e *GameEngine) castMysticArmorOnMonster(player *Player, spell *SpellDef, i
 // same convention as the other timed buffs). Shared by CAST (castElementalShieldSpell)
 // and item-triggered casts (applyItemSpellOnPlayer). Returns minutes remaining and
 // whether this was a brand-new application (false = only extended an active one).
-func applyElementalShield(expiry *time.Time) (mins int, applied bool) {
+func applyElementalShield(expiry *time.Time, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	if !expiry.IsZero() && now.Before(*expiry) {
@@ -3417,7 +3497,7 @@ func applyElementalShield(expiry *time.Time) (mins int, applied bool) {
 	}
 
 	*expiry = now.Add(stackDuration)
-	return 20, true
+	return durationMinutes(stackDuration), true
 }
 
 // castElementalShieldSpell handles Heat Shield (507) and Cold Shield (508): while
@@ -3447,7 +3527,7 @@ func (e *GameEngine) castElementalShieldSpell(player *Player, spell *SpellDef, a
 		expiry = &target.HeatShieldExpiry
 	}
 
-	mins, applied := applyElementalShield(expiry)
+	mins, applied := applyElementalShield(expiry, player.spellDurationMult(spell))
 
 	if !applied {
 		if isSelf {
@@ -3466,7 +3546,7 @@ func (e *GameEngine) castElementalShieldSpell(player *Player, spell *SpellDef, a
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel protected from %s! (50%% resistance, 20 minutes)", spell.Name, elementName)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel protected from %s! (50%% resistance, %s)", spell.Name, elementName, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
@@ -3474,7 +3554,7 @@ func (e *GameEngine) castElementalShieldSpell(player *Player, spell *SpellDef, a
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel protected from %s! (50%% resistance, 20 minutes)", player.FirstName, spell.Name, elementName)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel protected from %s! (50%% resistance, %s)", player.FirstName, spell.Name, elementName, minutesText(mins))},
 	}
 }
 
@@ -3497,7 +3577,7 @@ func (e *GameEngine) castResistWeatherSpell(player *Player, spell *SpellDef, arg
 		}
 	}
 
-	mins, applied := applyElementalShield(&target.ResistWeatherExpiry)
+	mins, applied := applyElementalShield(&target.ResistWeatherExpiry, player.spellDurationMult(spell))
 
 	if !applied {
 		if isSelf {
@@ -3517,7 +3597,7 @@ func (e *GameEngine) castResistWeatherSpell(player *Player, spell *SpellDef, arg
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. The weather's fury will no longer trouble you! (20 minutes)", spell.Name)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. The weather's fury will no longer trouble you! (%s)", spell.Name, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
@@ -3526,7 +3606,7 @@ func (e *GameEngine) castResistWeatherSpell(player *Player, spell *SpellDef, arg
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. The weather's fury will no longer trouble you! (20 minutes)", player.FirstName, spell.Name)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. The weather's fury will no longer trouble you! (%s)", player.FirstName, spell.Name, minutesText(mins))},
 	}
 }
 
@@ -3558,7 +3638,7 @@ func (e *GameEngine) castRepelPlantsSpell(player *Player, spell *SpellDef, args 
 		expiry = &target.RepelPlantsExpiry
 	}
 
-	mins, applied := applyElementalShield(expiry)
+	mins, applied := applyElementalShield(expiry, player.spellDurationMult(spell))
 
 	if !applied {
 		if isSelf {
@@ -3578,7 +3658,7 @@ func (e *GameEngine) castRepelPlantsSpell(player *Player, spell *SpellDef, args 
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel immune to %s! (20 minutes)", spell.Name, scope)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel immune to %s! (%s)", spell.Name, scope, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
@@ -3587,7 +3667,7 @@ func (e *GameEngine) castRepelPlantsSpell(player *Player, spell *SpellDef, args 
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel immune to %s! (20 minutes)", player.FirstName, spell.Name, scope)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel immune to %s! (%s)", player.FirstName, spell.Name, scope, minutesText(mins))},
 	}
 }
 
@@ -3953,10 +4033,10 @@ func (e *GameEngine) castDispelLesserMagic(ctx context.Context, player *Player, 
 // by 20 minutes (4-hour cap) rather than stacking the bonus, matching the other
 // single-tier timed buffs (Mystic Armor, Heat/Cold Shield). Returns minutes
 // remaining and whether this was a brand-new application.
-func applyCamouflageBuff(target *Player) (mins int, applied bool) {
+func applyCamouflageBuff(target *Player, mult float64) (mins int, applied bool) {
 	const bonus = 10
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	curActive := target.CamouflageBonus > 0 && !target.CamouflageExpiry.IsZero() && now.Before(target.CamouflageExpiry)
@@ -3971,7 +4051,7 @@ func applyCamouflageBuff(target *Player) (mins int, applied bool) {
 
 	target.CamouflageBonus = bonus
 	target.CamouflageExpiry = now.Add(stackDuration)
-	return 20, true
+	return durationMinutes(stackDuration), true
 }
 
 // castCamouflageSpell handles Camouflage (521): grants the caster, or a named
@@ -3995,7 +4075,7 @@ func (e *GameEngine) castCamouflageSpell(player *Player, spell *SpellDef, args [
 		}
 	}
 
-	mins, applied := applyCamouflageBuff(target)
+	mins, applied := applyCamouflageBuff(target, player.spellDurationMult(spell))
 
 	if !applied {
 		if isSelf {
@@ -4015,7 +4095,7 @@ func (e *GameEngine) castCamouflageSpell(player *Player, spell *SpellDef, args [
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. Your skin and clothing shift to blend with your surroundings! (+10 Stealth, 20 minutes)", spell.Name)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. Your skin and clothing shift to blend with your surroundings! (+10 Stealth, %s)", spell.Name, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and blends into their surroundings.", player.DisplayName())},
 		}
 	}
@@ -4024,7 +4104,7 @@ func (e *GameEngine) castCamouflageSpell(player *Player, spell *SpellDef, args [
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and %s blends into their surroundings.", player.DisplayName(), target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. Your skin and clothing shift to blend with your surroundings! (+10 Stealth, 20 minutes)", player.FirstName, spell.Name)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. Your skin and clothing shift to blend with your surroundings! (+10 Stealth, %s)", player.FirstName, spell.Name, minutesText(mins))},
 	}
 }
 
@@ -4033,11 +4113,12 @@ func (e *GameEngine) castCamouflageSpell(player *Player, spell *SpellDef, args [
 // combat.go) for 1 minute. Per magic.txt, Divine Blessing doesn't stack
 // duration like most buffs — recasting simply resets the timer back to the
 // full minute rather than extending or stacking the bonus.
-func applyDivineBlessingBuff(target *Player) {
+func applyDivineBlessingBuff(target *Player, mult float64) time.Duration {
 	const bonus = 3
-	const duration = time.Minute
+	duration := scaleSpellDuration(time.Minute, mult)
 	target.DivineBlessingBonus = bonus
 	target.DivineBlessingExpiry = time.Now().Add(duration)
+	return duration
 }
 
 // castDivineBlessingSpell handles Divine Blessing (347): grants the caster,
@@ -4054,11 +4135,11 @@ func (e *GameEngine) castDivineBlessingSpell(player *Player, spell *SpellDef, ar
 		return e.castDivineBlessingSpellOnMonster(player, spell, mInst, mDef)
 	}
 
-	applyDivineBlessingBuff(target)
+	dur := applyDivineBlessingBuff(target, player.spellDurationMult(spell))
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, 1 minute)", spell.Name)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, %s)", spell.Name, blessingDurationText(dur))},
 			RoomBroadcast: []string{fmt.Sprintf("A warm golden light briefly surrounds %s.", player.DisplayName())},
 		}
 	}
@@ -4067,7 +4148,7 @@ func (e *GameEngine) castDivineBlessingSpell(player *Player, spell *SpellDef, ar
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("A warm golden light briefly surrounds %s.", target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, 1 minute)", player.FirstName, spell.Name)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, %s)", player.FirstName, spell.Name, blessingDurationText(dur))},
 	}
 }
 
@@ -4078,7 +4159,7 @@ func (e *GameEngine) castDivineBlessingSpell(player *Player, spell *SpellDef, ar
 // minute rather than extending it.
 func (e *GameEngine) castDivineBlessingSpellOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
 	const bonus = 15
-	const duration = time.Minute
+	duration := scaleSpellDuration(time.Minute, player.spellDurationMult(spell))
 
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 	article := articleFor(name, def.Unique)
@@ -4099,7 +4180,7 @@ func (e *GameEngine) castDivineBlessingSpellOnMonster(player *Player, spell *Spe
 
 	e.notifySummonerOfBuff(player, inst, fmt.Sprintf("%s casts %s on your %s.", player.FirstName, spell.Name, name))
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. A warm golden light surrounds it, sharpening its combat prowess! (+3 weapon skill, 1 minute)", spell.Name, article, name)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. A warm golden light surrounds it, sharpening its combat prowess! (+3 weapon skill, %s)", spell.Name, article, name, blessingDurationText(duration))},
 		RoomBroadcast: []string{fmt.Sprintf("A warm golden light briefly surrounds %s%s.", article, name)},
 	}
 }
@@ -4207,6 +4288,59 @@ func hasWizardsArmor(player *Player) bool {
 	return false
 }
 
+// staunchFlowSpellID is Staunch Flow (342): a timed ward that stops bleeding
+// wounds from draining body points. Players can't learn it (Unlearnable); it
+// comes from scripts such as eating stalker lips (ITEM3.SCR) or the bloodied
+// armor in ITEMARM.SCR, whose text reads "your bleeding has stopped".
+const staunchFlowSpellID = 342
+
+// hasStaunchFlow reports whether player has an active Staunch Flow buff. While
+// it lasts, regenTick skips bleed drain; wounds keep their bleeding flag, so an
+// unhealed wound starts bleeding again once the spell fades.
+func hasStaunchFlow(player *Player) bool {
+	now := time.Now()
+	for _, b := range player.TimedDefenseBuffs {
+		if b.SpellID == staunchFlowSpellID && now.Before(b.Expiry) {
+			return true
+		}
+	}
+	return false
+}
+
+// castStaunchFlowSpell handles Staunch Flow (342) cast directly (GMs; players
+// can't learn it). Like the other timed defense spells it lasts 20 minutes and
+// each recast adds 20 more, up to a 4-hour cap.
+func (e *GameEngine) castStaunchFlowSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
+	target := player
+	isSelf := true
+	if len(args) > 0 {
+		t := strings.ToLower(strings.Join(args, " "))
+		if t != "me" && t != "myself" && t != "self" {
+			found := e.findPlayerInRoom(player, t)
+			if found == nil {
+				return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", strings.Join(args, " "))}, TargetNotFound: true}
+			}
+			target = found
+			isSelf = false
+		}
+	}
+
+	mins, _ := applyTimedDefenseBuff(target, spell, player.spellDurationMult(spell))
+	if isSelf {
+		return &CommandResult{
+			Messages:      []string{"You gesture.", fmt.Sprintf("The flow of blood from your wounds slows and stops. (%d minutes remaining)", mins)},
+			RoomBroadcast: []string{fmt.Sprintf("%s gestures and a faint white glow settles over them.", player.DisplayName())},
+		}
+	}
+	e.SavePlayer(context.Background(), target)
+	return &CommandResult{
+		Messages:      []string{"You gesture.", fmt.Sprintf("A faint white glow settles over %s. (%d minutes remaining)", target.FirstName, mins)},
+		RoomBroadcast: []string{fmt.Sprintf("%s gestures and a faint white glow settles over %s.", player.DisplayName(), target.DisplayName())},
+		TargetName:    target.FirstName,
+		TargetMsg:     []string{fmt.Sprintf("%s gestures at you. The flow of blood from your wounds slows and stops. (%d minutes remaining)", player.DisplayName(), mins)},
+	}
+}
+
 // spellShieldResistBonus returns +25 while the player has an active Spell Shield
 // (spell 234) buff — "+25 magic resistance" per MAGIC.TXT — or 0 otherwise. Used
 // by resolveMonsterCast (combat.go) to give the target a chance to shrug off a
@@ -4268,9 +4402,9 @@ func interruptPreparedSpell(player *Player) string {
 // CAST (castTimedDefenseSpell) and item-triggered casts (applyItemSpellOnPlayer) so a
 // defense-spell potion behaves exactly like the spell of the same name. Returns
 // minutes remaining and whether this was a brand-new buff (false = extended one).
-func applyTimedDefenseBuff(target *Player, spell *SpellDef) (mins int, applied bool) {
+func applyTimedDefenseBuff(target *Player, spell *SpellDef, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	for i := range target.TimedDefenseBuffs {
@@ -4292,7 +4426,7 @@ func applyTimedDefenseBuff(target *Player, spell *SpellDef) (mins int, applied b
 		Expiry:    now.Add(stackDuration),
 	})
 	target.DefenseBonus += spell.DefBonus
-	return 20, true
+	return durationMinutes(stackDuration), true
 }
 
 // castTimedDefenseSpell handles all defense spells (except Mystic Armor which has its own function).
@@ -4308,7 +4442,7 @@ func (e *GameEngine) castTimedDefenseSpell(player *Player, spell *SpellDef, args
 		return e.castTimedDefenseSpellOnMonster(player, spell, mInst, mDef)
 	}
 
-	mins, applied := applyTimedDefenseBuff(target, spell)
+	mins, applied := applyTimedDefenseBuff(target, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		if !isSelf {
@@ -4332,7 +4466,7 @@ func (e *GameEngine) castTimedDefenseSpell(player *Player, spell *SpellDef, args
 			Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 			TargetName:    target.FirstName,
-			TargetMsg:     []string{fmt.Sprintf("%s casts %s on you! (+%d defense, 20 minutes)", player.FirstName, spell.Name, spell.DefBonus)},
+			TargetMsg:     []string{fmt.Sprintf("%s casts %s on you! (+%d defense, %s)", player.FirstName, spell.Name, spell.DefBonus, minutesText(mins))},
 		}
 	}
 	if flavor := defenseSpellFlavorText(spell.ID); flavor != "" {
@@ -4342,7 +4476,7 @@ func (e *GameEngine) castTimedDefenseSpell(player *Player, spell *SpellDef, args
 		}
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and %s takes effect! (+%d defense, 20 minutes)", spell.Name, spell.DefBonus)},
+		Messages:      []string{fmt.Sprintf("You gesture and %s takes effect! (+%d defense, %s)", spell.Name, spell.DefBonus, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 	}
 }
@@ -4354,9 +4488,9 @@ func (e *GameEngine) castTimedDefenseSpell(player *Player, spell *SpellDef, args
 //
 // A method re-resolving by ID under the lock, not a plain function mutating inst
 // directly — see applyMysticArmorBuffMonster's doc comment for why.
-func (e *GameEngine) applyTimedDefenseBuffMonster(inst *MonsterInstance, spell *SpellDef) (mins int, applied bool) {
+func (e *GameEngine) applyTimedDefenseBuffMonster(inst *MonsterInstance, spell *SpellDef, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	e.monsterMgr.mu.Lock()
@@ -4383,7 +4517,7 @@ func (e *GameEngine) applyTimedDefenseBuffMonster(inst *MonsterInstance, spell *
 			Bonus:     spell.DefBonus,
 			Expiry:    now.Add(stackDuration),
 		})
-		return 20, true
+		return durationMinutes(stackDuration), true
 	}
 	return 0, false
 }
@@ -4391,7 +4525,7 @@ func (e *GameEngine) applyTimedDefenseBuffMonster(inst *MonsterInstance, spell *
 // castTimedDefenseSpellOnMonster handles Globe of Protection I/II, Mass Protection,
 // Spectral Shield, and Ride the Lightning cast on a summoned/controlled creature.
 func (e *GameEngine) castTimedDefenseSpellOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
-	mins, applied := e.applyTimedDefenseBuffMonster(inst, spell)
+	mins, applied := e.applyTimedDefenseBuffMonster(inst, spell, player.spellDurationMult(spell))
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 	article := articleFor(name, def.Unique)
 
@@ -4404,7 +4538,7 @@ func (e *GameEngine) castTimedDefenseSpellOnMonster(player *Player, spell *Spell
 		}
 	}
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. (+%d defense, 20 minutes)", spell.Name, article, name, spell.DefBonus)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. (+%d defense, %s)", spell.Name, article, name, spell.DefBonus, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s%s.", player.DisplayName(), spell.Name, article, name)},
 	}
 }
@@ -4439,7 +4573,7 @@ func (e *GameEngine) castCarapaceSpell(player *Player, spell *SpellDef, args []s
 		}
 	}
 
-	mins, applied := applyTimedDefenseBuff(player, spell)
+	mins, applied := applyTimedDefenseBuff(player, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		return &CommandResult{
@@ -4449,7 +4583,7 @@ func (e *GameEngine) castCarapaceSpell(player *Player, spell *SpellDef, args []s
 	}
 
 	return &CommandResult{
-		Messages:      []string{"You gesture.", fmt.Sprintf("%s (+%d defense, 20 minutes)", defenseSpellFlavorText(spell.ID), spell.DefBonus)},
+		Messages:      []string{"You gesture.", fmt.Sprintf("%s (+%d defense, %s)", defenseSpellFlavorText(spell.ID), spell.DefBonus, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 	}
 }
@@ -4476,7 +4610,7 @@ func (e *GameEngine) castWizardsArmorSpell(player *Player, spell *SpellDef, args
 		}
 	}
 
-	mins, applied := applyTimedDefenseBuff(target, spell)
+	mins, applied := applyTimedDefenseBuff(target, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		if !isSelf {
@@ -4530,7 +4664,7 @@ func (e *GameEngine) castSpellShieldSpell(player *Player, spell *SpellDef, args 
 		}
 	}
 
-	mins, applied := applyTimedDefenseBuff(target, spell)
+	mins, applied := applyTimedDefenseBuff(target, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		if !isSelf {
@@ -4587,7 +4721,7 @@ func (e *GameEngine) castCloakMindSpell(player *Player, spell *SpellDef, args []
 		}
 	}
 
-	mins, applied := applyTimedDefenseBuff(target, spell)
+	mins, applied := applyTimedDefenseBuff(target, spell, player.spellDurationMult(spell))
 
 	if !applied {
 		if !isSelf {
@@ -4634,7 +4768,7 @@ func (e *GameEngine) castClawGrowthSpell(player *Player, spell *SpellDef, args [
 		}
 	}
 
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, player.spellDurationMult(spell))
 	active := !player.ClawGrowthExpiry.IsZero() && time.Now().Before(player.ClawGrowthExpiry)
 	if active {
 		player.ClawGrowthExpiry = player.ClawGrowthExpiry.Add(stackDuration)
@@ -4647,7 +4781,7 @@ func (e *GameEngine) castClawGrowthSpell(player *Player, spell *SpellDef, args [
 
 	player.ClawGrowthExpiry = time.Now().Add(stackDuration)
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Wicked claws erupt from your fingertips! (20 minutes)", spell.Name)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Wicked claws erupt from your fingertips! (%s)", spell.Name, minutesText(durationMinutes(stackDuration)))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s -- claws erupt from %s fingertips!", player.DisplayName(), spell.Name, player.Possessive())},
 	}
 }
@@ -4671,7 +4805,7 @@ func (e *GameEngine) castMindlink(player *Player, spell *SpellDef, args []string
 		}
 	}
 
-	mins, applied := applyMindlink(target)
+	mins, applied := applyMindlink(target, player.spellDurationMult(spell))
 
 	// Original wording — a touch to the temples when cast on someone else, a plain
 	// gesture on yourself; onlookers just see that the recipient "seems changed".
@@ -4709,10 +4843,10 @@ func (e *GameEngine) castMindlink(player *Player, spell *SpellDef, args []string
 // Shield. Innate telepathy (zero expiry) counts as not running, so a cast on an
 // Ephemeral just starts the normal hour. Returns minutes remaining and whether this
 // was a fresh application (false = extended an active one).
-func applyMindlink(target *Player) (mins int, applied bool) {
-	const baseDuration = time.Hour
+func applyMindlink(target *Player, mult float64) (mins int, applied bool) {
+	baseDuration := scaleSpellDuration(time.Hour, mult)
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	target.TelepathyActive = true
@@ -4725,7 +4859,7 @@ func applyMindlink(target *Player) (mins int, applied bool) {
 		return int(time.Until(target.TelepathyExpiry).Minutes()) + 1, false
 	}
 	target.TelepathyExpiry = now.Add(baseDuration)
-	return 60, true
+	return durationMinutes(baseDuration), true
 }
 
 // castEnchantmentSpell handles Enchantment I (202), II (203), III (204).
@@ -5083,9 +5217,9 @@ func shiftAdjToFreeSlot(item *InventoryItem) bool {
 // revertExpiredBladeSpell in regen.go, which clears it back to 0 on expiry.
 // Returns minutes remaining and whether this is a fresh application (false =
 // only extended/replaced an already-active imbue).
-func applyWeaponBladeBuff(item *InventoryItem, spell *SpellDef) (mins int, applied bool) {
+func applyWeaponBladeBuff(item *InventoryItem, spell *SpellDef, mult float64) (mins int, applied bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 	now := time.Now()
 
 	val3, adjID, _ := bladeSpellCrit(spell.ID)
@@ -5116,7 +5250,7 @@ func applyWeaponBladeBuff(item *InventoryItem, spell *SpellDef) (mins int, appli
 	} else {
 		item.BladeSpellAdjApplied = false
 	}
-	return 20, true
+	return durationMinutes(stackDuration), true
 }
 
 // castWeaponBladeSpell handles Storm Blade (135), Inferno Blade (136), and
@@ -5154,7 +5288,7 @@ func (e *GameEngine) castWeaponBladeSpell(player *Player, spell *SpellDef, args 
 	}
 
 	_, _, verb := bladeSpellCrit(spell.ID)
-	mins, applied := applyWeaponBladeBuff(player.Wielded, spell)
+	mins, applied := applyWeaponBladeBuff(player.Wielded, spell, player.spellDurationMult(spell))
 	// Re-derive the name — applyWeaponBladeBuff may have added/swapped the elemental
 	// adjective (or left the weapon's existing adjectives untouched if all three
 	// slots were already full; see shiftAdjToFreeSlot).
@@ -5168,7 +5302,7 @@ func (e *GameEngine) castWeaponBladeSpell(player *Player, spell *SpellDef, args 
 	}
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Your %s %s! (20 minutes)", spell.Name, newWeaponName, verb)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Your %s %s! (%s)", spell.Name, newWeaponName, verb, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 	}
 }
@@ -5192,9 +5326,9 @@ func strengthBuffTier(buffID int) int {
 // Returns the bonus this application represents, minutes remaining, whether a new/
 // upgraded buff was applied (false = only extended an existing same-tier buff), and
 // ok=false if a lower-tier spell was blocked by an active higher-tier buff.
-func applyStrengthBuff(target *Player, spell *SpellDef) (bonus, mins int, applied, ok bool) {
+func applyStrengthBuff(target *Player, spell *SpellDef, mult float64) (bonus, mins int, applied, ok bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	newTier := strengthBuffTier(spell.ID)
 	curTier := strengthBuffTier(target.StrengthBuffID)
@@ -5228,7 +5362,7 @@ func applyStrengthBuff(target *Player, spell *SpellDef) (bonus, mins int, applie
 	target.StrengthBuffID = spell.ID
 	target.StrengthBuffBonus = newBonus
 	target.StrengthBuffExpiry = time.Now().Add(stackDuration)
-	return newBonus, 20, true, true
+	return newBonus, durationMinutes(stackDuration), true, true
 }
 
 func (e *GameEngine) castStrengthSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
@@ -5240,7 +5374,7 @@ func (e *GameEngine) castStrengthSpell(player *Player, spell *SpellDef, args []s
 		return e.castStrengthSpellOnMonster(player, spell, mInst, mDef)
 	}
 
-	bonus, mins, applied, ok := applyStrengthBuff(target, spell)
+	bonus, mins, applied, ok := applyStrengthBuff(target, spell, player.spellDurationMult(spell))
 	if !ok {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and begin to cast %s, but the target already has a better Strength spell in place.", spell.Name)},
@@ -5272,7 +5406,7 @@ func (e *GameEngine) castStrengthSpell(player *Player, spell *SpellDef, args []s
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel %s! (+%d STR, 20 minutes)", spell.Name, feeling, bonus)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel %s! (+%d STR, %s)", spell.Name, feeling, bonus, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
@@ -5280,7 +5414,7 @@ func (e *GameEngine) castStrengthSpell(player *Player, spell *SpellDef, args []s
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel %s! (+%d STR, 20 minutes)", player.FirstName, spell.Name, feeling, bonus)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel %s! (+%d STR, %s)", player.FirstName, spell.Name, feeling, bonus, minutesText(mins))},
 	}
 }
 
@@ -5292,9 +5426,9 @@ func (e *GameEngine) castStrengthSpell(player *Player, spell *SpellDef, args []s
 // scales player.Strength, i.e. /5).
 // A method re-resolving by ID under the lock, not a plain function mutating inst
 // directly — see applyMysticArmorBuffMonster's doc comment for why.
-func (e *GameEngine) applyStrengthBuffMonster(inst *MonsterInstance, spell *SpellDef) (bonus, mins int, applied, ok bool) {
+func (e *GameEngine) applyStrengthBuffMonster(inst *MonsterInstance, spell *SpellDef, mult float64) (bonus, mins int, applied, ok bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	newTier := strengthBuffTier(spell.ID)
 	curTier := strengthBuffTier(inst.StrengthBuffID)
@@ -5326,14 +5460,14 @@ func (e *GameEngine) applyStrengthBuffMonster(inst *MonsterInstance, spell *Spel
 		cur.StrengthBuffBonus = newBonus
 		cur.StrengthBuffID = spell.ID
 		cur.StrengthBuffExpiry = time.Now().Add(stackDuration)
-		return newBonus, 20, true, true
+		return newBonus, durationMinutes(stackDuration), true, true
 	}
 	return 0, 0, false, false
 }
 
 // castStrengthSpellOnMonster handles Strength I/II/III cast on a summoned/controlled creature.
 func (e *GameEngine) castStrengthSpellOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
-	bonus, mins, applied, ok := e.applyStrengthBuffMonster(inst, spell)
+	bonus, mins, applied, ok := e.applyStrengthBuffMonster(inst, spell, player.spellDurationMult(spell))
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 	article := articleFor(name, def.Unique)
 
@@ -5361,7 +5495,7 @@ func (e *GameEngine) castStrengthSpellOnMonster(player *Player, spell *SpellDef,
 	feeling := strengthFeelingMap[spell.ID]
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. It looks %s! (+%d STR, 20 minutes)", spell.Name, article, name, feeling, bonus)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. It looks %s! (+%d STR, %s)", spell.Name, article, name, feeling, bonus, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s%s.", player.DisplayName(), spell.Name, article, name)},
 	}
 }
@@ -5380,9 +5514,9 @@ func agilityBuffTier(buffID int) int {
 }
 
 // applyAgilityBuff mirrors applyStrengthBuff for the Agility I/II/III tier system.
-func applyAgilityBuff(target *Player, spell *SpellDef) (bonus, mins int, applied, ok bool) {
+func applyAgilityBuff(target *Player, spell *SpellDef, mult float64) (bonus, mins int, applied, ok bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	newTier := agilityBuffTier(spell.ID)
 	curTier := agilityBuffTier(target.AgilityBuffID)
@@ -5413,7 +5547,7 @@ func applyAgilityBuff(target *Player, spell *SpellDef) (bonus, mins int, applied
 	target.AgilityBuffID = spell.ID
 	target.AgilityBuffBonus = newBonus
 	target.AgilityBuffExpiry = time.Now().Add(stackDuration)
-	return newBonus, 20, true, true
+	return newBonus, durationMinutes(stackDuration), true, true
 }
 
 // castAgilitySpell handles Agility I/II/III (513/514/515) as a tiered, timed buff —
@@ -5427,7 +5561,7 @@ func (e *GameEngine) castAgilitySpell(player *Player, spell *SpellDef, args []st
 		return e.castAgilitySpellOnMonster(player, spell, mInst, mDef)
 	}
 
-	bonus, mins, applied, ok := applyAgilityBuff(target, spell)
+	bonus, mins, applied, ok := applyAgilityBuff(target, spell, player.spellDurationMult(spell))
 	if !ok {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and begin to cast %s, but the target already has a better Agility spell in place.", spell.Name)},
@@ -5459,7 +5593,7 @@ func (e *GameEngine) castAgilitySpell(player *Player, spell *SpellDef, args []st
 
 	if isSelf {
 		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel %s! (+%d AGI, 20 minutes)", spell.Name, feeling, bonus)},
+			Messages:      []string{fmt.Sprintf("You gesture and cast %s. You feel %s! (+%d AGI, %s)", spell.Name, feeling, bonus, minutesText(mins))},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
@@ -5467,7 +5601,7 @@ func (e *GameEngine) castAgilitySpell(player *Player, spell *SpellDef, args []st
 		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s.", spell.Name, target.FirstName)},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s.", player.DisplayName(), spell.Name, target.DisplayName())},
 		TargetName:    target.FirstName,
-		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel %s! (+%d AGI, 20 minutes)", player.FirstName, spell.Name, feeling, bonus)},
+		TargetMsg:     []string{fmt.Sprintf("%s casts %s on you. You feel %s! (+%d AGI, %s)", player.FirstName, spell.Name, feeling, bonus, minutesText(mins))},
 	}
 }
 
@@ -5477,9 +5611,9 @@ func (e *GameEngine) castAgilitySpell(player *Player, spell *SpellDef, args []st
 // scales player.Agility, i.e. /5).
 // A method re-resolving by ID under the lock, not a plain function mutating inst
 // directly — see applyMysticArmorBuffMonster's doc comment for why.
-func (e *GameEngine) applyAgilityBuffMonster(inst *MonsterInstance, spell *SpellDef) (bonus, mins int, applied, ok bool) {
+func (e *GameEngine) applyAgilityBuffMonster(inst *MonsterInstance, spell *SpellDef, mult float64) (bonus, mins int, applied, ok bool) {
 	const maxDuration = 4 * time.Hour
-	const stackDuration = 20 * time.Minute
+	stackDuration := scaleSpellDuration(20*time.Minute, mult)
 
 	newTier := agilityBuffTier(spell.ID)
 	curTier := agilityBuffTier(inst.AgilityBuffID)
@@ -5511,14 +5645,14 @@ func (e *GameEngine) applyAgilityBuffMonster(inst *MonsterInstance, spell *Spell
 		cur.AgilityBuffBonus = newBonus
 		cur.AgilityBuffID = spell.ID
 		cur.AgilityBuffExpiry = time.Now().Add(stackDuration)
-		return newBonus, 20, true, true
+		return newBonus, durationMinutes(stackDuration), true, true
 	}
 	return 0, 0, false, false
 }
 
 // castAgilitySpellOnMonster handles Agility I/II/III cast on a summoned/controlled creature.
 func (e *GameEngine) castAgilitySpellOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
-	bonus, mins, applied, ok := e.applyAgilityBuffMonster(inst, spell)
+	bonus, mins, applied, ok := e.applyAgilityBuffMonster(inst, spell, player.spellDurationMult(spell))
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 	article := articleFor(name, def.Unique)
 
@@ -5546,7 +5680,7 @@ func (e *GameEngine) castAgilitySpellOnMonster(player *Player, spell *SpellDef, 
 	feeling := agilityFeelingMap[spell.ID]
 
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. It looks %s! (+%d AGI, 20 minutes)", spell.Name, article, name, feeling, bonus)},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s on %s%s. It looks %s! (+%d AGI, %s)", spell.Name, article, name, feeling, bonus, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s on %s%s.", player.DisplayName(), spell.Name, article, name)},
 	}
 }
@@ -5756,7 +5890,7 @@ func (e *GameEngine) castParanoiaSpell(ctx context.Context, player *Player, spel
 }
 
 func (e *GameEngine) castHasteSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
-	const hasteDuration = 20 * time.Minute
+	hasteDuration := scaleSpellDuration(20*time.Minute, player.spellDurationMult(spell))
 	const hasteMaxDuration = 4 * time.Hour
 
 	target, mInst, mDef, isSelf, notFound := e.resolveBuffTarget(player, args)
@@ -5837,7 +5971,7 @@ func (e *GameEngine) castHasteSpell(player *Player, spell *SpellDef, args []stri
 // monsterEffectiveSpeed for where it's read. Monsters have no Slow-spell field/mechanic
 // today, so unlike the player path there's nothing to cancel here.
 func (e *GameEngine) castHasteSpellOnMonster(player *Player, spell *SpellDef, inst *MonsterInstance, def *gameworld.MonsterDef) *CommandResult {
-	const hasteDuration = 20 * time.Minute
+	hasteDuration := scaleSpellDuration(20*time.Minute, player.spellDurationMult(spell))
 	const hasteMaxDuration = 4 * time.Hour
 
 	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
@@ -5887,7 +6021,7 @@ func (e *GameEngine) castHasteSpellOnMonster(player *Player, spell *SpellDef, in
 // the duration by 20 minutes up to a 4-hour cap. Can be cast on another player
 // in the room by name, like Haste and the Strength spells.
 func (e *GameEngine) castFlySpell(player *Player, spell *SpellDef, args []string) *CommandResult {
-	const flyDuration = 20 * time.Minute
+	flyDuration := scaleSpellDuration(20*time.Minute, player.spellDurationMult(spell))
 	const flyMaxDuration = 4 * time.Hour
 
 	target := player

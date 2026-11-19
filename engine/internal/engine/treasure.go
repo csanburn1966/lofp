@@ -363,7 +363,7 @@ func (e *GameEngine) randomScrollDrop(treasureLevel int) *gameworld.RoomItem {
 
 	var candidates []SpellDef
 	for _, sp := range spellRegistry {
-		if sp.Level <= maxSpellLevel && sp.Effect != "" {
+		if sp.Level <= maxSpellLevel && sp.Effect != "" && spellObtainable(sp) {
 			candidates = append(candidates, sp)
 		}
 	}

@@ -102,8 +102,8 @@ type MonsterInstance struct {
 	// rest of the monster's life. SpecAttacksUsed counts against def.SpecUses.
 	CurrentMana     int `json:"-"`
 	SpecAttacksUsed int `json:"-"`
-	// Casting tracks an in-progress spell: GMSCRIPT.DOC's CASTLEVEL is the cast's duration
-	// in seconds (TEXS shown when it starts, TEXL + resolution when CastExpiry passes) and
+	// Casting tracks an in-progress spell, which takes the spell's own CastTime in seconds
+	// (TEXS shown when it starts, TEXL + resolution when CastExpiry passes) and
 	// can be interrupted by taking damage before then unless the monster is NONDISRUPTABLE
 	// (see damageMonster) — matching "A muldragun's spell is disrupted!" in original/log.txt.
 	Casting     bool      `json:"-"`

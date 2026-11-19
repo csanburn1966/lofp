@@ -87,7 +87,7 @@ func (e *GameEngine) castLightSpell(player *Player, spell *SpellDef, args []stri
 	}
 	var mins int
 	var fresh bool
-	target.LightSpellExpiry, mins, fresh = extendTimedSpell(target.LightSpellExpiry, lightSpellDuration)
+	target.LightSpellExpiry, mins, fresh = extendTimedSpell(target.LightSpellExpiry, scaleSpellDuration(lightSpellDuration, player.spellDurationMult(spell)))
 	if !fresh {
 		return e.darkSpellResult(player, target, isSelf, spell,
 			fmt.Sprintf("The glow around you brightens. (%d minutes remaining)", mins),
@@ -107,7 +107,7 @@ func (e *GameEngine) castNightVisionSpell(player *Player, spell *SpellDef, args 
 	}
 	var mins int
 	var fresh bool
-	target.NightVisionExpiry, mins, fresh = extendTimedSpell(target.NightVisionExpiry, nightVisionDuration)
+	target.NightVisionExpiry, mins, fresh = extendTimedSpell(target.NightVisionExpiry, scaleSpellDuration(nightVisionDuration, player.spellDurationMult(spell)))
 	if !fresh {
 		return e.darkSpellResult(player, target, isSelf, spell,
 			fmt.Sprintf("Your night vision is renewed. (%d minutes remaining)", mins), "")

@@ -25,12 +25,15 @@ type ScriptSegment struct {
 
 // ScriptContext holds state for script execution within a single trigger.
 type ScriptContext struct {
-	Player      *Player
-	Room        *gameworld.Room
-	Engine      *GameEngine
-	Messages    []string // ECHO PLAYER messages to send to the player
-	RoomMsgs    []string // ECHO ALL / ECHO OTHERS messages for the room
-	GMMsgs      []string // GMMSG messages for gamemasters
+	Player   *Player
+	Room     *gameworld.Room
+	Engine   *GameEngine
+	Messages []string // ECHO PLAYER messages to send to the player
+	RoomMsgs []string // ECHO ALL / ECHO OTHERS messages for the room
+	GMMsgs   []string // GMMSG messages for gamemasters
+	// castLevel is the cast level of the SPELL action being applied (0 = base
+	// duration); see doScriptSpell.
+	castLevel   int
 	Blocked     bool     // CLEARVERB: block the triggering action
 	MoveTo      int      // MOVE: destination room (0 = no move)
 	MoveGroupTo int      // MOVEGROUP: move all players in room to destination
@@ -3142,7 +3145,15 @@ func (sc *ScriptContext) doRoutine(args []string) {
 	sc.NeedsSave = true
 }
 
-// doScriptSpell handles SPELL <id> [<chance>] — casts a spell on the player from a script.
+// doScriptSpell handles SPELL <id> [<castlevel>] — casts a spell on the player
+// from a script. The spell always takes effect. The optional second number is
+// the cast level, the script counterpart of a monster's CASTLEVEL (which the GM
+// manual says "defines the duration of a creature's spell"): it stands in for
+// the caster's Spellcraft rank, stretching a timed spell's duration exactly as
+// a player's rank would (spellDurationMult). 0 or no number casts at the base
+// duration. Instant spells (heals, Unstun, damage) ignore it. It was once read
+// as a percent chance to cast, but scripts pass values like 250, 350 and 500,
+// and 0 on effects that must happen (the lycanthropy curse in EDDIE1.SCR).
 func (sc *ScriptContext) doScriptSpell(args []string) {
 	if len(args) < 1 {
 		return
@@ -3151,20 +3162,19 @@ func (sc *ScriptContext) doScriptSpell(args []string) {
 	if err != nil {
 		return
 	}
-	chance := 100
+	castLevel := 0
 	if len(args) >= 2 {
-		if c, err2 := strconv.Atoi(args[1]); err2 == nil {
-			chance = c
+		if n, err2 := strconv.Atoi(args[1]); err2 == nil && n > 0 {
+			castLevel = n
 		}
-	}
-	if chance < 100 && rand.Intn(100) >= chance {
-		return
 	}
 	spell := FindSpellByID(spellID)
 	if spell == nil {
 		return
 	}
+	sc.castLevel = castLevel
 	sc.applyItemSpellOnPlayer(spell)
+	sc.castLevel = 0
 	sc.NeedsSave = true
 }
 
@@ -3172,6 +3182,9 @@ func (sc *ScriptContext) doScriptSpell(args []string) {
 // Unlike casting a spell normally, no mana cost or skill check applies — the item does the work.
 func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 	player := sc.Player
+	// Item charges cast at the base duration; a script's SPELL cast level
+	// stretches it like a caster's Spellcraft would.
+	mult := spellDurationMult(sc.castLevel, 0)
 	if spell.ID == insectSwarmSpellID {
 		// Wild-magic items and traps (ITEM2.SCR, ITEM6.SCR, ICE.SCR) swarm the player.
 		swarmPlayer(player)
@@ -3240,7 +3253,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s is bathed in healing energy.", player.FirstName))
 
 	case "defense":
-		mins, _ := applyTimedDefenseBuff(player, spell)
+		mins, _ := applyTimedDefenseBuff(player, spell, mult)
 		switch spell.ID {
 		case 229: // Wizard's Armor — wards a prepared spell, no defense bonus
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! Your concentration is warded against disruption. (%d minutes)", spell.Name, mins))
@@ -3248,6 +3261,8 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! An antimagical field emanates from you. (%d minutes)", spell.Name, mins))
 		case 235: // Cloak Mind — psi resistance, no defense bonus
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You seem changed. (%d minutes)", spell.Name, mins))
+		case staunchFlowSpellID: // Staunch Flow — stops bleeding damage, no defense bonus
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The flow of blood from your wounds slows and stops. (%d minutes)", mins))
 		default:
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d defense, %d minutes)", spell.Name, spell.DefBonus, mins))
 		}
@@ -3274,11 +3289,11 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 	case "buff":
 		switch spell.ID {
 		case 102: // Mystic Armor
-			mins, _ := applyMysticArmorBuff(player, spell)
+			mins, _ := applyMysticArmorBuff(player, spell, mult)
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d defense, %d minutes)", spell.Name, spell.DefBonus, mins))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A shimmering barrier of energy surrounds %s.", player.FirstName))
 		case 207, 208, 209: // Strength I/II/III
-			bonus, mins, applied, ok := applyStrengthBuff(player, spell)
+			bonus, mins, applied, ok := applyStrengthBuff(player, spell, mult)
 			if !ok {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s, but you already have a better Strength spell in place.", spell.Name))
 			} else if !applied {
@@ -3296,7 +3311,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			}
 			var mins int
 			var fresh bool
-			player.HasteExpiry, mins, fresh = extendTimedSpell(player.HasteExpiry, 20*time.Minute)
+			player.HasteExpiry, mins, fresh = extendTimedSpell(player.HasteExpiry, scaleSpellDuration(20*time.Minute, mult))
 			if !fresh {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your speed is already heightened! (%d minutes remaining)", spell.Name, mins))
 			} else {
@@ -3307,7 +3322,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			var mins int
 			var fresh bool
 			player.CanFly = true
-			player.FlyExpiry, mins, fresh = extendTimedSpell(player.FlyExpiry, 20*time.Minute)
+			player.FlyExpiry, mins, fresh = extendTimedSpell(player.FlyExpiry, scaleSpellDuration(20*time.Minute, mult))
 			if !fresh {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You are already aloft! (%d minutes remaining)", spell.Name, mins))
 			} else {
@@ -3319,15 +3334,15 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. You fade from sight.", spell.Name))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s fades from sight.", player.FirstName))
 		case 347: // Divine Blessing
-			applyDivineBlessingBuff(player)
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, 1 minute)", spell.Name))
+			dur := applyDivineBlessingBuff(player, mult)
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. A warm golden light surrounds you, sharpening your combat prowess! (+3 weapon skill, %s)", spell.Name, blessingDurationText(dur)))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A warm golden light briefly surrounds %s.", player.FirstName))
 		case 506: // Resist Weather
-			mins, applied := applyElementalShield(&player.ResistWeatherExpiry)
+			mins, applied := applyElementalShield(&player.ResistWeatherExpiry, mult)
 			if !applied {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your resistance to the weather strengthens! (%d minutes remaining)", spell.Name, mins))
 			} else {
-				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! The weather's fury will no longer trouble you. (20 minutes)", spell.Name))
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! The weather's fury will no longer trouble you. (%s)", spell.Name, minutesText(mins)))
 			}
 		case 507, 508: // Heat Shield / Cold Shield
 			var expiry *time.Time
@@ -3338,11 +3353,11 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			} else {
 				expiry = &player.HeatShieldExpiry
 			}
-			mins, applied := applyElementalShield(expiry)
+			mins, applied := applyElementalShield(expiry, mult)
 			if !applied {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your resistance to %s strengthens! (%d minutes remaining)", spell.Name, elementName, mins))
 			} else {
-				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You feel protected from %s. (50%% resistance, 20 minutes)", spell.Name, elementName))
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You feel protected from %s. (50%% resistance, %s)", spell.Name, elementName, minutesText(mins)))
 				sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("A shimmer surrounds %s.", player.FirstName))
 			}
 		case 509, 510: // Repel Plants / Repel Plants and Webs
@@ -3354,17 +3369,17 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			} else {
 				expiry = &player.RepelPlantsExpiry
 			}
-			mins, applied := applyElementalShield(expiry)
+			mins, applied := applyElementalShield(expiry, mult)
 			if !applied {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your immunity to %s strengthens! (%d minutes remaining)", spell.Name, scope, mins))
 			} else {
-				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You feel immune to %s. (20 minutes)", spell.Name, scope))
+				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You feel immune to %s. (%s)", spell.Name, scope, minutesText(mins)))
 			}
 		case 512: // True Aim
 			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your aim feels supernaturally true.", spell.Name))
 			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s's eyes gleam with unnatural focus.", player.FirstName))
 		case 513, 514, 515: // Agility I/II/III
-			bonus, mins, applied, ok := applyAgilityBuff(player, spell)
+			bonus, mins, applied, ok := applyAgilityBuff(player, spell, mult)
 			if !ok {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s, but you already have a better Agility spell in place.", spell.Name))
 			} else if !applied {
@@ -3373,7 +3388,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! (+%d AGI, %d minutes)", spell.Name, bonus, mins))
 			}
 		case 521: // Camouflage
-			mins, applied := applyCamouflageBuff(player)
+			mins, applied := applyCamouflageBuff(player, mult)
 			if !applied {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your camouflage strengthens! (%d minutes remaining)", spell.Name, mins))
 			} else {
@@ -3390,7 +3405,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 		case 113: // Light — stacks onto an active one, same as CAST (see darkness.go)
 			var mins int
 			var fresh bool
-			player.LightSpellExpiry, mins, fresh = extendTimedSpell(player.LightSpellExpiry, lightSpellDuration)
+			player.LightSpellExpiry, mins, fresh = extendTimedSpell(player.LightSpellExpiry, scaleSpellDuration(lightSpellDuration, mult))
 			if !fresh {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. The glow around you brightens. (%d minutes remaining)", spell.Name, mins))
 			} else {
@@ -3420,7 +3435,7 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 		case 520: // Night Vision — stacks onto an active one, same as CAST (see darkness.go)
 			var mins int
 			var fresh bool
-			player.NightVisionExpiry, mins, fresh = extendTimedSpell(player.NightVisionExpiry, nightVisionDuration)
+			player.NightVisionExpiry, mins, fresh = extendTimedSpell(player.NightVisionExpiry, scaleSpellDuration(nightVisionDuration, mult))
 			if !fresh {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your night vision is renewed. (%d minutes remaining)", spell.Name, mins))
 			} else {

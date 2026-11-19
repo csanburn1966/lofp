@@ -1047,7 +1047,9 @@ func (e *GameEngine) doHealth(player *Player) *CommandResult {
 				total += woundBleedDrainPerMinute(w.Level)
 			}
 		}
-		if total > 0 {
+		if total > 0 && hasStaunchFlow(player) {
+			msgs = append(msgs, "Your wounds are open, but magic has staunched their bleeding.")
+		} else if total > 0 {
 			msgs = append(msgs, fmt.Sprintf("You are bleeding at a rate of %d/minute.", total))
 		}
 	}
@@ -4715,7 +4717,7 @@ func applyHerbSpell(player *Player, spellNum int) string {
 // fresh, +20 minutes per dose while it's still running, capped at 4 hours), and
 // returns the message to show.
 func herbMindlinkMessage(player *Player) string {
-	mins, applied := applyMindlink(player)
+	mins, applied := applyMindlink(player, 1)
 	if applied {
 		return "You feel your mind open to the thoughts of others."
 	}

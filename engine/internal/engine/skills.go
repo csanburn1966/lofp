@@ -846,7 +846,7 @@ func magicSkillSchool(skillID int) string {
 func (e *GameEngine) guildScrollGift(school string) (*InventoryItem, string) {
 	var candidates []SpellDef
 	for _, sp := range spellRegistry {
-		if sp.School == school && sp.Level == 1 {
+		if sp.School == school && sp.Level == 1 && spellObtainable(sp) {
 			candidates = append(candidates, sp)
 		}
 	}

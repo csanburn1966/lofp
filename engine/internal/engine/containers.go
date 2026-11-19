@@ -2200,7 +2200,7 @@ func (e *GameEngine) randomJewelryDrop(treasureLevel int) *gameworld.RoomItem {
 		}
 		var spellCandidates []SpellDef
 		for _, sp := range spellRegistry {
-			if sp.Level <= maxSpellLevel && sp.Effect != "" && isJewelryBeneficialSpell(sp) {
+			if sp.Level <= maxSpellLevel && sp.Effect != "" && isJewelryBeneficialSpell(sp) && spellObtainable(sp) {
 				spellCandidates = append(spellCandidates, sp)
 			}
 		}
