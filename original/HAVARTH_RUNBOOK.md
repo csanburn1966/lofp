@@ -8,7 +8,7 @@ Design source: `New Havarth Quest suggestion.docx`.
 
 | File | Purpose |
 |------|---------|
-| `scripts/HAVARTHITEMS.SCR` | The surveyor's instrument and the Havarth Masterwork Mining Axe, plus their words. **Permanent** once live: add it to `LEGENDS.CFG` so items players own keep working. |
+| `scripts/HAVARTHITEMS.SCR` | The surveyor's instrument and the Havarth Masterwork Mining Axe, plus their words. **Permanent**: loaded from `LEGENDS.CFG` so items players own keep working. |
 | `scripts/HAVARTH.SCR` | Everything else: room 394 (staircase, Bram), the three office rooms, the Shartan prospect rooms, the dialogue and survey macros, ambient lines, and the newsboard poster. |
 
 Engine changes these rely on (deploy these files): `engine/internal/engine/crafting.go`, `engine.go`, `scripts.go`.
@@ -17,15 +17,19 @@ Engine changes these rely on (deploy these files): `engine/internal/engine/craft
 - `INCOMBAT` script variable: 1 while a living monster in the room is targeting the player, or the player is targeting one.
 - `MINE WITH <tool>` (or `MINE <tool>`) picks which carried tool to use. Plain `MINE` uses the first mining tool in INVENTORY order. A `MINETOOL` item's `PARAMETER3` adds that many ranks of Mining while it's the tool in use (the axe: +2 ranks, which is +10% to find ore and +1 purity).
 
-## Testing on lofp-dev (GM script area)
+## Loading
 
-1. Deploy the engine changes.
-2. GM panel → GM Scripts: upload `HAVARTHITEMS.SCR` with a **higher priority** than `HAVARTH.SCR` (the items and words must load first). Save both as drafts, then **Activate** `HAVARTHITEMS.SCR` and then `HAVARTH.SCR`.
-3. **Disable** `HAVARTH.SCR` to switch the quest off. Room 394 reverts, the office and prospect rooms disappear, and SURVEY with the instrument falls back to the normal mining survey. Players standing in a removed room should be moved first.
+Live: both files are in `LEGENDS.CFG`, after `FESTITEMS.SCR`, with `HAVARTHITEMS.SCR` first (the items and words must load before `HAVARTH.SCR`). `HAVARTH.SCR` loads after `FAYDINDR.SCR` and `NEWS.SCR`, so its copies of room 394 and newsboard 304 win.
 
-## Going live
+Deploying to a server that ran the quest as GM scripts:
 
-Add both files to `LEGENDS.CFG` (after `FESTITEMS.SCR`), restart, then delete the GM script copies. At minimum `HAVARTHITEMS.SCR` must be permanent. Don't leave `HAVARTH.SCR` both in `LEGENDS.CFG` and as a live GM script.
+1. Copy `original/scripts/LEGENDS.CFG`, `HAVARTH.SCR`, `HAVARTHITEMS.SCR` and the engine changes above (rebuild the engine if those changed).
+2. GM panel → GM Scripts: delete the `HAVARTH.SCR` and `HAVARTHITEMS.SCR` copies. Don't leave `HAVARTH.SCR` both in `LEGENDS.CFG` and as a live GM script.
+3. Restart the engine (`sudo systemctl restart lofp` on production). Quest progress is stored on characters, so nobody loses it.
+
+Script changes now take effect on an engine restart. To try a change without a restart, upload the edited file as a GM script (priority higher for `HAVARTHITEMS.SCR` than `HAVARTH.SCR`), activate it, then copy the result back into `original/scripts/` and delete the GM copy.
+
+Switching the quest off: comment out `SCRIPT HAVARTH.SCR` in `LEGENDS.CFG` and restart. Room 394 reverts, the office and prospect rooms disappear, and SURVEY with the instrument falls back to the normal mining survey. Move players out of the removed rooms first. Keep `HAVARTHITEMS.SCR` loaded.
 
 ## Walkthrough
 
