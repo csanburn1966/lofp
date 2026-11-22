@@ -72,17 +72,27 @@ func main() {
 		BumpRoom:     result.BumpRoom,
 	}
 
-	// Connect to MongoDB (optional — game works without it)
+	// Connect to MongoDB. Optional for local dev (the dev.yaml default URI), but
+	// when MONGODB_URI is set explicitly (production, Docker) a failure is fatal:
+	// running without persistence silently discards player progress, and exiting
+	// lets systemd or Docker retry until the database is ready.
 	var db *mongo.Database
+	mongoRequired := os.Getenv("MONGODB_URI") != ""
+	mongoFailed := func(what string, err error) {
+		if mongoRequired {
+			log.Fatalf("MongoDB %s failed: %v (MONGODB_URI is set; refusing to run without persistence)", what, err)
+		}
+		log.Printf("Warning: MongoDB %s failed: %v (continuing without persistence)", what, err)
+	}
 	if cfg.MongoDB.URI != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		client, err := mongo.Connect(options.Client().ApplyURI(cfg.MongoDB.URI))
 		if err != nil {
-			log.Printf("Warning: MongoDB connection failed: %v (continuing without persistence)", err)
+			mongoFailed("connection", err)
 		} else {
 			if err := client.Ping(ctx, nil); err != nil {
-				log.Printf("Warning: MongoDB ping failed: %v (continuing without persistence)", err)
+				mongoFailed("ping", err)
 			} else {
 				db = client.Database(cfg.MongoDB.Database)
 				log.Printf("Connected to MongoDB: %s", cfg.MongoDB.Database)

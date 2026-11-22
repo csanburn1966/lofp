@@ -70,21 +70,20 @@ Host names, IPs, paths, and SSH access for these environments are in `CLAUDE.loc
 
 ### Production: lofp.sanburnlab.com
 
-- Not Docker. A source tree on the server, MongoDB running natively (`mongod.service`), nginx on a separate web server in front. Two systemd services:
-  - `lofp`: the Go engine (binary built in `engine/cmd/lofp`, working directory `engine/`, environment from the repo-root `.env`). Listens on 4993 (web API/WebSocket), 4000 (telnet), and 4022 (SSH).
-  - `lofp-frontend`: the **Vite dev server** (`npx vite --port 4992`) serving `frontend/` straight from source and proxying `/api/`, `/healthz`, and `/ws` to `localhost:4993` (see `frontend/vite.config.ts`, which allows the host `lofp.sanburnlab.com`). There is no frontend build step: copied `.ts`/`.tsx` changes are picked up live. A new npm dependency still needs `npm install` in `frontend/` and a restart of `lofp-frontend`.
-- The engine uses `config/prod.yaml`, selected and adjusted through `.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=4993` (Vite proxies to 4993), `LOFP_SCRIPTS_DIR=../original/scripts`, `LOFP_CONFIG_FILE=../original/scripts/LEGENDS.CFG`, plus `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, and `JWT_SECRET`. `dev.yaml` on production is not used.
-- `prod.yaml` has no default for `JWT_SECRET`. It must be at least 32 characters or the engine panics at startup; if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt, not in an editor: `echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env`.
-- Deploys are manual: changed and new source files are copied to the server with WinSCP, then on the server (only needed for engine changes):
-  ```sh
-  cd ~/lofp/engine/cmd/lofp && sudo systemctl stop lofp && go build -o lofp . && sudo systemctl start lofp
-  ```
+- Not Docker. A git clone at `/srv/lofp/app` owned by an unprivileged `lofp` user, MongoDB 8 running natively (`mongod.service`), nginx on a separate web server in front (it also proxies telnet and SSH game ports).
+- **Never run the Vite dev server in production.** The previous production host was compromised through it (Nov 2026). The frontend is built once (`npm run build`) and the engine serves `frontend/dist` itself via `LOFP_STATIC_DIR`; there is no `lofp-frontend` service.
+- One systemd service, `lofp`: runs `engine/lofp` as user `lofp` (sandboxed: read-only `/srv/lofp`, no new privileges), working directory `engine/`, environment from `/srv/lofp/lofp.env` (mode 600). Listens on 8080 (web, API, WebSocket), 4000 (telnet), 4022 (SSH). `Restart=always` with no start limit. The engine exits if `MONGODB_URI` is set and MongoDB is unreachable, so systemd retries until the database is up.
+- The SSH game host key is `/srv/lofp/ssh_host_ed25519`, passed in as `SSH_HOST_KEY` by the unit's `ExecStart`.
+- The engine uses `config/prod.yaml`, adjusted through `lofp.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=8080`, `LOFP_STATIC_DIR`, `LOFP_SCRIPTS_DIR`, `LOFP_CONFIG_FILE`, `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, `JWT_SECRET`, `RESEND_API_KEY`. After editing it: `sudo systemctl restart lofp`.
+- MongoDB listens on 127.0.0.1 only, with authentication and a keyfile-secured single-node replica set `rs0` (the hub needs change streams). The engine connects as a `readWrite` user on the `lofp` database.
+- `prod.yaml` has no default for `JWT_SECRET`. It must be at least 32 characters or the engine panics at startup; if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt: `openssl rand -hex 32`.
+- Deploy = push to `main`, then on the server: `sh /srv/lofp/app/deploy/prod-update.sh` (pulls, builds the engine and the static frontend as `lofp`, restarts, checks `/healthz`). Frontend `VITE_*` build variables go in `/srv/lofp/frontend.env`. No more hand-copying files.
 - After a crash loop, `sudo systemctl reset-failed lofp` before restarting.
-- Because files are copied by hand, when a change is ready for production, list every added, modified, and deleted file (e.g. `git diff --name-status <last-deployed-commit>..HEAD`) so nothing is missed. Deleted files have to be removed on the server by hand.
+- Per-IP connection caps (5 telnet/SSH connections) see nginx's address for every proxied telnet/SSH client, since the stream proxy doesn't pass the real client IP.
 
 ### Frontend build-time variables
 
-`VITE_GOOGLE_CLIENT_ID` and `VITE_TURNSTILE_SITE_KEY` are read by Vite when it starts: baked into the bundle at build time for Docker (the `Dockerfile` takes them as build args), or read at startup by the dev server on production (restart `lofp-frontend` after changing them). If they're missing, the Google sign-in button and the registration CAPTCHA don't render. `TURNSTILE_SECRET_KEY` must be set server-side at runtime, or `VerifyCaptcha` (`engine/internal/auth/turnstile.go`) silently skips verification.
+`VITE_GOOGLE_CLIENT_ID` and `VITE_TURNSTILE_SITE_KEY` are baked into the bundle at build time: Docker takes them as build args, production reads them from `/srv/lofp/frontend.env` during `prod-update.sh` (rebuild after changing them). If they're missing, the Google sign-in button and the registration CAPTCHA don't render. `TURNSTILE_SECRET_KEY` must be set server-side at runtime, or `VerifyCaptcha` (`engine/internal/auth/turnstile.go`) silently skips verification.
 
 **Never commit `.env`**: it contains secrets and is in `.gitignore`.
 
