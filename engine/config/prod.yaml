@@ -22,7 +22,3 @@ auth:
 email:
   resend_api_key: "${RESEND_API_KEY:}"
   from_address: "${EMAIL_FROM:Legends of Future Past <noreply@lofp.sanburnlab.com>}"
-
-feedback:
-  vibectl_url: "${VIBECTL_URL:}"
-  vibectl_api_key: "${VIBECTL_API_KEY:}"

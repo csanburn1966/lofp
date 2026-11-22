@@ -151,7 +151,7 @@ The game world is defined in a custom scripting language (documented in `origina
 - Security: rate limiting, connection caps, chat flood protection, HTML sanitization
 - WebSocket-based real-time multiplayer
 - Admin panel for rooms/items/monsters/players/logs
-- Feedback pipeline: REPORT command forwards to VibeCtl for triage and issue tracking
+- REPORT command logs player reports, notifies online GMs, and publishes them on the event bus
 - Production: single server at lofp.sanburnlab.com (see Environments and Deployment)
   - One instance to avoid multi-instance state desync (monsters, combat, player visibility)
   - Scale to 2+ machines only after implementing full hub-based monster/combat coordination

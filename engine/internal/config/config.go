@@ -9,17 +9,11 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig   `yaml:"server"`
-	MongoDB  MongoDBConfig  `yaml:"mongodb"`
-	Game     GameConfig     `yaml:"game"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Email    EmailConfig    `yaml:"email"`
-	Feedback FeedbackConfig `yaml:"feedback"`
-}
-
-type FeedbackConfig struct {
-	VibectlURL    string `yaml:"vibectl_url"`
-	VibectlAPIKey string `yaml:"vibectl_api_key"`
+	Server  ServerConfig  `yaml:"server"`
+	MongoDB MongoDBConfig `yaml:"mongodb"`
+	Game    GameConfig    `yaml:"game"`
+	Auth    AuthConfig    `yaml:"auth"`
+	Email   EmailConfig   `yaml:"email"`
 }
 
 type AuthConfig struct {
@@ -34,13 +28,13 @@ type EmailConfig struct {
 }
 
 type ServerConfig struct {
-	Port           int    `yaml:"port"`
-	TelnetPort     int    `yaml:"telnet_port"`
-	TelnetTLSPort  int    `yaml:"telnet_tls_port"`
-	TelnetTLSCert  string `yaml:"telnet_tls_cert"`
-	TelnetTLSKey   string `yaml:"telnet_tls_key"`
-	SSHPort        int    `yaml:"ssh_port"`
-	FrontendURL    string `yaml:"frontend_url"`
+	Port          int    `yaml:"port"`
+	TelnetPort    int    `yaml:"telnet_port"`
+	TelnetTLSPort int    `yaml:"telnet_tls_port"`
+	TelnetTLSCert string `yaml:"telnet_tls_cert"`
+	TelnetTLSKey  string `yaml:"telnet_tls_key"`
+	SSHPort       int    `yaml:"ssh_port"`
+	FrontendURL   string `yaml:"frontend_url"`
 }
 
 type MongoDBConfig struct {
