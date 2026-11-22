@@ -1,7 +1,7 @@
 #!/bin/sh
 # Update production to the latest pushed main: pull, build the engine and the
 # static frontend as the unprivileged `lofp` user, then restart the service.
-# Run on the production host as a sudo-capable user: sh /srv/lofp/app/deploy/prod-update.sh
+# Run on the production host: sudo sh /srv/lofp/app/deploy/prod-update.sh
 set -eu
 
 APP=/srv/lofp/app

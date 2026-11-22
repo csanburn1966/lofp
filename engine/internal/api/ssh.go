@@ -234,6 +234,13 @@ func (s *Server) ListenSSH(addr string) {
 }
 
 func (s *Server) handleSSHConn(rawConn net.Conn, config *ssh.ServerConfig) {
+	proxied, err := acceptProxyProtocol(rawConn)
+	if err != nil {
+		log.Printf("SSH: rejecting connection from %s: %v", rawConn.RemoteAddr(), err)
+		rawConn.Close()
+		return
+	}
+	rawConn = proxied
 	sshServerConn, chans, reqs, err := ssh.NewServerConn(rawConn, config)
 	if err != nil {
 		log.Printf("SSH: handshake failed from %s: %v", rawConn.RemoteAddr(), err)

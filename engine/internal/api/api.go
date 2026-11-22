@@ -104,23 +104,6 @@ func (w *wsConn) RemoteAddr() string {
 	return w.conn.RemoteAddr().String()
 }
 
-// getClientIP extracts the real client IP from the request, preferring
-// Fly-Client-IP (set by Fly.io proxy), then X-Forwarded-For, then RemoteAddr.
-func getClientIP(r *http.Request) string {
-	if ip := r.Header.Get("Fly-Client-IP"); ip != "" {
-		return strings.TrimSpace(ip)
-	}
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		return strings.TrimSpace(strings.Split(fwd, ",")[0])
-	}
-	// Strip port from RemoteAddr
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		return addr[:idx]
-	}
-	return addr
-}
-
 // checkRateLimit enforces per-IP rate limiting. Returns true if the request is allowed.
 // maxAttempts is the number of allowed requests within the given window duration.
 func (s *Server) checkRateLimit(ip, endpoint string, maxAttempts int, window time.Duration) bool {

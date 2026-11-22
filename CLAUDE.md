@@ -77,9 +77,9 @@ Host names, IPs, paths, and SSH access for these environments are in `CLAUDE.loc
 - The engine uses `config/prod.yaml`, adjusted through `lofp.env`: `LOFP_CONFIG=config/prod.yaml`, `LOFP_PORT=8080`, `LOFP_STATIC_DIR`, `LOFP_SCRIPTS_DIR`, `LOFP_CONFIG_FILE`, `MONGODB_URI`, `FRONTEND_URL`, `EMAIL_FROM`, `JWT_SECRET`, `RESEND_API_KEY`. After editing it: `sudo systemctl restart lofp`.
 - MongoDB listens on 127.0.0.1 only, with authentication and a keyfile-secured single-node replica set `rs0` (the hub needs change streams). The engine connects as a `readWrite` user on the `lofp` database.
 - `prod.yaml` has no default for `JWT_SECRET`. It must be at least 32 characters or the engine panics at startup; if empty, auth (web login, SSH) is disabled. Generate it at a shell prompt: `openssl rand -hex 32`.
-- Deploy = push to `main`, then on the server: `sh /srv/lofp/app/deploy/prod-update.sh` (pulls, builds the engine and the static frontend as `lofp`, restarts, checks `/healthz`). Frontend `VITE_*` build variables go in `/srv/lofp/frontend.env`. No more hand-copying files.
+- Deploy = push to `main`, then on the server: `sudo sh /srv/lofp/app/deploy/prod-update.sh` (pulls, builds the engine and the static frontend as `lofp`, restarts, checks `/healthz`). Frontend `VITE_*` build variables go in `/srv/lofp/frontend.env`. No more hand-copying files.
 - After a crash loop, `sudo systemctl reset-failed lofp` before restarting.
-- Per-IP connection caps (5 telnet/SSH connections) see nginx's address for every proxied telnet/SSH client, since the stream proxy doesn't pass the real client IP.
+- Real client IPs behind nginx: `LOFP_TRUSTED_PROXIES` (in `lofp.env`) lists the nginx IP. Telnet/SSH connections from it must start with a PROXY protocol v1 header (nginx stream `proxy_protocol on;`), and its HTTP requests take the client IP from the last `X-Forwarded-For` entry (`engine/internal/api/proxyproto.go`). Per-IP caps and rate limits depend on this; enable or disable it on both sides together, or proxied telnet/SSH connections are rejected or garbled.
 
 ### Frontend build-time variables
 

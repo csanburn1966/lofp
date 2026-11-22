@@ -966,6 +966,13 @@ func (s *Server) ListenTelnetTLS(addr, certFile, keyFile string) {
 var serverStartTime = time.Now()
 
 func (s *Server) handleTelnetConn(rawConn net.Conn, isTLS bool) {
+	proxied, err := acceptProxyProtocol(rawConn)
+	if err != nil {
+		log.Printf("telnet: rejecting connection from %s: %v", rawConn.RemoteAddr(), err)
+		rawConn.Close()
+		return
+	}
+	rawConn = proxied
 	log.Printf("telnet: new connection from %s (tls=%v)", rawConn.RemoteAddr(), isTLS)
 	tc := newTelnetConn(rawConn, isTLS)
 	tc.server = s
