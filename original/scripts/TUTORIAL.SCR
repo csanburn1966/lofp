@@ -1,0 +1,26 @@
+; TUTORIAL.SCR — items for the new player tutorial at the gates of Fayd
+; =====================================================================
+; Sergeant Aldren Fairweather, who walks new characters through the basic
+; commands in room 201 (Main Street, Gatehouse), is built into the engine
+; (engine/internal/engine/tutorial.go), not scripted. This file holds only the
+; object his lesson uses.
+;
+; ID ranges (the 95xx block is reserved for the tutorial):
+;   INUMBER 9500
+; =====================================================================
+
+; ── The tutorial coin ─────────────────────────────────────────────────
+; Placed in room 201 when the lesson reaches GET COIN ("a tarnished copper
+; coin": ADJ1=318 tarnished, ADJ2=68 copper). Real coins go straight into the
+; purse (currency.go), so this is a plain MISC item the player can GET,
+; EXAMINE and DROP like anything else. It's worth nothing.
+INUMBER 9500
+NAME 229
+MISC
+WEIGHT 1
+VOLUME 1
+SUBSTANCE SOFTMETAL
+*DESCRIPTION_START EXAMINE
+A thin copper coin, worn nearly smooth by countless hands. The face stamped on one side is too rubbed away to recognize, and a tiny notch has been filed into its edge, the way the gate watch marks the coins they use for teaching newcomers.
+*DESCRIPTION_END
+;

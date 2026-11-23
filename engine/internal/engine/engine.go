@@ -662,6 +662,13 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		player.LastCommand = input
 	}
 
+	// New player tutorial (tutorial.go): SKIP TUTORIAL and the gate sergeant's
+	// own refusals first; afterwards, advance the lesson on what was done.
+	if r := e.tutorialPreCommand(ctx, player, input); r != nil {
+		return r
+	}
+	defer func() { e.tutorialAfterCommand(ctx, player, input, result) }()
+
 	// Being carried is passive — any action the carried player takes breaks it.
 	if player.CarriedBy != "" {
 		e.breakCarryAsCarried(ctx, player, fmt.Sprintf("%s stirs and slips from your grip!", player.FirstName))

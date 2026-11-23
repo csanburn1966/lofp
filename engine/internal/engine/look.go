@@ -209,6 +209,9 @@ func (e *GameEngine) doLook(player *Player) *CommandResult {
 	// Players and monsters/NPCs are shown together in one sentence, matching the
 	// original format (see original/legends/shirla.cap, e.g. "You see Wolfbane and
 	// Delight."), followed by a separate items sentence.
+	if !dark {
+		msgs = append(msgs, aldrenLookLines(player.RoomNumber)...) // tutorial.go
+	}
 	var peopleHere []string
 	if !dark {
 		peopleHere = append(playersHere, e.monsterNamesInRoom(player.RoomNumber)...)
@@ -313,6 +316,11 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 	// Check if target is a monster in the room
 	if monInst, monDef := e.findMonsterInRoom(player, target); monDef != nil {
 		return e.examineMonster(monInst, monDef)
+	}
+
+	// Sergeant Aldren at the Fayd gate (tutorial.go)
+	if r := lookAtAldren(player, target); r != nil {
+		return r
 	}
 
 	// Check IN/ON/UNDER prefixes

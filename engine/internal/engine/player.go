@@ -588,6 +588,20 @@ type Player struct {
 	BotGMAllowed  bool   `bson:"botGMAllowed,omitempty" json:"botGMAllowed,omitempty"` // whether bot can use GM commands
 	IsBot         bool   `bson:"-" json:"-"`                                           // transient: connected via API key
 
+	// New player tutorial with Sergeant Aldren at the Fayd gate (tutorial.go).
+	// TutorialStatus: 0 not started, 1 in progress, 2 finished or skipped.
+	// TutorialFlags records which commands of a two-command step have been used.
+	TutorialStatus int `bson:"tutorialStatus,omitempty" json:"-"`
+	TutorialStep   int `bson:"tutorialStep,omitempty" json:"-"`
+	TutorialFlags  int `bson:"tutorialFlags,omitempty" json:"-"`
+	// TutorialMisses counts commands since the last step that didn't complete it
+	// (Aldren offers a hint after a few). TutorialPrompted is false until Aldren
+	// has spoken this session, so a reconnect resumes with the current prompt;
+	// TutorialAway is set when the player leaves the gate mid-lesson.
+	TutorialMisses   int  `bson:"-" json:"-"`
+	TutorialPrompted bool `bson:"-" json:"-"`
+	TutorialAway     bool `bson:"-" json:"-"`
+
 	// Settings (persistent toggles via SET command)
 	// Note: SuppressLogon/Logoff default to true for new characters (set in CreateNewPlayer).
 	SuppressLogon      bool `bson:"suppressLogon,omitempty" json:"-"`

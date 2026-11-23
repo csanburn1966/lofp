@@ -112,6 +112,11 @@ func (e *GameEngine) CreateNewPlayer(ctx context.Context, firstName, lastName st
 	if race == RaceEphemeral {
 		player.TelepathyActive = true
 	}
+	// Every new character carries a dagger (the tutorial's WIELD DAGGER step).
+	// Room 201's IFENTRY issues the clothing.
+	if e.items[starterDagger] != nil {
+		player.Inventory = append(player.Inventory, InventoryItem{Archetype: starterDagger})
+	}
 	if len(accountID) > 0 && accountID[0] != "" {
 		player.AccountID = accountID[0]
 	}
