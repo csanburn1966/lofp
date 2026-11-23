@@ -581,6 +581,10 @@ func (s *Server) sshRegister(sc *sshConn, ctx context.Context) *auth.Account {
 		return nil
 	}
 
+	if !s.allowRegistration(extractIP(sc.RemoteAddr())) {
+		sc.writeLine(ansiRed + "Too many registration attempts, try again later." + ansiReset)
+		return nil
+	}
 	account, verifyToken, verifyCode, err := s.auth.RegisterWithPassword(ctx, email, password, name)
 	if err != nil {
 		sc.writeLine(ansiRed + err.Error() + ansiReset)

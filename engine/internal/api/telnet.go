@@ -1296,6 +1296,10 @@ func (s *Server) telnetRegister(tc *telnetConn, ctx context.Context) *auth.Accou
 		return nil
 	}
 
+	if !s.allowRegistration(extractIP(tc.RemoteAddr())) {
+		tc.writeLine(ansiRed + "Too many registration attempts, try again later." + ansiReset)
+		return nil
+	}
 	account, verifyToken, verifyCode, err := s.auth.RegisterWithPassword(ctx, email, password, name)
 	if err != nil {
 		tc.writeLine(ansiRed + err.Error() + ansiReset)

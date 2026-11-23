@@ -129,6 +129,11 @@ func (s *Server) checkRateLimit(ip, endpoint string, maxAttempts int, window tim
 	return true
 }
 
+// allowRegistration limits account signups per IP, shared by web, telnet and SSH.
+func (s *Server) allowRegistration(ip string) bool {
+	return s.checkRateLimit(ip, "register", 3, time.Hour)
+}
+
 // sendVerification emails an account its verification link and code. Failures
 // are logged; callers must not tell the user the email was sent on error.
 func (s *Server) sendVerification(account *auth.Account, token, code string) error {
@@ -2043,7 +2048,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "auth not configured", 500)
 		return
 	}
-	if !s.checkRateLimit(getClientIP(r), "register", 3, time.Hour) {
+	if !s.allowRegistration(getClientIP(r)) {
 		http.Error(w, "too many registration attempts, try again later", 429)
 		return
 	}
