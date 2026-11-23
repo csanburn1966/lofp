@@ -417,8 +417,8 @@ func (e *GameEngine) tutorialOnEnter(ctx context.Context, p *Player, room *gamew
 		return
 	}
 	// Deliver after the room look and entry messages rather than in the middle
-	// of them. If the player enters a command first, tutorialAfterCommand
-	// delivers them at the top of that command's output instead.
+	// of them. If the player enters another command first, it delivers them at
+	// the top of its output instead (ProcessCommand, tutorialAfterCommand).
 	delay := 1500 * time.Millisecond
 	if scriptDelayed {
 		delay = 5 * time.Second
@@ -489,13 +489,20 @@ func (e *GameEngine) tutorialPreCommand(ctx context.Context, p *Player, input st
 // tutorialAfterCommand runs once a command has been handled: SAY TRAINING
 // (re)starts the lesson, otherwise a command that completes the current step
 // advances it and Aldren speaks the next passage.
-func (e *GameEngine) tutorialAfterCommand(ctx context.Context, p *Player, input string, result *CommandResult) {
-	if result == nil || p.RoomNumber != tutorialRoom || p.Dead || p.Unconscious {
+//
+// carried holds Aldren's entry lines that were still waiting on their delay
+// when this command started (tutorialOnEnter); they go out first. Lines queued
+// by this command's own room entry are left to their timer, so they follow the
+// room description.
+func (e *GameEngine) tutorialAfterCommand(ctx context.Context, p *Player, input string, result *CommandResult, carried []string) {
+	if result == nil {
 		return
 	}
-	// Lines still waiting on the entry delay go out ahead of anything new.
-	if pending := takeTutorialPending(p); len(pending) > 0 {
-		result.Messages = append(pending, result.Messages...)
+	if len(carried) > 0 {
+		result.Messages = append(carried, result.Messages...)
+	}
+	if p.RoomNumber != tutorialRoom || p.Dead || p.Unconscious {
+		return
 	}
 	c := parseTutorialCmd(input)
 	if c.isTrainingRequest() {

@@ -667,7 +667,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	if r := e.tutorialPreCommand(ctx, player, input); r != nil {
 		return r
 	}
-	defer func() { e.tutorialAfterCommand(ctx, player, input, result) }()
+	tutorialCarried := takeTutorialPending(player) // queued before this command
+	defer func() { e.tutorialAfterCommand(ctx, player, input, result, tutorialCarried) }()
 
 	// Being carried is passive — any action the carried player takes breaks it.
 	if player.CarriedBy != "" {
