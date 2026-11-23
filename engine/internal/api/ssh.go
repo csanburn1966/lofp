@@ -774,11 +774,34 @@ func sshRollAndPickAppearance(sc *sshConn, race, gender int) *engine.CharacterAp
 		sc.writeLine("")
 	}
 
-	eyeIdx := sshPickFromList(sc, "Eye color", engine.EyeColors)
+	eyeColors := engine.EyeColorsFor(race)
+	eyeIdx := sshPickFromList(sc, "Eye color", eyeColors)
 	if eyeIdx < 0 {
 		return nil
 	}
-	appearance.EyeColor = engine.EyeColors[eyeIdx]
+	appearance.EyeColor = eyeColors[eyeIdx]
+
+	if engine.HasScales(race) {
+		// Drakin have scales, not skin or hair.
+		primaryIdx := sshPickFromList(sc, "Primary scale color", engine.ScaleColors)
+		if primaryIdx < 0 {
+			return nil
+		}
+		appearance.PrimaryScaleColor = engine.ScaleColors[primaryIdx]
+		secondaryIdx := sshPickFromList(sc, "Secondary scale color", engine.ScaleColors)
+		if secondaryIdx < 0 {
+			return nil
+		}
+		appearance.SecondaryScaleColor = engine.ScaleColors[secondaryIdx]
+		if appearance.SecondaryScaleColor != appearance.PrimaryScaleColor {
+			patternIdx := sshPickFromList(sc, "Secondary color pattern", engine.ScalePatterns)
+			if patternIdx < 0 {
+				return nil
+			}
+			appearance.ScalePattern = engine.ScalePatterns[patternIdx]
+		}
+		return appearance
+	}
 
 	skinIdx := sshPickFromList(sc, "Skin color", engine.SkinColors)
 	if skinIdx < 0 {

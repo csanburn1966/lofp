@@ -185,6 +185,10 @@ type MonsterInstance struct {
 	AppearanceSkinColor string `json:"-"`
 	AppearanceHairColor string `json:"-"`
 	AppearanceHairStyle string `json:"-"`
+	// Drakin NPCs have scales in place of skin and hair.
+	AppearanceScaleColor   string `json:"-"`
+	AppearanceScaleColor2  string `json:"-"`
+	AppearanceScalePattern string `json:"-"`
 }
 
 // disguisableNPCNames are the generic town NPC types a disguise can blend into —
@@ -215,10 +219,15 @@ func rollMonsterAppearance(inst *MonsterInstance) {
 	inst.AppearanceHeight = height
 	inst.AppearanceWeight = weight
 	inst.AppearanceStrength = str
-	inst.AppearanceEyeColor = RandomEyeColor()
+	inst.AppearanceEyeColor = RandomEyeColorFor(race)
 	inst.AppearanceSkinColor = RandomSkinColor()
 	inst.AppearanceHairColor = RandomHairColor()
 	inst.AppearanceHairStyle = RandomHairStyle()
+	if HasScales(race) {
+		inst.AppearanceScaleColor = RandomScaleColor()
+		inst.AppearanceScaleColor2 = RandomScaleColor()
+		inst.AppearanceScalePattern = RandomScalePattern(inst.AppearanceScaleColor, inst.AppearanceScaleColor2)
+	}
 	inst.AppearanceRolled = true
 }
 

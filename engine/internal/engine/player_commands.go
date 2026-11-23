@@ -43,18 +43,34 @@ func (e *GameEngine) CreateNewPlayer(ctx context.Context, firstName, lastName st
 		a.Age = RollAge(race)
 	}
 	if a.EyeColor == "" {
-		a.EyeColor = RandomEyeColor()
+		a.EyeColor = RandomEyeColorFor(race)
 	}
-	if a.SkinColor == "" {
-		a.SkinColor = RandomSkinColor()
-	}
-	if a.HairStyle == "" {
-		a.HairStyle = RandomHairStyle()
-	}
-	if a.HairStyle == "bald" {
-		a.HairColor = ""
-	} else if a.HairColor == "" {
-		a.HairColor = RandomHairColor()
+	if HasScales(race) {
+		a.SkinColor, a.HairStyle, a.HairColor = "", "", ""
+		if a.PrimaryScaleColor == "" {
+			a.PrimaryScaleColor = RandomScaleColor()
+		}
+		if a.SecondaryScaleColor == "" {
+			a.SecondaryScaleColor = RandomScaleColor()
+		}
+		if a.PrimaryScaleColor == a.SecondaryScaleColor {
+			a.ScalePattern = ""
+		} else if a.ScalePattern == "" {
+			a.ScalePattern = RandomScalePattern(a.PrimaryScaleColor, a.SecondaryScaleColor)
+		}
+	} else {
+		a.PrimaryScaleColor, a.SecondaryScaleColor, a.ScalePattern = "", "", ""
+		if a.SkinColor == "" {
+			a.SkinColor = RandomSkinColor()
+		}
+		if a.HairStyle == "" {
+			a.HairStyle = RandomHairStyle()
+		}
+		if a.HairStyle == "bald" {
+			a.HairColor = ""
+		} else if a.HairColor == "" {
+			a.HairColor = RandomHairColor()
+		}
 	}
 
 	str, agi, qui, con, per, wil, emp := a.Strength, a.Agility, a.Quickness, a.Constitution, a.Perception, a.Willpower, a.Empathy
@@ -96,6 +112,9 @@ func (e *GameEngine) CreateNewPlayer(ctx context.Context, firstName, lastName st
 		SkinColor:      a.SkinColor,
 		HairStyle:      a.HairStyle,
 		HairColor:      a.HairColor,
+		PrimaryScaleColor:   a.PrimaryScaleColor,
+		SecondaryScaleColor: a.SecondaryScaleColor,
+		ScalePattern:        a.ScalePattern,
 		RoomNumber:     201,
 		Position:       0,
 		Skills:         make(map[int]int),
@@ -164,14 +183,28 @@ func (e *GameEngine) LoadPlayer(ctx context.Context, firstName, lastName string)
 		needsSave = true
 	}
 	if player.EyeColor == "" {
-		player.EyeColor = RandomEyeColor()
+		player.EyeColor = RandomEyeColorFor(player.Race)
 		needsSave = true
 	}
-	if player.SkinColor == "" {
+	if HasScales(player.Race) {
+		// Drakin made before scale colors existed get them now.
+		if player.PrimaryScaleColor == "" {
+			player.PrimaryScaleColor = RandomScaleColor()
+			needsSave = true
+		}
+		if player.SecondaryScaleColor == "" {
+			player.SecondaryScaleColor = RandomScaleColor()
+			needsSave = true
+		}
+		if player.ScalePattern == "" && player.PrimaryScaleColor != player.SecondaryScaleColor {
+			player.ScalePattern = RandomScalePattern(player.PrimaryScaleColor, player.SecondaryScaleColor)
+			needsSave = true
+		}
+	} else if player.SkinColor == "" {
 		player.SkinColor = RandomSkinColor()
 		needsSave = true
 	}
-	if player.HairStyle == "" {
+	if player.HairStyle == "" && !HasScales(player.Race) {
 		player.HairStyle = RandomHairStyle()
 		if player.HairStyle != "bald" {
 			player.HairColor = RandomHairColor()

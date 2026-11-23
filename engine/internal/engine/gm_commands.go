@@ -2332,6 +2332,12 @@ func (e *GameEngine) gmSetOnPlayer(ctx context.Context, player *Player, args []s
 		strChoices, strTarget = HairStyles, &player.HairStyle
 	case "SKINCOLOR":
 		strChoices, strTarget = SkinColors, &player.SkinColor
+	case "SCALECOLOR", "PRIMARYSCALECOLOR":
+		strChoices, strTarget = ScaleColors, &player.PrimaryScaleColor
+	case "SCALECOLOR2", "SECONDARYSCALECOLOR":
+		strChoices, strTarget = ScaleColors, &player.SecondaryScaleColor
+	case "SCALEPATTERN":
+		strChoices, strTarget = ScalePatterns, &player.ScalePattern
 	}
 	if strTarget != nil {
 		raw := strings.ToLower(strings.Join(args[1:], " "))
@@ -3028,8 +3034,7 @@ func (e *GameEngine) gmEdPlayer(ctx context.Context, player *Player, args []stri
 			target.Mana, target.MaxMana, target.Psi, target.MaxPsi),
 		fmt.Sprintf("Gold:%d Silver:%d Copper:%d%s", target.Gold, target.Silver, target.Copper, e.gmCurrencySummary(target)),
 		fmt.Sprintf("Room: %d | Position: %d | Dead: %v", target.RoomNumber, target.Position, target.Dead),
-		fmt.Sprintf("Age:%d | Height:%d | Weight:%d | Eyes:%s | Skin:%s | Hair:%s %s",
-			target.Age, target.Height, target.Weight, target.EyeColor, target.SkinColor, target.HairStyle, target.HairColor),
+		gmAppearanceLine(target),
 		fmt.Sprintf("Alignment: %d (%s)", target.Alignment, alignmentColorBand(target.Alignment)),
 		fmt.Sprintf("Skills: %v", target.Skills),
 		fmt.Sprintf("@set will now modify %s. Use @edpl (no args) to clear.", target.FirstName),
@@ -4008,4 +4013,15 @@ func (e *GameEngine) roomCurrencyLabel(roomNum int) string {
 		return currencyPlural(md)
 	}
 	return "gold/silver/copper"
+}
+
+// gmAppearanceLine is the appearance line of a GM's player summary: scale
+// colors for drakin, skin and hair for everyone else.
+func gmAppearanceLine(p *Player) string {
+	if HasScales(p.Race) {
+		return fmt.Sprintf("Age:%d | Height:%d | Weight:%d | Eyes:%s | Scales:%s / %s %s",
+			p.Age, p.Height, p.Weight, p.EyeColor, p.PrimaryScaleColor, p.SecondaryScaleColor, p.ScalePattern)
+	}
+	return fmt.Sprintf("Age:%d | Height:%d | Weight:%d | Eyes:%s | Skin:%s | Hair:%s %s",
+		p.Age, p.Height, p.Weight, p.EyeColor, p.SkinColor, p.HairStyle, p.HairColor)
 }

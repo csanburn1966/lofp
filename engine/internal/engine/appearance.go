@@ -45,6 +45,46 @@ var SkinColors = []string{
 	"fair", "pale", "tan", "olive", "bronze", "dark", "ebony", "golden", "ashen", "ruddy", "copper", "porcelain",
 }
 
+// ScaleColors replace skin and hair for Drakin, who choose a primary and a
+// secondary scale color (the original CHARGEN.SCR list).
+var ScaleColors = []string{
+	"olive green", "sea green", "light green", "violet", "crimson",
+	"orange", "brown", "ochre", "jet black",
+}
+
+// DrakinEyeColors are the only eye colors a drakin can choose (CHARGEN.SCR).
+var DrakinEyeColors = []string{"red", "black", "yellow", "green"}
+
+// ScalePatterns are how a drakin's secondary scale color is laid over the
+// primary (CHARGEN.SCR). Chosen only when the two colors differ.
+var ScalePatterns = []string{"bands", "stripes", "spots", "splotches", "blotches", "streaks"}
+
+// EyeColorsFor returns the eye colors a race chooses from at creation.
+func EyeColorsFor(race int) []string {
+	if HasScales(race) {
+		return DrakinEyeColors
+	}
+	return EyeColors
+}
+
+// HasScales reports whether a race has scales instead of skin and hair.
+func HasScales(race int) bool { return race == RaceDrakin }
+
+// scaleDescription is the scales part of a LOOK description, e.g. "olive
+// green scales with crimson stripes". Empty when no primary color is known.
+func scaleDescription(primary, secondary, pattern string) string {
+	if primary == "" {
+		return ""
+	}
+	if secondary == "" || secondary == primary {
+		return primary + " scales"
+	}
+	if pattern == "" {
+		return fmt.Sprintf("%s scales marked with %s", primary, secondary)
+	}
+	return fmt.Sprintf("%s scales with %s %s", primary, secondary, pattern)
+}
+
 var HairColors = []string{
 	"black", "brown", "dark brown", "chestnut", "auburn", "red", "strawberry blond",
 	"blond", "golden blond", "dark-blond", "sandy", "gray", "silver", "white",
@@ -85,6 +125,11 @@ type CharacterAppearance struct {
 	HairColor string `json:"hairColor,omitempty"`
 	HairStyle string `json:"hairStyle,omitempty"`
 	SkinColor string `json:"skinColor,omitempty"`
+
+	// Drakin only, in place of SkinColor/HairStyle/HairColor.
+	PrimaryScaleColor   string `json:"primaryScaleColor,omitempty"`
+	SecondaryScaleColor string `json:"secondaryScaleColor,omitempty"`
+	ScalePattern        string `json:"scalePattern,omitempty"` // empty when the colors match
 }
 
 // IsEmpty reports whether every field is at its zero value — used to distinguish
@@ -98,7 +143,8 @@ func (a *CharacterAppearance) IsEmpty() bool {
 	return a.Strength == 0 && a.Agility == 0 && a.Quickness == 0 && a.Constitution == 0 &&
 		a.Perception == 0 && a.Willpower == 0 && a.Empathy == 0 &&
 		a.Height == 0 && a.Weight == 0 && a.Age == 0 &&
-		a.EyeColor == "" && a.HairColor == "" && a.HairStyle == "" && a.SkinColor == ""
+		a.EyeColor == "" && a.HairColor == "" && a.HairStyle == "" && a.SkinColor == "" &&
+		a.PrimaryScaleColor == "" && a.SecondaryScaleColor == "" && a.ScalePattern == ""
 }
 
 // RollStats rolls STR/AGI/QUI/CON/PER/WIL/EMP within race's stat ranges.
@@ -157,10 +203,25 @@ func RollAge(race int) int {
 	return r[0] + rand.Intn(r[1]-r[0]+1)
 }
 
-func RandomEyeColor() string  { return EyeColors[rand.Intn(len(EyeColors))] }
-func RandomSkinColor() string { return SkinColors[rand.Intn(len(SkinColors))] }
-func RandomHairColor() string { return HairColors[rand.Intn(len(HairColors))] }
-func RandomHairStyle() string { return HairStyles[rand.Intn(len(HairStyles))] }
+func RandomEyeColor() string { return EyeColors[rand.Intn(len(EyeColors))] }
+
+// RandomEyeColorFor picks from the race's own eye colors (EyeColorsFor).
+func RandomEyeColorFor(race int) string {
+	c := EyeColorsFor(race)
+	return c[rand.Intn(len(c))]
+}
+
+// RandomScalePattern picks a pattern, or "" when the two colors match.
+func RandomScalePattern(primary, secondary string) string {
+	if primary == secondary {
+		return ""
+	}
+	return ScalePatterns[rand.Intn(len(ScalePatterns))]
+}
+func RandomSkinColor() string  { return SkinColors[rand.Intn(len(SkinColors))] }
+func RandomHairColor() string  { return HairColors[rand.Intn(len(HairColors))] }
+func RandomHairStyle() string  { return HairStyles[rand.Intn(len(HairStyles))] }
+func RandomScaleColor() string { return ScaleColors[rand.Intn(len(ScaleColors))] }
 
 // RollCharacterAppearance rolls the stats/height/weight/age portion of character
 // creation (the part the original game let players reroll "until they liked what
@@ -181,7 +242,8 @@ func RollCharacterAppearance(race, gender int) *CharacterAppearance {
 // raceHeightWeightRanges (widened by the same gender-reduction tolerance
 // RollHeightWeight applies), age within RaceAgeRanges, and EyeColor/SkinColor/
 // HairStyle/HairColor each a member of their fixed list (HairColor must be
-// empty when HairStyle is "bald", and non-empty and listed otherwise).
+// empty when HairStyle is "bald", and non-empty and listed otherwise). Drakin
+// have both scale colors instead, and no skin or hair.
 func ValidateCharacterAppearance(race, gender int, a *CharacterAppearance) error {
 	ranges := RaceStatRanges[race]
 	stats := []struct {
@@ -225,8 +287,30 @@ func ValidateCharacterAppearance(race, gender int, a *CharacterAppearance) error
 		return fmt.Errorf("age must be between %d and %d for this race", ageRange[0], ageRange[1])
 	}
 
-	if !containsString(EyeColors, a.EyeColor) {
+	if !containsString(EyeColorsFor(race), a.EyeColor) {
 		return fmt.Errorf("invalid eye color")
+	}
+	if HasScales(race) {
+		if a.SkinColor != "" || a.HairStyle != "" || a.HairColor != "" {
+			return fmt.Errorf("drakin have scales, not skin or hair")
+		}
+		if !containsString(ScaleColors, a.PrimaryScaleColor) {
+			return fmt.Errorf("invalid primary scale color")
+		}
+		if !containsString(ScaleColors, a.SecondaryScaleColor) {
+			return fmt.Errorf("invalid secondary scale color")
+		}
+		if a.PrimaryScaleColor == a.SecondaryScaleColor {
+			if a.ScalePattern != "" {
+				return fmt.Errorf("matching scale colors have no pattern")
+			}
+		} else if !containsString(ScalePatterns, a.ScalePattern) {
+			return fmt.Errorf("invalid scale pattern")
+		}
+		return nil
+	}
+	if a.PrimaryScaleColor != "" || a.SecondaryScaleColor != "" || a.ScalePattern != "" {
+		return fmt.Errorf("only drakin have scales")
 	}
 	if !containsString(SkinColors, a.SkinColor) {
 		return fmt.Errorf("invalid skin color")

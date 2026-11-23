@@ -48,6 +48,9 @@ export interface Character {
   hairColor?: string
   hairStyle?: string
   skinColor?: string
+  primaryScaleColor?: string
+  secondaryScaleColor?: string
+  scalePattern?: string
 }
 
 export interface AuthUser {

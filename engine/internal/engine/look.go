@@ -743,7 +743,9 @@ func (e *GameEngine) examineMonster(inst *MonsterInstance, def *gameworld.Monste
 			msgs = append(msgs, fmt.Sprintf("%s %s %s, %s and %s.",
 				subj, beVerb, heightDescriptor(rolled.AppearanceHeight, rolled.AppearanceRace),
 				weightDescriptor(rolled.AppearanceWeight, rolled.AppearanceRace), buildDescriptor(rolled.AppearanceStrength, rolled.AppearanceRace)))
-			if rolled.AppearanceHairStyle == "bald" {
+			if scales := scaleDescription(rolled.AppearanceScaleColor, rolled.AppearanceScaleColor2, rolled.AppearanceScalePattern); HasScales(rolled.AppearanceRace) && scales != "" {
+				msgs = append(msgs, fmt.Sprintf("%s %s %s eyes and %s.", subj, hasVerb, rolled.AppearanceEyeColor, scales))
+			} else if rolled.AppearanceHairStyle == "bald" {
 				msgs = append(msgs, fmt.Sprintf("%s %s %s eyes and %s skin. %s is completely bald.",
 					subj, hasVerb, rolled.AppearanceEyeColor, rolled.AppearanceSkinColor, subj))
 			} else {
@@ -826,7 +828,7 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 	} else if target.WolfForm {
 		ageWord := ageDescriptor(target.Age, target.Race)
 		furColor := target.HairColor
-		if target.HairStyle == "bald" {
+		if target.HairStyle == "bald" || furColor == "" {
 			furColor = "black"
 		}
 		msgs = append(msgs, fmt.Sprintf("You see %s%s %s wolf with %s eyes and %s fur.",
@@ -861,7 +863,11 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 		} else if gender == GenderFemale {
 			subj = "She"
 		}
-		if hairStyle == "bald" {
+		if scales := scaleDescription(target.EffectiveScales()); HasScales(race) && scales != "" {
+			msgs = append(msgs, fmt.Sprintf("%s %s %s eyes and %s.", subj, hasVerb, eye, scales))
+		} else if HasScales(race) {
+			msgs = append(msgs, fmt.Sprintf("%s %s %s eyes and dark scales.", subj, hasVerb, eye))
+		} else if hairStyle == "bald" {
 			msgs = append(msgs, fmt.Sprintf("%s %s %s eyes and %s skin. %s %s completely bald.",
 				subj, hasVerb, eye, skin, subj, beVerb))
 		} else {

@@ -57,6 +57,11 @@ const RACES = [
 const EYE_COLORS = ['blue', 'green', 'brown', 'hazel', 'gray', 'amber', 'violet', 'yellow', 'silver', 'black', 'red']
 const SKIN_COLORS = ['fair', 'pale', 'tan', 'olive', 'bronze', 'dark', 'ebony', 'golden', 'ashen', 'ruddy', 'copper', 'porcelain']
 const HAIR_COLORS = ['black', 'brown', 'dark brown', 'chestnut', 'auburn', 'red', 'strawberry blond', 'blond', 'golden blond', 'dark-blond', 'sandy', 'gray', 'silver', 'white']
+// Drakin (race 6) choose primary and secondary scale colors instead of skin and hair.
+const DRAKIN = 6
+const SCALE_COLORS = ['olive green', 'sea green', 'light green', 'violet', 'crimson', 'orange', 'brown', 'ochre', 'jet black']
+const SCALE_PATTERNS = ['bands', 'stripes', 'spots', 'splotches', 'blotches', 'streaks']
+const DRAKIN_EYE_COLORS = ['red', 'black', 'yellow', 'green']
 const HAIR_STYLES = ['long, flowing', 'long, straight', 'long, messy', 'long, curly', 'short, flowing', 'short, straight', 'short, curly', 'short, messy', 'mohawk', 'braided', 'shaved sides', 'bald', 'short', 'long', 'unkempt', 'spiky']
 
 interface RolledStats {
@@ -91,6 +96,9 @@ interface CreatedCharacter {
   hairColor: string
   hairStyle: string
   skinColor: string
+  primaryScaleColor: string
+  secondaryScaleColor: string
+  scalePattern: string
 }
 
 interface Props {
@@ -117,6 +125,13 @@ export default function CharacterCreate({ onCreated, onOpenManual }: Props) {
   const [skinColor, setSkinColor] = useState('')
   const [hairStyle, setHairStyle] = useState('')
   const [hairColor, setHairColor] = useState('')
+  const [primaryScaleColor, setPrimaryScaleColor] = useState('')
+  const [secondaryScaleColor, setSecondaryScaleColor] = useState('')
+  const [scalePattern, setScalePattern] = useState('')
+  const scaled = race === DRAKIN
+  // A pattern only means something when the two scale colors differ.
+  const patterned = scaled && !!primaryScaleColor && !!secondaryScaleColor && primaryScaleColor !== secondaryScaleColor
+  const eyeColors = scaled ? DRAKIN_EYE_COLORS : EYE_COLORS
 
   const authHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -153,19 +168,26 @@ export default function CharacterCreate({ onCreated, onOpenManual }: Props) {
     setStep('appearance')
   }
 
+  const canCreate = !!rolled && eyeColors.includes(eyeColor) && (scaled
+    ? !!primaryScaleColor && !!secondaryScaleColor && (!patterned || !!scalePattern)
+    : !!skinColor && !!hairStyle && (hairStyle === 'bald' || !!hairColor))
+
   const handleCreate = () => {
-    if (!rolled || !eyeColor || !skinColor || !hairStyle) return
+    if (!rolled || !canCreate) return
     onCreated({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       race, gender,
       ...rolled,
-      eyeColor, skinColor, hairStyle,
-      hairColor: hairStyle === 'bald' ? '' : hairColor,
+      eyeColor,
+      skinColor: scaled ? '' : skinColor,
+      hairStyle: scaled ? '' : hairStyle,
+      hairColor: scaled || hairStyle === 'bald' ? '' : hairColor,
+      primaryScaleColor: scaled ? primaryScaleColor : '',
+      secondaryScaleColor: scaled ? secondaryScaleColor : '',
+      scalePattern: patterned ? scalePattern : '',
     })
   }
-
-  const canCreate = !!rolled && !!eyeColor && !!skinColor && !!hairStyle && (hairStyle === 'bald' || !!hairColor)
 
   return (
     <div className="flex items-start sm:items-center justify-center h-full pt-4 px-4 pb-4 sm:p-8 overflow-y-auto">
@@ -324,11 +346,23 @@ export default function CharacterCreate({ onCreated, onOpenManual }: Props) {
           <div className="space-y-6">
             <p className="text-gray-400 text-sm font-mono text-center">Choose your character's appearance.</p>
 
-            <AppearancePicker label="Eye Color" options={EYE_COLORS} value={eyeColor} onChange={setEyeColor} />
-            <AppearancePicker label="Skin Color" options={SKIN_COLORS} value={skinColor} onChange={setSkinColor} />
-            <AppearancePicker label="Hair Style" options={HAIR_STYLES} value={hairStyle} onChange={setHairStyle} />
-            {hairStyle !== '' && hairStyle !== 'bald' && (
-              <AppearancePicker label="Hair Color" options={HAIR_COLORS} value={hairColor} onChange={setHairColor} />
+            <AppearancePicker label="Eye Color" options={eyeColors} value={eyeColor} onChange={setEyeColor} />
+            {scaled ? (
+              <>
+                <AppearancePicker label="Primary Scale Color" options={SCALE_COLORS} value={primaryScaleColor} onChange={setPrimaryScaleColor} />
+                <AppearancePicker label="Secondary Scale Color" options={SCALE_COLORS} value={secondaryScaleColor} onChange={setSecondaryScaleColor} />
+                {patterned && (
+                  <AppearancePicker label="Secondary Color Pattern" options={SCALE_PATTERNS} value={scalePattern} onChange={setScalePattern} />
+                )}
+              </>
+            ) : (
+              <>
+                <AppearancePicker label="Skin Color" options={SKIN_COLORS} value={skinColor} onChange={setSkinColor} />
+                <AppearancePicker label="Hair Style" options={HAIR_STYLES} value={hairStyle} onChange={setHairStyle} />
+                {hairStyle !== '' && hairStyle !== 'bald' && (
+                  <AppearancePicker label="Hair Color" options={HAIR_COLORS} value={hairColor} onChange={setHairColor} />
+                )}
+              </>
             )}
 
             <div className="flex gap-3">

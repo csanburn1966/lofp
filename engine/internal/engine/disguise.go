@@ -14,24 +14,27 @@ import (
 // requires more than that), height/weight slightly less — per the design
 // order the user specified.
 var disguiseFieldLevel = map[string]int{
-	"name":      1,
-	"gender":    2,
-	"haircolor": 3,
-	"hairstyle": 3,
-	"skincolor": 4,
-	"eyecolor":  4,
-	"age":       5,
-	"strength":  6,
-	"height":    7,
-	"weight":    8,
-	"race":      9,
+	"name":         1,
+	"gender":       2,
+	"haircolor":    3,
+	"hairstyle":    3,
+	"skincolor":    4,
+	"eyecolor":     4,
+	"scalecolor":   4,
+	"scalecolor2":  4,
+	"scalepattern": 4,
+	"age":          5,
+	"strength":     6,
+	"height":       7,
+	"weight":       8,
+	"race":         9,
 }
 
 // disguiseFieldOrder is disguiseFieldLevel's keys in display order for the
 // bare "disguise" instructions and "disguise list <#>" detail view.
 var disguiseFieldOrder = []string{
 	"name", "gender", "haircolor", "hairstyle", "skincolor", "eyecolor",
-	"age", "strength", "height", "weight", "race",
+	"scalecolor", "scalecolor2", "scalepattern", "age", "strength", "height", "weight", "race",
 }
 
 // disguiseCommonNames are the generic town NPC types a disguised player can
@@ -90,7 +93,7 @@ func (e *GameEngine) doDisguise(ctx context.Context, player *Player, args []stri
 		return &CommandResult{Messages: []string{fmt.Sprintf("Your Disguise skill only grants you %d save slot(s).", maxSlots)}}
 	}
 	if len(args) < 2 {
-		return &CommandResult{Messages: []string{"Set which field? (name, gender, haircolor, hairstyle, skincolor, eyecolor, age, strength, height, weight, race)"}}
+		return &CommandResult{Messages: []string{"Set which field? (name, gender, haircolor, hairstyle, skincolor, eyecolor, scalecolor, scalecolor2, scalepattern, age, strength, height, weight, race)"}}
 	}
 	field := strings.ToLower(args[1])
 	requiredLevel, ok := disguiseFieldLevel[field]
@@ -195,6 +198,20 @@ func setDisguiseField(persona *DisguisePersona, field, value string) error {
 			return fmt.Errorf("skin color must be one of: %s", strings.Join(SkinColors, ", "))
 		}
 		persona.SkinColor = lower
+	case "scalecolor", "scalecolor2":
+		if !containsString(ScaleColors, lower) {
+			return fmt.Errorf("scale color must be one of: %s", strings.Join(ScaleColors, ", "))
+		}
+		if field == "scalecolor" {
+			persona.PrimaryScaleColor = lower
+		} else {
+			persona.SecondaryScaleColor = lower
+		}
+	case "scalepattern":
+		if !containsString(ScalePatterns, lower) {
+			return fmt.Errorf("scale pattern must be one of: %s", strings.Join(ScalePatterns, ", "))
+		}
+		persona.ScalePattern = lower
 	case "eyecolor":
 		if !containsString(EyeColors, lower) {
 			return fmt.Errorf("eye color must be one of: %s", strings.Join(EyeColors, ", "))
@@ -404,6 +421,8 @@ func (e *GameEngine) disguiseListSlot(player *Player, level int, slotArg string)
 		field("Age", age), field("Strength", strength), field("Height", height), field("Weight", weight),
 		field("Hairstyle", p.HairStyle), field("Haircolor", p.HairColor),
 		field("Skin", p.SkinColor), field("Eyes", p.EyeColor),
+		field("Scales", p.PrimaryScaleColor), field("Scales (secondary)", p.SecondaryScaleColor),
+		field("Scale pattern", p.ScalePattern),
 	)
 	return &CommandResult{Messages: msgs}
 }

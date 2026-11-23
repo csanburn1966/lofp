@@ -229,6 +229,10 @@ type Player struct {
 	HairColor  string `bson:"hairColor,omitempty" json:"hairColor,omitempty"` // empty when HairStyle is "bald"
 	HairStyle  string `bson:"hairStyle,omitempty" json:"hairStyle,omitempty"`
 	SkinColor  string `bson:"skinColor,omitempty" json:"skinColor,omitempty"`
+	// Drakin have scales instead of skin and hair.
+	PrimaryScaleColor   string `bson:"primaryScaleColor,omitempty" json:"primaryScaleColor,omitempty"`
+	SecondaryScaleColor string `bson:"secondaryScaleColor,omitempty" json:"secondaryScaleColor,omitempty"`
+	ScalePattern        string `bson:"scalePattern,omitempty" json:"scalePattern,omitempty"` // empty when the colors match
 
 	// Status conditions
 	Bleeding     bool    `bson:"bleeding" json:"bleeding"` // derived: recomputed from Wounds after every add/remove
@@ -666,6 +670,10 @@ type DisguisePersona struct {
 	HairStyle string `bson:"hairStyle,omitempty" json:"hairStyle,omitempty"`
 	SkinColor string `bson:"skinColor,omitempty" json:"skinColor,omitempty"`
 	EyeColor  string `bson:"eyeColor,omitempty" json:"eyeColor,omitempty"`
+	// Scale colors, shown when the disguise's apparent race is drakin.
+	PrimaryScaleColor   string `bson:"primaryScaleColor,omitempty" json:"primaryScaleColor,omitempty"`
+	SecondaryScaleColor string `bson:"secondaryScaleColor,omitempty" json:"secondaryScaleColor,omitempty"`
+	ScalePattern        string `bson:"scalePattern,omitempty" json:"scalePattern,omitempty"`
 	Age       int    `bson:"age,omitempty" json:"age,omitempty"`
 	Strength  int    `bson:"strength,omitempty" json:"strength,omitempty"` // apparent build only; never the real combat stat
 	Height    int    `bson:"height,omitempty" json:"height,omitempty"`
@@ -739,6 +747,25 @@ func (p *Player) EffectiveAppearance() (race, gender, age, height, weight, stren
 	}
 	if d.HairStyle != "" {
 		hairStyle = d.HairStyle
+	}
+	return
+}
+
+// EffectiveScales returns the scale colors and pattern an observer sees: the
+// disguise's when it sets them, otherwise the player's own (empty for
+// non-drakin).
+func (p *Player) EffectiveScales() (primary, secondary, pattern string) {
+	primary, secondary, pattern = p.PrimaryScaleColor, p.SecondaryScaleColor, p.ScalePattern
+	if p.Disguised {
+		if d := p.ActiveDisguise.ScalePattern; d != "" {
+			pattern = d
+		}
+		if d := p.ActiveDisguise.PrimaryScaleColor; d != "" {
+			primary = d
+		}
+		if d := p.ActiveDisguise.SecondaryScaleColor; d != "" {
+			secondary = d
+		}
 	}
 	return
 }

@@ -471,6 +471,9 @@ type CreateCharMsg struct {
 	HairColor    string `json:"hairColor,omitempty"`
 	HairStyle    string `json:"hairStyle,omitempty"`
 	SkinColor    string `json:"skinColor,omitempty"`
+	PrimaryScaleColor   string `json:"primaryScaleColor,omitempty"`
+	SecondaryScaleColor string `json:"secondaryScaleColor,omitempty"`
+	ScalePattern        string `json:"scalePattern,omitempty"`
 }
 
 // appearance builds a *engine.CharacterAppearance from the message fields, or nil
@@ -481,6 +484,8 @@ func (c *CreateCharMsg) appearance() *engine.CharacterAppearance {
 		Perception: c.Perception, Willpower: c.Willpower, Empathy: c.Empathy,
 		Height: c.Height, Weight: c.Weight, Age: c.Age,
 		EyeColor: c.EyeColor, HairColor: c.HairColor, HairStyle: c.HairStyle, SkinColor: c.SkinColor,
+		PrimaryScaleColor: c.PrimaryScaleColor, SecondaryScaleColor: c.SecondaryScaleColor,
+		ScalePattern: c.ScalePattern,
 	}
 	if a.IsEmpty() {
 		return nil
