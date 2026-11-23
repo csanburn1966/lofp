@@ -69,7 +69,8 @@ interface AuthContextType {
   user: AuthUser | null
   login: (credential: string) => Promise<void>
   loginWithPassword: (email: string, password: string) => Promise<void>
-  register: (email: string, password: string, name: string, captchaToken: string) => Promise<void>
+  // Resolves to whether the verification email was sent.
+  register: (email: string, password: string, name: string, captchaToken: string) => Promise<boolean>
   logout: () => void
 }
 
@@ -77,7 +78,7 @@ export const AuthContext = createContext<AuthContextType>({
   user: null,
   login: async () => {},
   loginWithPassword: async () => {},
-  register: async () => {},
+  register: async () => false,
   logout: () => {},
 })
 
@@ -196,7 +197,9 @@ function App() {
       const errData = await resp.json().catch(() => null)
       throw new Error(errData?.error || `Registration failed (${resp.status})`)
     }
-    setAuthUser(await resp.json())
+    const { emailSent, ...authUser } = await resp.json()
+    setAuthUser(authUser)
+    return emailSent !== false
   }
 
   const logout = () => {

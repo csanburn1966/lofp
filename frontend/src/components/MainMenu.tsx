@@ -58,6 +58,7 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
   const [passwordInput, setPasswordInput] = useState('')
   const [nameInput, setNameInput] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [verifyEmailFailed, setVerifyEmailFailed] = useState(false)
   const [forgotSent, setForgotSent] = useState(false)
   const [showMudInfo, setShowMudInfo] = useState(false)
   const [banner, setBanner] = useState('')
@@ -207,7 +208,7 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
     setSubmitting(true)
     setLoginError('')
     try {
-      await register(emailInput, passwordInput, nameInput, captchaToken)
+      setVerifyEmailFailed(!(await register(emailInput, passwordInput, nameInput, captchaToken)))
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : 'Registration failed')
       // Turnstile tokens are single-use — reset the widget so the user can
@@ -427,7 +428,10 @@ export default function MainMenu({ onNewCharacter, onSelectCharacter, onVersionN
               <div className="bg-[#1a1a1a] border border-yellow-800 rounded-lg p-4 mb-4">
                 <p className="text-yellow-400 font-mono text-sm font-bold mb-1">Email not verified</p>
                 <p className="text-gray-400 font-mono text-xs mb-3">
-                  Check your email for a verification link or code. You must verify your email before creating or playing characters.
+                  {verifyEmailFailed
+                    ? 'Your account was created, but the verification email could not be sent. Try resending it later.'
+                    : 'Check your email for a verification link or code.'}{' '}
+                  You must verify your email before creating or playing characters.
                 </p>
                 <p className="text-gray-500 font-mono text-xs">
                   Click your name in the top-right corner to enter a verification code or resend the email.

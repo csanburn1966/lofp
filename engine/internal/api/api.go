@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -126,6 +127,19 @@ func (s *Server) checkRateLimit(ip, endpoint string, maxAttempts int, window tim
 	}
 	s.rateLimits[key] = append(valid, now)
 	return true
+}
+
+// sendVerification emails an account its verification link and code. Failures
+// are logged; callers must not tell the user the email was sent on error.
+func (s *Server) sendVerification(account *auth.Account, token, code string) error {
+	if s.email == nil || !s.email.Enabled() {
+		return errors.New("email service not configured")
+	}
+	if err := s.email.SendVerification(account.Email, token, code); err != nil {
+		log.Printf("Failed to send verification email to %s: %v", account.Email, err)
+		return err
+	}
+	return nil
 }
 
 func NewServer(ge *engine.GameEngine, parsed *gameworld.ParsedData, authSvc *auth.Service, emailSvc *email.Service, gl *gamelog.Logger, h *hub.Hub, cs *capture.Store, frontendURL string) *Server {
@@ -2056,12 +2070,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	// Send verification email
-	if s.email != nil && s.email.Enabled() {
-		if err := s.email.SendVerification(account.Email, verifyToken, verifyCode); err != nil {
-			log.Printf("Failed to send verification email to %s: %v", account.Email, err)
-		}
-	}
+	// The account exists even if the email fails, so report that in the response
+	// instead of failing the request (a retry would hit "already registered").
+	emailSent := s.sendVerification(account, verifyToken, verifyCode) == nil
 	// Issue JWT (account is usable immediately, but email unverified)
 	token, err := s.auth.IssueJWT(account)
 	if err != nil {
@@ -2070,8 +2081,9 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"token":   token,
-		"account": account,
+		"token":     token,
+		"account":   account,
+		"emailSent": emailSent,
 	})
 }
 
@@ -2193,6 +2205,12 @@ func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request
 		http.Error(w, "auth not configured", 500)
 		return
 	}
+	if !s.checkRateLimit(getClientIP(r), "resend-verification", 3, time.Hour) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(429)
+		json.NewEncoder(w).Encode(map[string]string{"error": "too many verification emails requested, try again later"})
+		return
+	}
 	var req struct {
 		Email string `json:"email"`
 	}
@@ -2207,12 +2225,12 @@ func (s *Server) handleResendVerification(w http.ResponseWriter, r *http.Request
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
-	if s.email != nil && s.email.Enabled() {
-		if err := s.email.SendVerification(account.Email, token, code); err != nil {
-			log.Printf("Failed to send verification email to %s: %v", account.Email, err)
-		}
-	}
 	w.Header().Set("Content-Type", "application/json")
+	if err := s.sendVerification(account, token, code); err != nil {
+		w.WriteHeader(502)
+		json.NewEncoder(w).Encode(map[string]string{"error": "the verification email could not be sent, try again later"})
+		return
+	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "sent"})
 }
 

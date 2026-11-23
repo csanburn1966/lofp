@@ -21,4 +21,4 @@ auth:
 
 email:
   resend_api_key: "${RESEND_API_KEY:}"
-  from_address: "${EMAIL_FROM:Legends of Future Past <noreply@lofp.sanburnlab.com>}"
+  from_address: "${EMAIL_FROM:Legends of Future Past <noreply@sanburnlab.com>}"

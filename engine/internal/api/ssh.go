@@ -588,10 +588,12 @@ func (s *Server) sshRegister(sc *sshConn, ctx context.Context) *auth.Account {
 	}
 
 	if s.email != nil && s.email.Enabled() {
-		if err := s.email.SendVerification(account.Email, verifyToken, verifyCode); err != nil {
-			log.Printf("Failed to send verification email to %s: %v", account.Email, err)
+		if err := s.sendVerification(account, verifyToken, verifyCode); err != nil {
+			sc.writeLine(ansiGreen + "Account created!" + ansiReset)
+			sc.writeLine(ansiYellow + "The verification email could not be sent. Log in to the web client later to resend it." + ansiReset)
+		} else {
+			sc.writeLine(ansiGreen + "Account created! A verification email has been sent to " + email + "." + ansiReset)
 		}
-		sc.writeLine(ansiGreen + "Account created! A verification email has been sent to " + email + "." + ansiReset)
 	} else {
 		sc.writeLine(ansiGreen + "Account created!" + ansiReset)
 	}

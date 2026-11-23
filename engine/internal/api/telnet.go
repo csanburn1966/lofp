@@ -1303,10 +1303,12 @@ func (s *Server) telnetRegister(tc *telnetConn, ctx context.Context) *auth.Accou
 	}
 
 	if s.email != nil && s.email.Enabled() {
-		if err := s.email.SendVerification(account.Email, verifyToken, verifyCode); err != nil {
-			log.Printf("Failed to send verification email to %s: %v", account.Email, err)
+		if err := s.sendVerification(account, verifyToken, verifyCode); err != nil {
+			tc.writeLine(ansiGreen + "Account created!" + ansiReset)
+			tc.writeLine(ansiYellow + "The verification email could not be sent. Log in to the web client later to resend it." + ansiReset)
+		} else {
+			tc.writeLine(ansiGreen + "Account created! A verification email has been sent to " + email + "." + ansiReset)
 		}
-		tc.writeLine(ansiGreen + "Account created! A verification email has been sent to " + email + "." + ansiReset)
 	} else {
 		tc.writeLine(ansiGreen + "Account created!" + ansiReset)
 	}
