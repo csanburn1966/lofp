@@ -1147,8 +1147,12 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 			}
 		}
 
-		// Shields go to off-hand
-		if itemDef.Type == "SHIELD" {
+		// Shields go to the off hand, and so does a SHIELDGRIP weapon (the
+		// main-gauche) when the main hand already holds a weapon: Chandra's
+		// capture wields one beside a dagger with no Two Weapon skill.
+		shieldGrip := isWeapon(itemDef.Type) && containsFlag(itemDef.Flags, "SHIELDGRIP") &&
+			player.Wielded != nil && itemDef.Type != "TWOHAND_WEAPON"
+		if itemDef.Type == "SHIELD" || shieldGrip {
 			if player.Wielded != nil {
 				mainDef := e.items[player.Wielded.Archetype]
 				if mainDef != nil && mainDef.Type == "TWOHAND_WEAPON" {
@@ -1161,11 +1165,16 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 			offhand := player.Inventory[i]
 			player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
 			player.OffHand = &offhand
-			e.SavePlayer(ctx, player)
 			fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+			msgs := []string{fmt.Sprintf("You wield %s.", fullName)}
+			if shieldGrip {
+				msgs = append(msgs, e.damagedWeaponWarning(itemDef, &offhand)...)
+			}
+			msgs = append(msgs, offHandWieldRoundTime(player, itemDef))
+			e.SavePlayer(ctx, player)
 			return &CommandResult{
-				Messages:      []string{fmt.Sprintf("You raise %s in your off hand.", fullName)},
-				RoomBroadcast: []string{fmt.Sprintf("%s raises %s.", player.DisplayNameCap(), fullName)},
+				Messages:      msgs,
+				RoomBroadcast: []string{fmt.Sprintf("%s wields %s.", player.DisplayNameCap(), fullName)},
 			}
 		}
 
@@ -1210,11 +1219,13 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 					offhand := player.Inventory[i]
 					player.Inventory = append(player.Inventory[:i], player.Inventory[i+1:]...)
 					player.OffHand = &offhand
-					e.SavePlayer(ctx, player)
 					fullName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
+					msgs := append([]string{fmt.Sprintf("You wield %s.", fullName)}, e.damagedWeaponWarning(itemDef, &offhand)...)
+					msgs = append(msgs, offHandWieldRoundTime(player, itemDef))
+					e.SavePlayer(ctx, player)
 					return &CommandResult{
-						Messages:      append([]string{fmt.Sprintf("You wield %s in your off hand.", fullName)}, e.damagedWeaponWarning(itemDef, &offhand)...),
-						RoomBroadcast: []string{fmt.Sprintf("%s wields %s in their off hand.", player.DisplayNameCap(), fullName)},
+						Messages:      msgs,
+						RoomBroadcast: []string{fmt.Sprintf("%s wields %s.", player.DisplayNameCap(), fullName)},
 					}
 				}
 				return &CommandResult{Messages: []string{"Your off-hand weapon must weigh less than your main weapon."}}
@@ -1236,6 +1247,34 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 	return &CommandResult{Messages: []string{"You don't have that."}}
 }
 
+// Wielding round time, from the original captures (original/csanburn):
+// readying the main-hand weapon takes none, but a second item in the off hand
+// does: a shield 3 seconds, an off-hand weapon (main-gauche) 5, both with no
+// Combat Maneuvering. Each level of Combat Maneuvering takes a second off
+// (LEGENDS.DOC), down to 2: Moordread's shield wields went from 3 seconds to
+// 2 once he had two levels.
+const (
+	shieldWieldRoundTime   = 3
+	offHandWeaponRoundTime = 5
+	minWieldRoundTime      = 2
+)
+
+// offHandWieldRoundTime sets the round time for wielding def in the off hand
+// and returns the "[Round: N sec]" line.
+func offHandWieldRoundTime(player *Player, def *gameworld.ItemDef) string {
+	rt := offHandWeaponRoundTime
+	if def.Type == "SHIELD" {
+		rt = shieldWieldRoundTime
+	}
+	rt -= player.Skills[10] // Combat Maneuvering
+	if rt < minWieldRoundTime {
+		rt = minWieldRoundTime
+	}
+	rt = applyRoundTime(player, rt)
+	player.RoundTimeExpiry = time.Now().Add(time.Duration(rt) * time.Second)
+	return fmt.Sprintf(" [Round: %d sec]", rt)
+}
+
 func (e *GameEngine) doUnwield(ctx context.Context, player *Player, args []string) *CommandResult {
 	if msg := formActionBlockMessage(player); msg != "" {
 		return &CommandResult{Messages: []string{msg}}
@@ -1254,8 +1293,8 @@ func (e *GameEngine) doUnwield(ctx context.Context, player *Player, args []strin
 			}
 			player.Inventory = append(player.Inventory, *player.OffHand)
 			player.OffHand = nil
-			msgs = append(msgs, "You lower your off-hand item.")
-			broadcasts = append(broadcasts, fmt.Sprintf("%s lowers %s.", player.DisplayNameCap(), offName))
+			msgs = append(msgs, fmt.Sprintf("You put away %s.", offName))
+			broadcasts = append(broadcasts, fmt.Sprintf("%s puts away %s.", player.DisplayNameCap(), offName))
 		}
 		if player.Wielded != nil {
 			wepDef := e.items[player.Wielded.Archetype]
@@ -1285,8 +1324,8 @@ func (e *GameEngine) doUnwield(ctx context.Context, player *Player, args []strin
 				player.OffHand = nil
 				e.SavePlayer(ctx, player)
 				return &CommandResult{
-					Messages:      []string{fmt.Sprintf("You lower %s.", fullName)},
-					RoomBroadcast: []string{fmt.Sprintf("%s lowers %s.", player.DisplayNameCap(), fullName)},
+					Messages:      []string{fmt.Sprintf("You put away %s.", fullName)},
+					RoomBroadcast: []string{fmt.Sprintf("%s puts away %s.", player.DisplayNameCap(), fullName)},
 				}
 			}
 		}

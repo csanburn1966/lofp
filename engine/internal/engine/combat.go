@@ -2003,16 +2003,14 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		}
 	}
 
-	// Roundtime: base 5, reduced by quickness and Combat Maneuvering
+	// Roundtime: base 5, reduced by quickness. Combat Maneuvering shortens
+	// wielding round time, not attacks (LEGENDS.DOC; offHandWieldRoundTime).
 	rtSeconds := 5
 	if player.Quickness > 80 {
 		rtSeconds = 3
 	} else if player.Quickness > 50 {
 		rtSeconds = 4
 	}
-	// Combat Maneuvering: -1 sec per rank (from skills.txt)
-	combatManeuver := player.Skills[10]
-	rtSeconds -= combatManeuver
 	if player.Stance == StanceBerserk {
 		rtSeconds--
 	}
