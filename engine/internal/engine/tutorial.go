@@ -41,7 +41,7 @@ const (
 	tutorialCoinItem = 9500 // TUTORIAL.SCR: "a tarnished copper coin"
 	tutorialCoinAdj1 = 318  // ADJDEF 318 tarnished
 	tutorialCoinAdj2 = 68   // ADJDEF 68 copper
-	starterDagger    = 12   // ITEM1.SCR dagger, issued to new characters
+	starterDagger    = 12   // ITEM1.SCR dagger, which Aldren hands to the unarmed
 
 	tutorialNotStarted = 0
 	tutorialActive     = 1
@@ -127,8 +127,9 @@ type tutorialStep struct {
 	lines []string
 	// hint is what he says when the player seems stuck.
 	hint string
-	// begin runs as the step starts (e.g. putting the coin down).
-	begin func(e *GameEngine, ctx context.Context, p *Player)
+	// begin runs as the step starts (e.g. putting the coin down) and returns
+	// any lines to follow the step's own.
+	begin func(e *GameEngine, ctx context.Context, p *Player) []string
 	// done reports whether this command completes the step; nil means the
 	// step completes on its own (the farewell).
 	done func(e *GameEngine, p *Player, c tutorialCmd) bool
@@ -197,9 +198,10 @@ var tutorialSteps = []tutorialStep{
 			aldrenSays("Much better! You can wear other clothing and armor the same way. If you need to take something off, use [REMOVE BREECHES], though I'd strongly advise against doing that here."),
 			aldrenSays("And if you ever forget what you've got on, [INV] or [I] should remind you. Saves having to look down every few minutes."),
 			"Aldren taps the haft of his halberd against the cobblestones.",
-			aldrenSays("Now, the roads beyond Fayd and folk in the Poor Quarter aren't nearly as civilized as the streets within. If you've a weapon among your belongings, you'd best know how to use it. Draw and ready your weapon [WIELD DAGGER], assuming that's what you've been issued."),
+			aldrenSays("Now, the roads beyond Fayd and folk in the Poor Quarter aren't nearly as civilized as the streets within."),
 		},
-		hint: "Ready your weapon. Type [WIELD DAGGER], or WIELD whatever weapon you carry.",
+		hint:  "Ready your weapon. Type [WIELD DAGGER], or WIELD whatever weapon you carry.",
+		begin: func(e *GameEngine, ctx context.Context, p *Player) []string { return e.tutorialIssueDagger(ctx, p) },
 		done: func(e *GameEngine, p *Player, c tutorialCmd) bool {
 			if c.verb != "WIELD" {
 				return false
@@ -227,7 +229,7 @@ var tutorialSteps = []tutorialStep{
 			aldrenSays("Well, would you look at that! Someone's dropped a copper. Finders keepers, as they say. Go on, pick it up [GET COIN]."),
 		},
 		hint:  "Pick up that coin by the gatehouse. Type [GET COIN].",
-		begin: func(e *GameEngine, ctx context.Context, p *Player) { e.placeTutorialCoin(p) },
+		begin: func(e *GameEngine, ctx context.Context, p *Player) []string { e.placeTutorialCoin(p); return nil },
 		done: func(e *GameEngine, p *Player, c tutorialCmd) bool {
 			return c.verb == "GET" && e.tutorialCarriesCoin(p)
 		},
@@ -346,10 +348,10 @@ func (e *GameEngine) beginTutorialStep(ctx context.Context, p *Player) []string 
 		return nil
 	}
 	step := tutorialSteps[p.TutorialStep]
-	if step.begin != nil {
-		step.begin(e, ctx, p)
-	}
 	lines := append([]string(nil), step.lines...)
+	if step.begin != nil {
+		lines = append(lines, step.begin(e, ctx, p)...)
+	}
 	if step.done == nil {
 		p.TutorialStatus = tutorialFinished
 		p.TutorialStep = 0
@@ -366,16 +368,19 @@ func (e *GameEngine) tutorialResumeLines(ctx context.Context, p *Player) []strin
 		return nil
 	}
 	step := tutorialSteps[p.TutorialStep]
+	var begun []string
 	if step.begin != nil {
-		step.begin(e, ctx, p) // e.g. the coin may be gone by now
+		begun = step.begin(e, ctx, p) // e.g. the coin may be gone by now
 	}
 	lines := []string{"Sergeant Aldren spots you and nods."}
 	if p.TutorialStep == 0 {
 		return append(lines, step.lines[1:]...)
 	}
-	return append(lines,
-		aldrenSays("Back again, traveler? Let's pick up where we left off."),
-		aldrenSays(step.hint))
+	lines = append(lines, aldrenSays("Back again, traveler? Let's pick up where we left off."))
+	if len(begun) > 0 {
+		return append(lines, begun...)
+	}
+	return append(lines, aldrenSays(step.hint))
 }
 
 // tutorialOnEnter runs when a player enters a room, from applyEntryScripts.
@@ -604,6 +609,38 @@ func (e *GameEngine) tutorialCarriesCoin(p *Player) bool {
 		}
 	}
 	return p.Wielded != nil && p.Wielded.Archetype == tutorialCoinItem
+}
+
+// tutorialIssueDagger opens the WIELD step. A player with no weapon gets a
+// dagger from Aldren, once per character (TutorialDagger), so restarting the
+// lesson isn't a dagger dispenser. Returns Aldren's lines for the step.
+func (e *GameEngine) tutorialIssueDagger(ctx context.Context, p *Player) []string {
+	if e.tutorialCarriesWeapon(p) {
+		noun := "dagger"
+		if p.Wielded == nil {
+			for _, ii := range p.Inventory {
+				if def := e.items[ii.Archetype]; def != nil && isWeapon(def.Type) {
+					if n := e.itemNoun(ii.Archetype); n != "" {
+						noun = n
+					}
+					break
+				}
+			}
+		} else if n := e.itemNoun(p.Wielded.Archetype); n != "" {
+			noun = n
+		}
+		return []string{aldrenSays(fmt.Sprintf("I see you've a weapon among your belongings. You'd best know how to use it. Draw and ready it [WIELD %s].", strings.ToUpper(noun)))}
+	}
+	if p.TutorialDagger || e.items[starterDagger] == nil {
+		return []string{aldrenSays("You'll want a weapon before you go far. Once you've one, draw and ready it with [WIELD], and the weapon's name. [WIELD DAGGER], for instance.")}
+	}
+	p.Inventory = append(p.Inventory, InventoryItem{Archetype: starterDagger})
+	p.TutorialDagger = true
+	e.SavePlayer(ctx, p)
+	return []string{
+		"Aldren frowns at your empty belt, then unhooks a plain dagger from his own and presses it into your hands.",
+		aldrenSays("Here. The watch keeps a few of these for travelers who arrive with nothing but hope. It won't win you any duels, but it's better than bare knuckles. Draw and ready it [WIELD DAGGER]."),
+	}
 }
 
 // placeTutorialCoin puts a tutorial coin by the gatehouse unless one is

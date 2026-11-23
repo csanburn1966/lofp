@@ -594,6 +594,8 @@ type Player struct {
 	TutorialStatus int `bson:"tutorialStatus,omitempty" json:"-"`
 	TutorialStep   int `bson:"tutorialStep,omitempty" json:"-"`
 	TutorialFlags  int `bson:"tutorialFlags,omitempty" json:"-"`
+	// TutorialDagger: Aldren has handed this character a dagger.
+	TutorialDagger bool `bson:"tutorialDagger,omitempty" json:"-"`
 	// TutorialMisses counts commands since the last step that didn't complete it
 	// (Aldren offers a hint after a few). TutorialPrompted is false until Aldren
 	// has spoken this session, so a reconnect resumes with the current prompt;

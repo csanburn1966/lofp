@@ -30,8 +30,8 @@ func TestTutorialWalkthrough(t *testing.T) {
 	}
 	ctx := context.Background()
 	p := e.CreateNewPlayer(ctx, "Testy", "Newcomer", 1, 0, nil)
-	if len(p.Inventory) != 1 || p.Inventory[0].Archetype != starterDagger {
-		t.Fatalf("expected a starter dagger, got %+v", p.Inventory)
+	if len(p.Inventory) != 0 {
+		t.Fatalf("new character should start empty-handed, got %+v", p.Inventory)
 	}
 
 	all := []string{}
@@ -62,6 +62,9 @@ func TestTutorialWalkthrough(t *testing.T) {
 	}
 	want("i", 3)
 	want("wear breeches", 4)
+	if !p.TutorialDagger || !e.tutorialCarriesWeapon(p) {
+		t.Fatalf("Aldren didn't hand over a dagger at the WIELD step: %+v", p.Inventory)
+	}
 	want("wield dagger", 5)
 	want("stat", 5)
 	want("fatigue", 6)

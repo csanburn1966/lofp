@@ -57,15 +57,37 @@ ITEM 9 693 ADJ1=10
 CALL 33
 IFENTRY
   IFVAR INTNUM6 < 10
-    NEWITEM -1 255 ADJ1=181 ADJ2=40
-    NEWITEM -1 253 ADJ1=87 ADJ2=40
+; New-character clothing in a random color (from Witchlet's citygate-test.scr GM script):
+; 29 blue, 259 red, 152 green, 40 brown, 358 yellow, 340 violet, 347 white
+    RANDOM DUMMY6 1 7 0
+    EQUAL DUMMY7 40
+    IFVAR DUMMY6 = 1
+      EQUAL DUMMY7 29
+    ENDIF
+    IFVAR DUMMY6 = 2
+      EQUAL DUMMY7 259
+    ENDIF
+    IFVAR DUMMY6 = 3
+      EQUAL DUMMY7 152
+    ENDIF
+    IFVAR DUMMY6 = 5
+      EQUAL DUMMY7 358
+    ENDIF
+    IFVAR DUMMY6 = 6
+      EQUAL DUMMY7 340
+    ENDIF
+    IFVAR DUMMY6 = 7
+      EQUAL DUMMY7 347
+    ENDIF
+    NEWITEM -1 255 ADJ1=181 ADJ2=DUMMY7
+    NEWITEM -1 253 ADJ1=87 ADJ2=DUMMY7
     NEWITEM -1 217 ADJ1=298 ADJ2=180
     NEWITEM -1 925 VAL1=-1 VAL2=-1 VAL3=-1 VAL4=-1 VAL5=-1
     GMMSG Honk! %N is a newbie who didn't get the racial initiation.
     ECHO PLAYER [Type HELP to access the help system. Type ASSIST to request a gamemaster as soon as one is available. Type ADVICE for hints on getting started.]
     PLREVENT 2
     CONTPLREVENT
-    ECHO PLAYER You have been given tunic, breeches and boots. Please WEAR them immediately. (WEAR TUNIC, WEAR BREECHES, WEAR TUNIC)
+    ECHO PLAYER You have been given tunic, breeches and boots. Please WEAR them immediately. (WEAR TUNIC, WEAR BREECHES, WEAR BOOTS)
     PLREVENT 2
     CONTPLREVENT
     ECHO PLAYER You have also been given a roleplaying OBJECT, which allows you to do enhanced roleplaying actions. TAP the OBJECT to see the rules. Make sure you practice in private.
