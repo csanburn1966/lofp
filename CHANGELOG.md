@@ -1,5 +1,37 @@
 # Changelog
 
+## v15.15.0 — 2026-11-23
+
+Drakin finally look like drakin: new drakin choose the color and pattern of their scales instead of skin and hair. Combat is back to the original rules: your level no longer pads your attack and defense, and Combat Maneuvering now speeds up readying a shield or second weapon rather than your attacks. Jewelry treasure now comes in metals from tin to alzyron, and Sergeant Aldren hands a dagger to newcomers who arrive unarmed.
+
+### New: Drakin Scales
+- Drakin no longer choose skin color, hair style or hair color when they are created, since drakin have no hair. Instead they choose a primary and a secondary scale color (olive green, sea green, light green, violet, crimson, orange, brown, ochre or jet black) and, when the two differ, how the secondary color is laid on: bands, stripes, spots, splotches, blotches or streaks
+- Drakin eyes are red, black, yellow or green, as in the original game
+- Looking at a drakin now shows their scales, e.g. "yellow eyes and olive green scales with crimson stripes"
+- Existing drakin have been given scales of their own
+
+### Changed: Combat Modifiers No Longer Grow With Level
+- Your attack and defend modifiers used to gain 3 points for every level you reached. The original game had no such bonus, so they now come from your skills, stats, stance and equipment alone
+- Higher-level characters will notice their modifiers are lower than before. Train your weapon skills and Dodging & Parrying to raise them
+
+### Changed: Combat Maneuvering and Wielding
+- Combat Maneuvering now does what its description says: each level takes a second off the time it takes to ready a shield or second weapon. It no longer shortens attacks
+- Readying your main weapon takes no time. Readying a shield takes 3 seconds and an off-hand weapon 5, less a second per level of Combat Maneuvering, down to 2
+- A main-gauche can be readied in your off hand beside your weapon, like a shield, without the Two Weapon skill
+- Wielding and putting away off-hand items now reads the way it did originally: "You wield a shield." and "You put away a shield."
+
+### Changed: Jewelry Treasure
+- Jewelry found on monsters and in chests is now made of a metal: tin, copper, brass, bronze, silver, gold, platinum or alzyron. Weaker monsters mostly carry plain, tin and copper pieces, while richer hoards turn up silver, gold, platinum and alzyron far more often
+- Precious metals are worth more when sold: up to eight times as much as plain jewelry
+
+### Changed: New Player Tutorial and Starting Gear
+- New characters no longer start with a dagger. Instead Sergeant Aldren hands one over when the lesson reaches wielding a weapon, if you have none
+- New characters' tunic and breeches now come in a random color: blue, red, green, brown, yellow, violet or white
+
+### Fixed
+- The new-character clothing message said WEAR TUNIC twice. It now says WEAR BOOTS for the boots
+- Jewelry dropped by a monster no longer reads "A a ring lies among the remains."
+
 ## v15.14.0 — 2026-11-23
 
 New arrivals in Fayd now have a guide: Sergeant Aldren Fairweather meets every new character at the city gate and walks them through the basics, one command at a time. The New Havarth Mining Company's survey assignments are now a permanent part of the world, and the game has moved to a new, hardened server where connection limits finally apply to each player rather than to everyone at once.
