@@ -232,10 +232,11 @@ func (e *GameEngine) rollTreasureItem(roomNum, treasureLevel int, md *gameworld.
 				def := e.items[item.Archetype]
 				if def != nil {
 					name := e.formatItemName(def, item.Adj1, item.Adj2, item.Adj3, item.Extend)
+					// name already carries its article ("a gold ring").
 					if item.Val3 > 0 {
-						msgs = append(msgs, fmt.Sprintf("A %s glimmers with a faint magical light among the remains.", name))
+						msgs = append(msgs, fmt.Sprintf("%s glimmers with a faint magical light among the remains.", capitalize(name)))
 					} else {
-						msgs = append(msgs, fmt.Sprintf("A %s lies among the remains.", name))
+						msgs = append(msgs, fmt.Sprintf("%s lies among the remains.", capitalize(name)))
 					}
 				}
 			}

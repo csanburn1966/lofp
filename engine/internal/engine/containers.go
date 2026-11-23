@@ -2162,6 +2162,61 @@ func isJewelryBeneficialSpell(sp SpellDef) bool {
 // and assigns a beneficial spell (Val3) with a limited number of charges (Val2).
 // Val2 == 0 means the item has no magical charges.
 // ROUTINE1 items auto-cast their spell; ROUTINE2 items prep it for CAST.
+// jewelryMetal is a metal a jewelry drop can be made of: its adjective (0 for
+// none, a plain "ring") and its value as a percentage of plain jewelry.
+type jewelryMetal struct {
+	adj      int
+	valuePct int
+	// low and high are the metal's weight in the roll at treasure level 0 and
+	// at jewelryMetalTopLevel and above; levels between blend the two.
+	low, high int
+}
+
+// jewelryMetalTopLevel is the treasure level from which the precious metals
+// are at their most common.
+const jewelryMetalTopLevel = 60
+
+// jewelryMetals (ADJNOUN.SCR adjectives). Low treasure is mostly plain, tin or
+// copper; higher treasure shifts toward silver, gold, platinum and alzyron.
+// Gold is about 1 drop in 100 at treasure 1 (a kobold) and 1 in 5 at 60+.
+var jewelryMetals = []jewelryMetal{
+	{0, 100, 450, 50},   // plain
+	{744, 60, 270, 20},  // tin
+	{68, 80, 290, 40},   // copper
+	{32, 100, 120, 120}, // brass
+	{39, 110, 120, 120}, // bronze
+	{292, 200, 35, 280}, // silver
+	{147, 400, 13, 210}, // gold
+	{563, 600, 5, 105},  // platinum
+	{5, 800, 2, 50},     // alzyron
+}
+
+// rollJewelryMetal picks a metal for a jewelry drop at the given treasure level.
+func rollJewelryMetal(treasureLevel int) jewelryMetal {
+	t := treasureLevel
+	if t < 0 {
+		t = 0
+	}
+	if t > jewelryMetalTopLevel {
+		t = jewelryMetalTopLevel
+	}
+	weight := func(m jewelryMetal) int {
+		return m.low + (m.high-m.low)*t/jewelryMetalTopLevel
+	}
+	total := 0
+	for _, m := range jewelryMetals {
+		total += weight(m)
+	}
+	r := rand.Intn(total)
+	for _, m := range jewelryMetals {
+		if r < weight(m) {
+			return m
+		}
+		r -= weight(m)
+	}
+	return jewelryMetals[0]
+}
+
 func (e *GameEngine) randomJewelryDrop(treasureLevel int) *gameworld.RoomItem {
 	// ROUTINE1: auto-casts the spell when activated (con/rub/turn triggers)
 	routine1 := []int{1059, 149, 169, 150, 170, 154, 174}
@@ -2188,6 +2243,11 @@ func (e *GameEngine) randomJewelryDrop(treasureLevel int) *gameworld.RoomItem {
 
 	chosen := candidates[rand.Intn(len(candidates))]
 	item := &gameworld.RoomItem{Archetype: chosen}
+	metal := jewelryMetal{valuePct: 100}
+	if def := e.items[chosen]; def != nil && (def.Substance == "HARDMETAL" || def.Substance == "SOFTMETAL") {
+		metal = rollJewelryMetal(treasureLevel)
+		item.Adj1 = metal.adj
+	}
 
 	// 40% chance of a spell trigger at treasure level >= 1
 	if treasureLevel >= 1 && rand.Intn(100) < 40 {
@@ -2218,7 +2278,7 @@ func (e *GameEngine) randomJewelryDrop(treasureLevel int) *gameworld.RoomItem {
 	// Val1 = copper value per GMSCRIPT.DOC; halved on sale by computeSellValue.
 	// Plain jewelry scales with treasure level; a bound spell adds value based
 	// on the spell's power and remaining charges.
-	itemValue := treasureLevel * 15
+	itemValue := treasureLevel * 15 * metal.valuePct / 100
 	if item.Val3 > 0 {
 		if sp := FindSpellByID(item.Val3); sp != nil {
 			itemValue += sp.Level * item.Val2 * 5
