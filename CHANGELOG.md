@@ -1,5 +1,25 @@
 # Changelog
 
+## v15.14.0 — 2026-11-23
+
+New arrivals in Fayd now have a guide: Sergeant Aldren Fairweather meets every new character at the city gate and walks them through the basics, one command at a time. The New Havarth Mining Company's survey assignments are now a permanent part of the world, and the game has moved to a new, hardened server where connection limits finally apply to each player rather than to everyone at once.
+
+### New: Sergeant Aldren's New Player Tutorial
+- Sergeant Aldren Fairweather of the gate watch greets new characters as they enter Fayd and teaches the essentials in a natural conversation: looking around, checking and wearing your belongings, wielding a weapon, your stats and fatigue, picking up and examining objects, speaking and gestures, finding your way, skills, experience and help
+- Commands to try appear in [SQUARE BRACKETS]. Aldren notices when you've done each one and moves on by himself, and if you seem stuck he reminds you what he's waiting for
+- The lesson never holds you at the gate: walk off whenever you like, and Aldren picks up where you left off when you come back, even after you disconnect. `SKIP TUTORIAL` ends it at any time
+- Anyone can `SAY TRAINING` at the gate for a refresher run through the basics
+- `LOOK ALDREN` to see the sergeant. He doesn't take kindly to being attacked
+- Every new character now starts with a dagger
+
+### Changed: New Havarth Mining Company Quests Are Permanent
+- "The Surveyor's Commission" survey assignments, the surveyor's instrument and the masterwork mining axe now load with the world itself instead of as a GM add-on, so they are always available
+
+### Changed: New Server
+- The game now runs on a new, hardened production server, and the web client is served as a fast prebuilt site
+- Connection limits and login rate limits now apply to each player's own address. Previously every player shared one address behind the web server, so a few busy players could block everyone else
+- The server now refuses to run without its database rather than silently not saving progress
+
 ## v15.13.0 — 2026-11-19
 
 Your Spellcraft now matters long after the cast: beneficial spells last longer the more Spellcraft you have and the more you have mastered them. Stalker lips, the Teiw healer and other magic finally staunch bleeding wounds with the long-lost Staunch Flow, magic items and places now cast their spells every time, and the Library of Fayd has a new entry on the city of Nyraine.

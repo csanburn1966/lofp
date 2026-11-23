@@ -9,6 +9,39 @@ export default function VersionNotes({ onBack }: { onBack: () => void }) {
 
         <div className="space-y-6 text-sm">
           <section>
+            <h2 className="text-amber-400 text-lg font-bold mb-1">v15.14.0 &mdash; November 23, 2026</h2>
+            <p className="text-gray-400 mb-3">New arrivals in Fayd now have a guide: Sergeant Aldren Fairweather meets every new character at the city gate and walks them through the basics, one command at a time. The New Havarth Mining Company&rsquo;s survey assignments are now a permanent part of the world, and the game has moved to a new, hardened server where connection limits finally apply to each player rather than to everyone at once.</p>
+
+            <div className="space-y-4 mb-8">
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">New: Sergeant Aldren&rsquo;s New Player Tutorial</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>Sergeant Aldren Fairweather of the gate watch greets new characters as they enter Fayd and teaches the essentials in a natural conversation: looking around, checking and wearing your belongings, wielding a weapon, your stats and fatigue, picking up and examining objects, speaking and gestures, finding your way, skills, experience and help</li>
+                  <li>Commands to try appear in [SQUARE BRACKETS]. Aldren notices when you&rsquo;ve done each one and moves on by himself, and if you seem stuck he reminds you what he&rsquo;s waiting for</li>
+                  <li>The lesson never holds you at the gate: walk off whenever you like, and Aldren picks up where you left off when you come back, even after you disconnect. <code>SKIP TUTORIAL</code> ends it at any time</li>
+                  <li>Anyone can <code>SAY TRAINING</code> at the gate for a refresher run through the basics</li>
+                  <li><code>LOOK ALDREN</code> to see the sergeant. He doesn&rsquo;t take kindly to being attacked</li>
+                  <li>Every new character now starts with a dagger</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: New Havarth Mining Company Quests Are Permanent</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>&ldquo;The Surveyor&rsquo;s Commission&rdquo; survey assignments, the surveyor&rsquo;s instrument and the masterwork mining axe now load with the world itself instead of as a GM add-on, so they are always available</li>
+                </ul>
+              </div>
+              <div>
+                <h3 className="text-green-400 font-bold mb-1">Changed: New Server</h3>
+                <ul className="text-gray-300 space-y-1 ml-4 list-disc">
+                  <li>The game now runs on a new, hardened production server, and the web client is served as a fast prebuilt site</li>
+                  <li>Connection limits and login rate limits now apply to each player&rsquo;s own address. Previously every player shared one address behind the web server, so a few busy players could block everyone else</li>
+                  <li>The server now refuses to run without its database rather than silently not saving progress</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <section>
             <h2 className="text-amber-400 text-lg font-bold mb-1">v15.13.0 &mdash; November 19, 2026</h2>
             <p className="text-gray-400 mb-3">Your Spellcraft now matters long after the cast: beneficial spells last longer the more Spellcraft you have and the more you have mastered them. Stalker lips, the Teiw healer and other magic finally staunch bleeding wounds with the long-lost Staunch Flow, magic items and places now cast their spells every time, and the Library of Fayd has a new entry on the city of Nyraine.</p>
 
