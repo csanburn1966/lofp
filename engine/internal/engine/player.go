@@ -601,6 +601,9 @@ type Player struct {
 	TutorialMisses   int  `bson:"-" json:"-"`
 	TutorialPrompted bool `bson:"-" json:"-"`
 	TutorialAway     bool `bson:"-" json:"-"`
+	// TutorialPending holds Aldren's lines on entering the gate until they're
+	// delivered, by timer or with the player's next command (tutorialOnEnter).
+	TutorialPending []string `bson:"-" json:"-"`
 
 	// Settings (persistent toggles via SET command)
 	// Note: SuppressLogon/Logoff default to true for new characters (set in CreateNewPlayer).

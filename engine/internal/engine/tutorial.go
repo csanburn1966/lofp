@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jonradoff/lofp/internal/gameworld"
@@ -90,8 +91,10 @@ func parseTutorialCmd(input string) tutorialCmd {
 	return tutorialCmd{verb: verb, args: rest}
 }
 
-func (c tutorialCmd) isLook() bool    { return c.verb == "LOOK" && c.args == "" }
-func (c tutorialCmd) isExamine() bool { return c.verb == "LOOK" || c.verb == "EXAMINE" || c.verb == "INSPECT" }
+func (c tutorialCmd) isLook() bool { return c.verb == "LOOK" && c.args == "" }
+func (c tutorialCmd) isExamine() bool {
+	return c.verb == "LOOK" || c.verb == "EXAMINE" || c.verb == "INSPECT"
+}
 
 // isTrainingRequest: SAY TRAINING (also "training?", "training!").
 func (c tutorialCmd) isTrainingRequest() bool {
@@ -376,9 +379,9 @@ func (e *GameEngine) tutorialResumeLines(ctx context.Context, p *Player) []strin
 }
 
 // tutorialOnEnter runs when a player enters a room, from applyEntryScripts.
-// newbieKit says room 201's own IFENTRY just issued new-character clothing,
-// whose messages arrive over the next several seconds, so Aldren waits for them.
-func (e *GameEngine) tutorialOnEnter(ctx context.Context, p *Player, room *gameworld.Room, result *CommandResult, newbieKit bool) {
+// scriptDelayed says the room's IFENTRY left delayed (PLREVENT) messages, such
+// as room 201's new-character clothing, so Aldren waits for them to go out.
+func (e *GameEngine) tutorialOnEnter(ctx context.Context, p *Player, room *gameworld.Room, result *CommandResult, scriptDelayed bool) {
 	if p.TutorialStatus == tutorialFinished {
 		return
 	}
@@ -414,18 +417,33 @@ func (e *GameEngine) tutorialOnEnter(ctx context.Context, p *Player, room *gamew
 		return
 	}
 	// Deliver after the room look and entry messages rather than in the middle
-	// of them, and only if the player is still at that point of the lesson.
+	// of them. If the player enters a command first, tutorialAfterCommand
+	// delivers them at the top of that command's output instead.
 	delay := 1500 * time.Millisecond
-	if newbieKit {
-		delay = 8 * time.Second // room 201's IFENTRY: PLREVENT 2 + 2 + 3
+	if scriptDelayed {
+		delay = 5 * time.Second
 	}
-	step, name := p.TutorialStep, p.FirstName
+	tutorialMu.Lock()
+	p.TutorialPending = lines
+	tutorialMu.Unlock()
+	name := p.FirstName
 	time.AfterFunc(delay, func() {
-		if p.RoomNumber != tutorialRoom || p.TutorialStep != step || p.TutorialStatus != tutorialActive {
-			return
+		if pending := takeTutorialPending(p); len(pending) > 0 {
+			e.sendToPlayer(name, pending)
 		}
-		e.sendToPlayer(name, lines)
 	})
+}
+
+// tutorialMu guards Player.TutorialPending, which a timer and the player's
+// own commands both take from.
+var tutorialMu sync.Mutex
+
+func takeTutorialPending(p *Player) []string {
+	tutorialMu.Lock()
+	defer tutorialMu.Unlock()
+	lines := p.TutorialPending
+	p.TutorialPending = nil
+	return lines
 }
 
 // tutorialPreCommand handles commands that belong to the tutorial before the
@@ -474,6 +492,10 @@ func (e *GameEngine) tutorialPreCommand(ctx context.Context, p *Player, input st
 func (e *GameEngine) tutorialAfterCommand(ctx context.Context, p *Player, input string, result *CommandResult) {
 	if result == nil || p.RoomNumber != tutorialRoom || p.Dead || p.Unconscious {
 		return
+	}
+	// Lines still waiting on the entry delay go out ahead of anything new.
+	if pending := takeTutorialPending(p); len(pending) > 0 {
+		result.Messages = append(pending, result.Messages...)
 	}
 	c := parseTutorialCmd(input)
 	if c.isTrainingRequest() {

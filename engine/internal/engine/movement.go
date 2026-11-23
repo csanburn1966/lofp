@@ -349,11 +349,10 @@ func applySeasonalRoomOverride(existing, r *gameworld.Room) {
 
 // applyEntryScripts runs IFENTRY scripts and merges results into the command result.
 func (e *GameEngine) applyEntryScripts(ctx context.Context, player *Player, room *gameworld.Room, result *CommandResult) {
-	// Room 201's IFENTRY issues new-character clothing while INTNUM6 < 10; the
-	// tutorial waits for its delayed messages (tutorialOnEnter).
-	newbieKit := room.Number == tutorialRoom && player.IntNums[6] < 10
-	defer e.tutorialOnEnter(ctx, player, room, result, newbieKit)
 	sc := e.RunEntryScripts(player, room)
+	// New player tutorial (tutorial.go). Room 201's IFENTRY issues new-character
+	// clothing in delayed (PLREVENT) messages; Aldren waits for those.
+	defer e.tutorialOnEnter(ctx, player, room, result, len(sc.DeferredSegments) > 0)
 	if len(sc.Messages) > 0 {
 		result.Messages = append(result.Messages, sc.Messages...)
 		e.Events.Publish("script", fmt.Sprintf("IFENTRY fired for %s in room %d (%s)", player.FirstName, room.Number, room.Name))
