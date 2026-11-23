@@ -637,8 +637,10 @@ func isExcellentRoll(roll, toHit int) bool {
 }
 
 func (e *GameEngine) playerAttackRating(player *Player, weaponDef *gameworld.ItemDef) int {
+	// No per-level bonus: the original's attack and defend modifiers didn't
+	// grow with level (STAT in original/csanburn: Chandra's stay near 0 from
+	// level 79 to 100).
 	rating := 50
-	rating += player.Level * 3
 	if weaponDef != nil {
 		skillID := weaponSkillForType(weaponDef.Type)
 		rating += (player.Skills[skillID] + divineBlessingBonus(player)) * 5 // +5 per weapon skill rank (from skills.txt)
@@ -790,8 +792,7 @@ func (e *GameEngine) groupFightingBonus(player *Player) int {
 }
 
 func playerDefenseRating(player *Player) int {
-	rating := 25
-	rating += player.Level * 3
+	rating := 25 // no per-level bonus; see playerAttackRating
 	rating += player.Skills[6] * 5 // Dodge & Parry: +5 per rank
 	rating += player.Agility / 5
 	// Martial Arts defense bonus: +2 per rank if unarmed
@@ -1845,7 +1846,7 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		if effectiveRank > twoWepSkill {
 			effectiveRank = twoWepSkill
 		}
-		ohAttack := 50 + player.Level*3 + effectiveRank*5 + player.Strength/5
+		ohAttack := 50 + effectiveRank*5 + player.Strength/5
 		ohAttack += player.OffHand.Sharpness + player.OffHand.Val2
 		switch player.Stance {
 		case StanceOffensive:
