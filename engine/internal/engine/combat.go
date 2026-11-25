@@ -643,7 +643,7 @@ func (e *GameEngine) playerAttackRating(player *Player, weaponDef *gameworld.Ite
 	rating := 50
 	if weaponDef != nil {
 		skillID := weaponSkillForType(weaponDef.Type)
-		rating += (player.Skills[skillID] + divineBlessingBonus(player)) * 5 // +5 per weapon skill rank (from skills.txt)
+		rating += (player.Skills[skillID] + divineBlessingBonus(player) + trueAimBonus(player, weaponDef)) * 5 // +5 per weapon skill rank (from skills.txt)
 	} else {
 		// Unarmed: martial arts skill
 		rating += (player.Skills[24] + divineBlessingBonus(player)) * 5 // Martial Arts +5 per rank
@@ -662,6 +662,9 @@ func (e *GameEngine) playerAttackRating(player *Player, weaponDef *gameworld.Ite
 		rating += 25
 	case StanceWary:
 		rating -= 5
+	}
+	if spellActive(player.FearExpiry) {
+		rating -= fearAttackPenalty
 	}
 	switch player.Position {
 	case 1:
@@ -1188,6 +1191,10 @@ func checkMagicWeapon(player *Player, wielded *InventoryItem, weaponDef *gamewor
 	if monDef.MagicWeapon <= 0 {
 		return true // no requirement
 	}
+	// Claws of the Elder Wolf (534): a claw user can hit any of them.
+	if spellActive(player.ElderWolfExpiry) && usingClaws(player, weaponDef) {
+		return true
+	}
 	// Martial Arts / Natural Weapons: rank 10+ bypasses level 1 (any magic),
 	// 20+ bypasses level 2, 30+ bypasses level 3
 	if wielded == nil {
@@ -1368,6 +1375,10 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		return &CommandResult{Messages: []string{fmt.Sprintf("A shimmering force bubble protects %s%s -- your attack has no effect!", article, name)}}
 	}
 
+	if charmedBy(player, inst.ID) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You can't bring yourself to harm %s%s.", article, name)}}
+	}
+
 	backstab := player.BackstabNext
 	if backstab && !monsterHasBack(def) {
 		return &CommandResult{Messages: []string{fmt.Sprintf("%s%s has no back to stab!", capArticle(article), name)}}
@@ -1406,10 +1417,10 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		weaponType = weaponDef.Type
 	}
 	engagedByMonster := inst.Target == player.FirstName ||
-		(inst.Target != "" && containsString(player.GuardTargets, inst.Target))
+		(inst.Target != "" && player.guardsPlayer(inst.Target))
 	if weaponNeedsAdvance(weaponType, weaponDef != nil) && !engagedByMonster {
 		advanced := containsInt(player.AdvancedOnMonsters, inst.ID)
-		if !advanced && backstab {
+		if !advanced && backstab && !hasEntangle(player, wallOfThornsSpellID) {
 			// A backstab closes to melee as part of the strike — no separate
 			// "advances towards" line in the captures, just reveal-then-stab.
 			player.AdvancedOnMonsters = append(player.AdvancedOnMonsters, inst.ID)
@@ -1418,6 +1429,29 @@ func (e *GameEngine) doAttackMonster(ctx context.Context, player *Player, target
 		if !advanced {
 			return &CommandResult{Messages: []string{fmt.Sprintf("You haven't closed to melee range with %s%s! Try ADVANCE first.", article, name)}}
 		}
+	}
+
+	// Wall of Thorns (516): no closing the distance (a polearm would otherwise need
+	// none), and swinging at whatever has closed in means fighting through the thorns.
+	var thornMsgs []string
+	if hasEntangle(player, wallOfThornsSpellID) && !isRangedWeaponType(weaponType) {
+		if !engagedByMonster && !containsInt(player.AdvancedOnMonsters, inst.ID) {
+			return &CommandResult{Messages: []string{fmt.Sprintf("The wall of thorns keeps you from reaching %s%s!", article, name)}}
+		}
+		thornMsgs = e.thornsTearPlayer(player)
+		if player.Unconscious {
+			e.SavePlayer(ctx, player)
+			return &CommandResult{
+				Messages:      thornMsgs,
+				RoomBroadcast: []string{fmt.Sprintf("%s struggles against the wall of thorns and collapses, unconscious!", player.DisplayNameCap())},
+				PlayerState:   player,
+			}
+		}
+		defer func() {
+			if res != nil {
+				res.Messages = append(append([]string{}, thornMsgs...), res.Messages...)
+			}
+		}()
 	}
 
 	// Engage
@@ -2294,7 +2328,7 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 	// Guard redirect: if someone is guarding this player, redirect the attack
 	if e.sessions != nil {
 		for _, guard := range e.sessions.OnlinePlayers() {
-			if guard.RoomNumber == player.RoomNumber && !guard.Dead && containsString(guard.GuardTargets, player.FirstName) {
+			if guard.RoomNumber == player.RoomNumber && !guard.Dead && guard.guardsPlayer(player.FirstName) {
 				guardMsg := fmt.Sprintf("%s steps forward in defense of %s!", guard.DisplayNameCap(), player.DisplayName())
 				roomMsgs = append(roomMsgs, guardMsg)
 				if e.sendToPlayer != nil {
@@ -2336,6 +2370,12 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 	article := articleFor(name, def.Unique)
 	capArt := capArticle(article)
 
+	// Imprison's bubble keeps attacks out as well as in (MAGIC.TXT).
+	if player.IsImprisoned() {
+		line := fmt.Sprintf("%s%s batters at the blue force bubble around %s to no effect.", capArt, name, player.DisplayName())
+		return []string{fmt.Sprintf("%s%s batters at the blue force bubble around you to no effect.", capArt, name)}, append(roomMsgs, line), player
+	}
+
 	// Special attacks and spell casts are handled a level up, in monsterCombatTick
 	// (via monsterTrySpecialAttack/monsterTryStartCast) — they're ranged "attack forms"
 	// per GMSCRIPT.DOC that can target any current attacker, not just this monster's
@@ -2364,7 +2404,7 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 			defRating -= (attackerCount - 1) * 5 / 2
 		}
 	}
-	toHit := calcToHit(def.Attack1+wMod, defRating)
+	toHit := calcToHit(monsterEffectiveAttack(def, inst)+wMod, defRating)
 	roll := rand.Intn(100) + 1
 
 	if roll >= toHit {
@@ -2417,6 +2457,7 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 			dmg = 1
 		}
 		dmg = formDamageReduction(player, dmg) // Slime Form: 90% reduction; everyone else unchanged
+		wakeMsg := wakeFromSlumber(player)
 		var monWeaponDef *gameworld.ItemDef
 		if len(def.Weapons) > 0 {
 			monWeaponDef = e.items[def.Weapons[0].Archetype]
@@ -2432,6 +2473,9 @@ func (e *GameEngine) monsterAttackPlayer(inst *MonsterInstance, def *gameworld.M
 		}
 
 		playerMsgs = append(playerMsgs, fmt.Sprintf(" %s %s to %s. [%d Damage]", damageSeverity(dmg, player.MaxBodyPoints), monDmgNoun, part, dmg))
+		if wakeMsg != "" {
+			playerMsgs = append(playerMsgs, wakeMsg)
+		}
 		if interruptMsg := interruptPreparedSpell(player); interruptMsg != "" {
 			playerMsgs = append(playerMsgs, interruptMsg)
 		}
@@ -2541,7 +2585,7 @@ func (e *GameEngine) monsterAttackTargetPool(inst *MonsterInstance) []*Player {
 	}
 	var attackers, roomPlayers []*Player
 	for _, p := range e.sessions.OnlinePlayers() {
-		if p.RoomNumber != inst.RoomNumber || p.Dead || p.IsConcealed() {
+		if p.RoomNumber != inst.RoomNumber || p.Dead || p.IsConcealed() || p.IsImprisoned() {
 			continue
 		}
 		roomPlayers = append(roomPlayers, p)
@@ -2625,6 +2669,9 @@ func (e *GameEngine) applyMonsterElementalDamageToPlayer(player *Player, dmg int
 		dmg = 1
 	}
 	dmg = formDamageReduction(player, dmg) // Mist Form: immune; Slime Form: 90% reduction
+	if wakeMsg := wakeFromSlumber(player); wakeMsg != "" {
+		e.sendToPlayerMsgs(player, []string{wakeMsg})
+	}
 	dtype = damageTypeForSpecAttack(dmgType)
 	level := woundLevelFromDamage(dmg, player.MaxBodyPoints)
 	player.Wounds = applyWoundToList(player.Wounds, part, dtype, level, player.CanBleed())
@@ -2687,6 +2734,9 @@ func (e *GameEngine) monsterTrySpecialAttack(inst *MonsterInstance, def *gamewor
 	}
 
 	dmg := def.SpecBase + rand.Intn(max(1, def.SpecDmg))
+	if selfMsg, roomMsg := absorbLightning(target, dmg, def.SpecDmgType); selfMsg != "" {
+		return []string{specText, selfMsg}, []string{specText + " " + roomMsg}, target, true
+	}
 	finalDmg, part, dtype, rawBP := e.applyMonsterElementalDamageToPlayer(target, dmg, def.SpecDmgType, true)
 
 	// The target is excluded from the room broadcast (broadcastCombatRoom) since they
@@ -2734,7 +2784,7 @@ func (e *GameEngine) monsterTryStartCast(inst *MonsterInstance, def *gameworld.M
 		if _, summons := sorcerousSummonsDemon[id]; summons && e.sorcerousDemonPresent(id, inst.RoomNumber) {
 			continue
 		}
-		if sp := FindSpellByID(id); sp != nil && sp.ManaCost <= inst.CurrentMana {
+		if sp := FindSpellByID(id); sp != nil && sp.ManaCost <= inst.CurrentMana && e.monsterCanUseSpell(inst, sp) {
 			affordable = append(affordable, id)
 		}
 	}
@@ -2899,8 +2949,11 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 	if sp == nil || e.sessions == nil {
 		return nil, nil, nil
 	}
-	// Sorcerous Summons I/II (139/140) call up a demon rather than striking the
-	// target, so they don't need the target to still be here.
+	// A spell it casts on itself doesn't need the target to still be here, nor do
+	// Sorcerous Summons I/II (139/140), which call up a demon.
+	if monsterSelfBuffs[spellID] {
+		return nil, e.resolveMonsterSelfBuff(inst, def, sp), nil
+	}
 	if _, summons := sorcerousSummonsDemon[spellID]; summons {
 		return nil, e.resolveMonsterSorcerousSummons(inst, def, spellID), nil
 	}
@@ -2964,6 +3017,11 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 		return append(playerMsgs, pMsgs...), append(roomMsgs, rMsgs...), target
 	}
 
+	// Anything else that isn't a damage spell has its own effect.
+	if sp.Effect != "damage" {
+		return e.resolveMonsterUtilitySpell(inst, def, sp, target, gestureMsg)
+	}
+
 	// hitFlavor is the actual "X hurls a bolt of lightning at Y!" line — mirrors the
 	// third-person text castDamageSpell shows onlookers when a player casts the same
 	// spell (see monsterSpellHitFlavor), matching e.g. original/icyranbro.txt's "A
@@ -2994,6 +3052,9 @@ func (e *GameEngine) resolveMonsterCast(inst *MonsterInstance, def *gameworld.Mo
 	dmg := rand.Intn(sp.DmgMax-sp.DmgMin+1) + sp.DmgMin
 	if dmg <= 0 {
 		dmg = 1
+	}
+	if selfMsg, roomMsg := absorbLightning(target, dmg, sp.DmgType); selfMsg != "" {
+		return append(playerMsgs, gestureMsg, hitFlavor, selfMsg), append(roomMsgs, hitFlavor+" "+roomMsg), target
 	}
 	finalDmg, part, dtype, rawBP := e.applyMonsterElementalDamageToPlayer(target, dmg, sp.DmgType, false)
 
@@ -3037,9 +3098,11 @@ func (e *GameEngine) monsterTryStartPsi(inst *MonsterInstance, def *gameworld.Mo
 		return false
 	}
 	var affordable []int
-	for _, id := range def.Disciplines {
-		if disc := FindPsiByID(id); disc != nil && disc.Effect == "damage" && disc.PsiCost <= inst.CurrentPsi {
-			affordable = append(affordable, id)
+	// A monster's DISCIPLINE lines use the original discipline numbers (FindPsiByNumber),
+	// as players do; PsiCastDiscID holds the internal ID.
+	for _, n := range def.Disciplines {
+		if disc := FindPsiByNumber(n); disc != nil && disc.Effect == "damage" && disc.PsiCost <= inst.CurrentPsi {
+			affordable = append(affordable, disc.ID)
 		}
 	}
 	if len(affordable) == 0 {
@@ -3133,6 +3196,9 @@ func (e *GameEngine) resolveMonsterPsi(inst *MonsterInstance, def *gameworld.Mon
 	if dmg <= 0 {
 		dmg = 1
 	}
+	if selfMsg, roomMsg := absorbLightning(target, dmg, disc.DmgType); selfMsg != "" {
+		return append(playerMsgs, gestureMsg, hitFlavor, selfMsg), append(roomMsgs, hitFlavor+" "+roomMsg), target
+	}
 	finalDmg, part, dtype, rawBP := e.applyMonsterElementalDamageToPlayer(target, dmg, disc.DmgType, false)
 
 	monBroadcast := fmt.Sprintf("%s %s.", hitFlavor, simplifiedDamageTier(finalDmg))
@@ -3168,7 +3234,8 @@ func (e *GameEngine) resolveMonsterPsi(inst *MonsterInstance, def *gameworld.Mon
 // 0 themselves before/around this call; this only sets Unconscious+Position or defers
 // to handlePlayerDeath. Returns messages to append for the player, and whether they died.
 func (e *GameEngine) resolveDirectHitOutcome(player *Player, rawBP int, killerName string) (msgs []string, died bool) {
-	if rawBP == 0 {
+	if rawBP == 0 || e.takenAlive(player, killerName) { // the law takes a wanted player alive (law.go)
+		player.BodyPoints = 0
 		player.Unconscious = true
 		player.Position = 2
 		return []string{fmt.Sprintf(" %s collapses, unconscious.", player.FirstName)}, false
@@ -3182,7 +3249,7 @@ func (e *GameEngine) resolveDirectHitOutcome(player *Player, rawBP int, killerNa
 // the next regen tick. Returns a message to show the player if they woke up, or "" if
 // nothing changed.
 func wakeFromUnconscious(p *Player) string {
-	if p.Unconscious && p.BodyPoints > 0 {
+	if p.Unconscious && p.BodyPoints > 0 && !spellActive(p.SleepExpiry) { // a Slumber spell wears off on its own
 		p.Unconscious = false
 		p.Position = 0
 		return "You regain consciousness!"
@@ -3259,6 +3326,10 @@ func (e *GameEngine) doDepart(player *Player) *CommandResult {
 	player.Unconscious = false
 	player.Position = 0
 	player.Bleeding = false
+	if player.Jailed { // Eternity, Inc. won't take someone out of the Lockup (LAWKEEP.SCR)
+		player.BodyPoints = max(1, player.MaxBodyPoints/4)
+		return &CommandResult{Messages: []string{"You will your spirit to depart your body, but Eternity, Inc. will not take someone from the Lockup. You wake in your cell."}}
+	}
 	player.Stunned = false
 	player.Poisoned = false
 	player.PoisonLevel = 0
@@ -3857,8 +3928,8 @@ func (e *GameEngine) doFlee(ctx context.Context, player *Player) *CommandResult 
 	if player.Stunned {
 		return &CommandResult{Messages: []string{"You are stunned and cannot flee!"}}
 	}
-	if player.IsImmobilized() {
-		return &CommandResult{Messages: []string{"You are rooted to the spot!"}}
+	if msg := heldInPlaceMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
 	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
@@ -4495,8 +4566,14 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 		}
 	}
 
-	if target == nil || target.IsConcealed() {
+	// Imprison's bubble keeps attacks out (MAGIC.TXT), so it gives up on them.
+	if target == nil || target.IsConcealed() || target.IsImprisoned() {
 		inst.Target = ""
+		return
+	}
+
+	// A lawkeeper hauls off a wanted player who has submitted or been beaten (law.go).
+	if e.lawMonsterAct(inst, target) {
 		return
 	}
 
@@ -4529,6 +4606,10 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 		}
 	}
 	if !handled {
+		if e.thornsTearMonster(inst, def) {
+			e.monsterMgr.mu.Lock()
+			return // it tore itself to pieces on the thorns
+		}
 		playerMsgs, roomMsgs, defender = e.monsterAttackPlayer(inst, def, target)
 	}
 	e.monsterMgr.mu.Lock()
@@ -4569,8 +4650,8 @@ func (e *GameEngine) monsterCombatTick(inst *MonsterInstance, def *gameworld.Mon
 }
 
 func (e *GameEngine) monsterFlee(inst *MonsterInstance, def *gameworld.MonsterDef) {
-	if inst.Immobilized || inst.Swarmed {
-		return // psi Immobilize or an insect swarm holds it in place
+	if inst.heldInPlace() || inst.WitheredLeg {
+		return // snared, or a withered leg won't carry it
 	}
 	room := e.rooms[inst.RoomNumber]
 	if room == nil {
@@ -4664,7 +4745,7 @@ func (e *GameEngine) scheduleEntryAggro(player *Player, roomNum int) {
 }
 
 func (e *GameEngine) monsterCheckAggro(player *Player, roomNum int) {
-	if e.monsterMgr == nil || player.Dead || player.IsConcealed() {
+	if e.monsterMgr == nil || player.Dead || player.IsConcealed() || player.IsImprisoned() {
 		return
 	}
 
@@ -4677,7 +4758,7 @@ func (e *GameEngine) monsterCheckAggro(player *Player, roomNum int) {
 			continue
 		}
 		def := e.monsters[inst.DefNumber]
-		if def == nil || def.Strategy < 301 || def.Guardian {
+		if def == nil || def.Strategy < 301 || def.Guardian || e.snareHoldsBack(inst, def) {
 			continue
 		}
 		if containsInt(player.AdvancedOnMonsters, inst.ID) {

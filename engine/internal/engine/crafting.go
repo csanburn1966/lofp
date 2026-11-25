@@ -2563,6 +2563,21 @@ func (e *GameEngine) doAnalyze(ctx context.Context, player *Player, args []strin
 	return &CommandResult{Messages: []string{"You don't have that."}}
 }
 
+// orePurityWord describes an ore's purity percentage.
+func orePurityWord(purity int) string {
+	switch {
+	case purity > 80:
+		return "nearly solid metal"
+	case purity > 60:
+		return "excellent"
+	case purity > 40:
+		return "good"
+	case purity > 20:
+		return "fair"
+	}
+	return "poor"
+}
+
 // analyzeItem performs the ANALYZE effect on one matched item: ore quality,
 // alchemical reagent properties, or — for a LIQCONTAINER holding a potion —
 // identifying its bound spell, gated on the Alchemy skill (31).
@@ -2577,17 +2592,7 @@ func (e *GameEngine) analyzeItem(player *Player, ii *InventoryItem, def *gamewor
 			return &CommandResult{Messages: []string{"You don't have enough mining skill to analyze this ore. (Need Mining 3+)"}}
 		}
 		purity := ii.Val1
-		desc := "poor"
-		if purity > 80 {
-			desc = "nearly solid metal"
-		} else if purity > 60 {
-			desc = "excellent"
-		} else if purity > 40 {
-			desc = "good"
-		} else if purity > 20 {
-			desc = "fair"
-		}
-		msg := fmt.Sprintf("You examine the ore carefully. It appears to be of %s quality. (Purity: %d%%)", desc, purity)
+		msg := fmt.Sprintf("You examine the ore carefully. It appears to be of %s quality. (Purity: %d%%)", orePurityWord(purity), purity)
 		// At Mining 5+ the smith's eye can gauge the metal's color potential.
 		if miningSkill >= 5 && ii.Val2 > 0 {
 			colorNames := map[int]string{1: "purple", 2: "indigo", 3: "blue"}

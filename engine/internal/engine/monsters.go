@@ -89,6 +89,14 @@ type MonsterInstance struct {
 	Swarmed            bool      `json:"-"` // Insect Swarm: cannot wander or flee, can still fight, bitten every 5s (swarm.go)
 	SwarmExpiry        time.Time `json:"-"`
 	SwarmCasterName    string    `json:"-"` // player who cast Insect Swarm, for death XP attribution on the bite tick
+	Creeping           bool      `json:"-"` // Creeping Death: held and hurt like Swarmed (swarm.go)
+	CreepExpiry        time.Time `json:"-"`
+	CreepCasterName    string    `json:"-"`
+	ThornExpiry        time.Time `json:"-"` // Wall of Thorns: can't move or close in, hurt by its own melee attacks (snares.go)
+	ThornCasterName    string    `json:"-"`
+	SnareExpiry        time.Time `json:"-"` // Plant Snare: can't move or close in, can still fight (snares.go)
+	WitheredArm        bool      `json:"-"` // Wither Limb (wither.go)
+	WitheredLeg        bool      `json:"-"`
 	Poisoned           bool      `json:"-"` // poisoned by a weapon or Poison (321); ticks once a minute (poison.go)
 	PoisonLevel        int       `json:"-"` // damage on the next tick; drops by 1 each minute until it wears off
 	PoisonCasterName   string    `json:"-"` // player who poisoned it, for death XP attribution on the poison tick
@@ -276,24 +284,15 @@ func (mm *monsterManager) SpawnInitialMonsters(monsterLists []gameworld.MonsterL
 	return 0 // demand-based spawning handles this now
 }
 
-// monsterPsiDefenseBonus calculates defense bonus from a monster's psi disciplines.
-// Defensive disciplines are considered always-active on monsters.
+// monsterPsiDefenseBonus calculates defense bonus from a monster's psi disciplines
+// (DISCIPLINE lines, in the original discipline numbers — FindPsiByNumber). Defensive
+// disciplines are considered always-active on monsters: Wall of Force +25, Force Field
+// +75, Psychic Screen +15, Psychic Shield +25, Psychic Barrier +35, Psychic Fortress +50.
 func monsterPsiDefenseBonus(disciplines []int) int {
 	bonus := 0
-	for _, d := range disciplines {
-		switch d {
-		case 9: // Wall of Force +25
-			bonus += 25
-		case 13: // Force Field +75
-			bonus += 75
-		case 54: // Psychic Screen +15
-			bonus += 15
-		case 57: // Psychic Shield +25
-			bonus += 25
-		case 58: // Psychic Barrier +35
-			bonus += 35
-		case 63: // Psychic Fortress +50
-			bonus += 50
+	for _, n := range disciplines {
+		if disc := FindPsiByNumber(n); disc != nil && disc.Effect == "defense" {
+			bonus += disc.DefBonus
 		}
 	}
 	return bonus
@@ -311,6 +310,9 @@ func monsterEffectiveAttack(def *gameworld.MonsterDef, inst *MonsterInstance) in
 	}
 	if inst.DivineBlessingBonus > 0 && !inst.DivineBlessingExpiry.IsZero() && time.Now().Before(inst.DivineBlessingExpiry) {
 		atk += inst.DivineBlessingBonus
+	}
+	if inst.WitheredArm {
+		atk -= witheredArmAttackPenalty
 	}
 	return atk
 }
@@ -651,6 +653,10 @@ func (e *GameEngine) monsterNamesInRoom(roomNum int) []string {
 			name += " (immobilized)"
 		} else if inst.Swarmed {
 			name += " (swarmed by insects)"
+		} else if inst.Creeping || inst.thorned() || inst.snared() {
+			name += " (ensnared)"
+		} else if monsterIsDown(&inst) {
+			name += " (laying)" // original/csanburn/chan0409.txt
 		} else if inst.Feared {
 			name += " (cowering)"
 		}
@@ -1140,13 +1146,18 @@ func (e *GameEngine) monsterTick(tick int) {
 
 		name := FormatMonsterName(def, e.monAdjs)
 
+		// Lawkeepers and enforcers go after wanted players they recognize (law.go).
+		if e.lawSpotsWanted(inst, def) {
+			continue
+		}
+
 		// Hostile monsters without a target — look for players in room (skip summoned
 		// creatures and GUARDIAN-flagged monsters, which never aggro players on sight —
 		// see the Guardian block below instead).
-		if def.Strategy >= 301 && !def.Guardian && inst.Target == "" && !inst.IsSummoned {
+		if def.Strategy >= 301 && !def.Guardian && inst.Target == "" && !inst.IsSummoned && !e.snareHoldsBack(inst, def) {
 			if e.sessions != nil {
 				for _, p := range e.sessions.OnlinePlayers() {
-					if p.RoomNumber == inst.RoomNumber && !p.Dead && !p.IsConcealed() {
+					if p.RoomNumber == inst.RoomNumber && !p.Dead && !p.IsConcealed() && !p.IsImprisoned() {
 						article := articleFor(name, def.Unique)
 						// The player already ADVANCEd on this monster, so the two are
 						// already in melee — lock on silently rather than announcing
@@ -1253,7 +1264,7 @@ func (e *GameEngine) monsterTick(tick int) {
 		}
 
 		// Wandering: ~5% chance per action tick for non-hostile, non-combat monsters (skip summoned)
-		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && !inst.Immobilized && !inst.Swarmed && rand.Intn(100) < 5 {
+		if def.Strategy < 301 && inst.Target == "" && !inst.IsSummoned && !inst.heldInPlace() && rand.Intn(100) < 5 {
 			room := e.rooms[inst.RoomNumber]
 			if room == nil {
 				continue

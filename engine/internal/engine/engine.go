@@ -187,6 +187,7 @@ type GameEngine struct {
 	// rollQueuedTreasureDrop in combat.go. Transient like roomContainerContents
 	// above (cleared on restart, not hub-synced); fine under the current
 	// single-machine deployment (see CLAUDE.md's multi-machine coordination notes).
+	maelstroms      maelstromSet // Energy Maelstroms in progress (maelstrom.go)
 	treasureQueue   []InventoryItem
 	treasureQueueMu sync.Mutex
 }
@@ -670,6 +671,8 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	tutorialCarried := takeTutorialPending(player) // queued before this command
 	defer func() { e.tutorialAfterCommand(ctx, player, input, result, tutorialCarried) }()
 
+	player.breakStaleGuard()
+
 	// Being carried is passive — any action the carried player takes breaks it.
 	if player.CarriedBy != "" {
 		e.breakCarryAsCarried(ctx, player, fmt.Sprintf("%s stirs and slips from your grip!", player.FirstName))
@@ -689,6 +692,16 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 	}
 
+	// A withered leg (Wither Limb, 351) makes every move take longer.
+	moveFrom := player.RoomNumber
+	defer func() {
+		if result != nil && player.RoomNumber != moveFrom && isWalkingCommand(input) {
+			if line := witheredLegDelay(player); line != "" {
+				result.Messages = append(result.Messages, line)
+			}
+		}
+	}()
+
 	isQuoteSpeech := strings.HasPrefix(input, "'") || strings.HasPrefix(input, "\"")
 	isSayVerb := len(input) >= 3 && strings.EqualFold(input[:3], "say") && (len(input) == 3 || input[3] == ' ')
 
@@ -701,6 +714,12 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		firstVerb = resolveVerb(strings.ToUpper(f[0]))
 	}
 	alwaysAllowed := firstVerb == "DEPART" || firstVerb == "REPORT" || player.IsGM
+
+	// The Lockup holds its prisoners (law.go).
+	if msg := jailRefusal(player, firstVerb); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
+	defer e.keepInJail(ctx, player)
 
 	// Dead players can only DEPART, LOOK, WHO, QUIT, EXP, STATUS, HEALTH — unless
 	// Speak with Dead (spell 311) has granted them the power of speech.
@@ -1225,6 +1244,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "WEATHER":
 		return e.doWeather(player)
 	case "PAY":
+		if res := e.payFine(ctx, player, args); res != nil {
+			return res
+		}
 		return e.doPay(ctx, player)
 	case "WHISPER":
 		return e.doWhisper(player, args, input)
@@ -1977,6 +1999,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 		}
 		return e.castCallAnimal(player)
 	case "TRANSFORM":
+		if msg := formFixedMessage(player); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
+		}
 		if player.MistForm || player.SlimeForm {
 			// Mist Form / Slime Form → normal: the only way out of either form
 			// (see castFormSpell in hiding_forms.go).
@@ -1991,7 +2016,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 				RoomBroadcast: []string{fmt.Sprintf("%s shudders and congeals, resuming the shape of %s.", capitalize(preFormName), player.DisplayName())},
 			}
 		}
-		if player.Race != RaceWolfling {
+		// Anyone in Wolf Form (536) changes back this way; only a wolfling can
+		// become a wolf at will.
+		if player.Race != RaceWolfling && !player.WolfForm {
 			return &CommandResult{Messages: []string{"Only wolflings can transform."}}
 		}
 		if !player.WolfForm && (player.Wielded != nil || player.OffHand != nil) {
@@ -2036,6 +2063,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 			return &CommandResult{Messages: []string{"You are already submitting."}}
 		}
 		player.Submitting = true
+		if e.surrender(ctx, player) { // a wanted player comes along quietly (law.go)
+			return &CommandResult{Messages: []string{"You submit, and come along quietly."}, PlayerState: player}
+		}
 		return &CommandResult{
 			Messages:      []string{"You submit, accepting whatever may come."},
 			RoomBroadcast: []string{fmt.Sprintf("%s submits.", player.DisplayName())},
@@ -2057,7 +2087,9 @@ func (e *GameEngine) ProcessCommand(ctx context.Context, player *Player, input s
 	case "PUTDOWN":
 		return e.doReleaseCarry(ctx, player)
 	case "ARREST":
-		return &CommandResult{Messages: []string{"[Arrest coming soon.]"}} // TODO: lawkeeper arrest
+		return e.doArrest(ctx, player, args)
+	case "WARRANT":
+		return e.doWarrant(ctx, player, args)
 	case "ENROLL":
 		return e.doEnroll(ctx, player)
 	case "INITIATE":
@@ -2198,7 +2230,7 @@ var allVerbs = []string{
 	"SURVEY", "SPLIT",
 	// Racial (TODO: implement)
 	"BLEND", "CALL", "TRANSFORM", "MOLD",
-	"DISGUISE", "SUBMIT", "UNSUBMIT", "ARREST", "CARRY", "RELEASE", "PUTDOWN",
+	"DISGUISE", "SUBMIT", "UNSUBMIT", "ARREST", "WARRANT", "CARRY", "RELEASE", "PUTDOWN",
 	"ENROLL", "INITIATE", "JOIN", "FOLLOW", "LEAVE", "DISBAND", "SHAREDXP",
 	"TEND", "BREAK", "DESTROY",
 	"SNIFF", "SMELL", "LISTEN",
@@ -2272,6 +2304,8 @@ var verbAliases = map[string]string{
 	"WHI": "WHISPER", "THIN": "THINK", "CONTA": "CONTACT",
 	// Keep these abbreviations working now that BUZZ/CLICK (mechanoid emotes) share their prefixes.
 	"BU": "BUY", "CLI": "CLIMB",
+	// and WARY's, now that WARRANT shares it.
+	"WAR": "WARY",
 	// DESTROY (BREAK's synonym) would otherwise make "des" ambiguous with DESCEND.
 	"DES": "DESCEND",
 	"DI":    "DIAGNOSE",

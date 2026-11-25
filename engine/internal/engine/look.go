@@ -991,6 +991,19 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 			msgs = append(msgs, fmt.Sprintf("%s radiates with magical strength.", heOrShe))
 		}
 	}
+	if len(target.WitheredLimbs) > 0 && !target.MistForm && !target.SlimeForm {
+		if isSelf {
+			msgs = append(msgs, fmt.Sprintf("You have %s.", witheredLimbsText(target)))
+		} else {
+			msgs = append(msgs, fmt.Sprintf("%s has %s.", heOrShe, witheredLimbsText(target)))
+		}
+	}
+	if spellActive(target.RideLightningExpiry) {
+		msgs = append(msgs, fmt.Sprintf("%s surrounded by tiny, crackling arcs of lightning.", pronoun))
+	}
+	if hasEntangle(target, wallOfThornsSpellID) {
+		msgs = append(msgs, fmt.Sprintf("%s surrounded by a wall of thorns.", pronoun))
+	}
 	if target.Position == 4 && target.Race != RaceDrakin {
 		msgs = append(msgs, fmt.Sprintf("%s hovering in the air.", pronoun))
 	}
@@ -1094,7 +1107,7 @@ func (e *GameEngine) examinePlayer(observer *Player, target *Player) *CommandRes
 	// Guard status — player-guards-player
 	if e.sessions != nil {
 		for _, p := range e.sessions.OnlinePlayers() {
-			if p.RoomNumber == target.RoomNumber && containsString(p.GuardTargets, target.FirstName) {
+			if p.RoomNumber == target.RoomNumber && p.guardsPlayer(target.FirstName) {
 				if isSelf {
 					msgs = append(msgs, fmt.Sprintf("You are being guarded by %s.", p.FirstName))
 				} else {

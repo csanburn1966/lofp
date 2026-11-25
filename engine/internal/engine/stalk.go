@@ -101,7 +101,7 @@ func (e *GameEngine) moveStalkers(ctx context.Context, originalRoom, destNum, ta
 		p.RoomNumber = destNum
 		p.Submitting = false
 		e.disengageCombat(p)
-		p.GuardTargets, p.GuardPortals, p.GuardItems = nil, nil, nil
+		p.breakGuard()
 		e.SavePlayer(ctx, p)
 		if e.sendToPlayer != nil {
 			msgs := append([]string{fmt.Sprintf("You stealthily follow %s.", name)}, e.doLook(p).Messages...)
@@ -116,9 +116,10 @@ func (e *GameEngine) moveStalkers(ctx context.Context, originalRoom, destNum, ta
 }
 
 // movePlayerStalkers is called after a player walks from originalRoom to destNum.
-func (e *GameEngine) movePlayerStalkers(ctx context.Context, target *Player, originalRoom, destNum int) {
+// canFollow, if not nil, limits who can keep up; the rest just stay behind.
+func (e *GameEngine) movePlayerStalkers(ctx context.Context, target *Player, originalRoom, destNum int, canFollow func(*Player) bool) {
 	e.moveStalkers(ctx, originalRoom, destNum, target.Perception+target.cyberHearingBonus(), func(p *Player) bool {
-		return p.StalkingPlayer == target.FirstName
+		return p.StalkingPlayer == target.FirstName && (canFollow == nil || canFollow(p))
 	})
 }
 

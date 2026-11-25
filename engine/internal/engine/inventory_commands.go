@@ -977,6 +977,10 @@ func (e *GameEngine) doStatus(player *Player) *CommandResult {
 
 	var msgs []string
 
+	if line := lawStatusLine(player); line != "" {
+		msgs = append(msgs, line)
+	}
+
 	// Organization memberships: "You are a high master of the Crimson Band."
 	for _, orgNum := range player.OrgList() {
 		rank := player.RankIn(orgNum)
@@ -1153,6 +1157,9 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 		shieldGrip := isWeapon(itemDef.Type) && containsFlag(itemDef.Flags, "SHIELDGRIP") &&
 			player.Wielded != nil && itemDef.Type != "TWOHAND_WEAPON"
 		if itemDef.Type == "SHIELD" || shieldGrip {
+			if msg := witheredArmMessage(player); msg != "" {
+				return &CommandResult{Messages: []string{msg}}
+			}
 			if player.Wielded != nil {
 				mainDef := e.items[player.Wielded.Archetype]
 				if mainDef != nil && mainDef.Type == "TWOHAND_WEAPON" {
@@ -1212,6 +1219,9 @@ func (e *GameEngine) doWield(ctx context.Context, player *Player, args []string)
 					mainWeight = mainDef.Weight
 				}
 				if itemDef.Weight < mainWeight {
+					if msg := witheredArmMessage(player); msg != "" {
+						return &CommandResult{Messages: []string{msg}}
+					}
 					// Equip lighter weapon to off-hand
 					if player.OffHand != nil {
 						player.Inventory = append(player.Inventory, *player.OffHand)
@@ -2080,6 +2090,12 @@ func (e *GameEngine) checkTrap(player *Player, ri *gameworld.RoomItem) []string 
 			spellDmg = applyDrakinElementalVulnerability(player, "heat", spellDmg)
 		} else if glyphType <= 4 {
 			spellDmg = applyDrakinElementalVulnerability(player, "cold", spellDmg)
+		}
+		if glyphType > 4 && glyphType <= 6 {
+			if selfMsg, _ := absorbLightning(player, spellDmg, "electric"); selfMsg != "" {
+				msgs = append(msgs, "A Thunder Glyph explodes with crackling energy!", selfMsg)
+				break
+			}
 		}
 		now := time.Now()
 		if glyphType <= 2 && !player.HeatShieldExpiry.IsZero() && now.Before(player.HeatShieldExpiry) {

@@ -34,7 +34,7 @@ func init() {
 		{2, "Levitate", "Mind over Matter", 2, 4, 5, "buff", 0, 0, "", 0, 0, 0},
 		{3, "Pyrokinetics", "Mind over Matter", 3, 6, 5, "damage", 8, 25, "heat", 0, 0, 0},
 		{4, "Cryokinetics", "Mind over Matter", 4, 8, 5, "damage", 8, 25, "cold", 0, 0, 0},
-		{5, "Capacitance", "Mind over Matter", 5, 2, 5, "utility", 0, 0, "", 0, 0, 0},
+		{5, "Capacitance", "Mind over Matter", 5, 5, 5, "utility", 0, 0, "", 0, 0, 0},
 		{6, "Electrify", "Mind over Matter", 6, 10, 5, "damage", 10, 30, "electric", 0, 0, 0},
 		{7, "Strengthen Steel", "Mind over Matter", 7, 8, 5, "buff", 0, 0, "", 0, 0, 0},
 		{8, "Manipulate Lock", "Mind over Matter", 8, 6, 5, "utility", 0, 0, "", 0, 0, 0},
@@ -97,6 +97,38 @@ func FindPsiByName(input string) *PsiDiscipline {
 	return match
 }
 
+// psiDocNumbers are the discipline numbers players see and type (PSI 6), from
+// LEGENDS.DOC and GM Pages/psionics.html, by internal ID. The internal IDs number the
+// Mind over Matter disciplines from 1 without the original's #1 Matter Awakening, so
+// they were one off ("psi 6" brought up Electrify, not Capacitance), and the Mind
+// over Mind ones from 50. Speed is 42 either way.
+var psiDocNumbers = map[int]int{
+	1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8, 8: 9, 9: 10, 10: 11, 11: 12, 16: 13, 12: 14, 13: 15, 14: 16, 15: 17, 42: 42,
+	50: 19, 51: 20, 52: 21, 53: 22, 54: 23, 57: 28, 55: 29, 59: 31, 60: 32, 56: 33, 58: 34, 61: 36, 62: 37, 63: 38, 64: 39, 65: 41,
+}
+
+// psiDocNumber is the number players know a discipline by.
+func psiDocNumber(disc *PsiDiscipline) int {
+	if n, ok := psiDocNumbers[disc.ID]; ok {
+		return n
+	}
+	return disc.ID
+}
+
+// FindPsiByNumber finds a discipline by the number players type (PSI 6). The old
+// internal Mind over Mind numbers (50 and up) still work, since nothing else uses them.
+func FindPsiByNumber(n int) *PsiDiscipline {
+	for i := range psiRegistry {
+		if psiDocNumber(&psiRegistry[i]) == n {
+			return &psiRegistry[i]
+		}
+	}
+	if n >= 50 {
+		return FindPsiByID(n)
+	}
+	return nil
+}
+
 // FindPsiByID returns a discipline by ID.
 func FindPsiByID(id int) *PsiDiscipline {
 	for i := range psiRegistry {
@@ -150,7 +182,7 @@ func (e *GameEngine) doPreparePsi(player *Player, args []string) (res *CommandRe
 	var disc *PsiDiscipline
 	var discNum int
 	if _, err := fmt.Sscanf(args[0], "%d", &discNum); err == nil {
-		disc = FindPsiByID(discNum)
+		disc = FindPsiByNumber(discNum)
 	}
 	if disc == nil {
 		disc = FindPsiByName(input)
@@ -384,7 +416,7 @@ func (e *GameEngine) listPsiDisciplines(player *Player) *CommandResult {
 		if rank := psiMasteryLevel(player, &disc); rank > 0 {
 			name += " (" + strings.Repeat("*", rank) + ")"
 		}
-		msgs = append(msgs, fmt.Sprintf("%-4d %-25s %-6d %-6s %s", disc.ID, name, playerPsiCost(player, &disc), schoolAbbr, status))
+		msgs = append(msgs, fmt.Sprintf("%-4d %-25s %-6d %-6s %s", psiDocNumber(&disc), name, playerPsiCost(player, &disc), schoolAbbr, status))
 	}
 
 	return &CommandResult{Messages: msgs}
@@ -507,6 +539,8 @@ func (e *GameEngine) doProjectPsi(ctx context.Context, player *Player, args []st
 			result = e.projectManipulateLock(player, args)
 		} else if disc.ID == 16 { // Transform Steel
 			result = e.projectTransformSteel(player)
+		} else if disc.ID == capacitanceID {
+			result = e.projectCapacitance(player, disc, psiCost, args)
 		} else {
 			result.Messages = []string{fmt.Sprintf("You project %s.", disc.Name)}
 			result.RoomBroadcast = []string{fmt.Sprintf("%s concentrates intensely.", player.FirstName)}

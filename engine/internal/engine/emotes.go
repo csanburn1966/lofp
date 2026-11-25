@@ -310,6 +310,12 @@ func (e *GameEngine) processEmote(player *Player, verb string, args []string) *C
 		player.PhantomForm = false
 	}
 
+	// An emote at something the player carries runs its own script first: the
+	// lawkeeper badge's POKE calls for reinforcements (ITEM2.SCR).
+	if res := e.carriedItemEmote(player, verb, args); res != nil {
+		return res
+	}
+
 	result := e.processEmoteCore(player, verb, args)
 
 	if wasInvisible {
@@ -771,4 +777,27 @@ func (e *GameEngine) processLick(player *Player, args []string) *CommandResult {
 		}
 	}
 	return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", targetName)}}
+}
+
+// carriedItemEmote runs the IFPREVERB <verb> script of a carried or worn item an emote
+// names ("poke my badge"), returning its result if it took the command over.
+func (e *GameEngine) carriedItemEmote(player *Player, verb string, args []string) *CommandResult {
+	if len(args) == 0 {
+		return nil
+	}
+	target, _ := stripMyPrefix(strings.ToLower(strings.Join(args, " ")))
+	room := e.rooms[player.RoomNumber]
+	if room == nil || e.findPlayerInRoom(player, target) != nil {
+		return nil
+	}
+	for _, items := range [][]InventoryItem{player.Inventory, player.Worn} {
+		for _, ii := range items {
+			def := e.items[ii.Archetype]
+			if def == nil || !matchesTarget(e.getItemNounName(def), target, e.getAdjName(ii.Adj1), e.getAdjName(ii.Adj2), e.getAdjName(ii.Adj3)) {
+				continue
+			}
+			return e.runItemOwnPreverbHook(player, room, verb, ii)
+		}
+	}
+	return nil
 }

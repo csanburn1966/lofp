@@ -166,29 +166,34 @@ func (e *GameEngine) castFormSpell(player *Player, spell *SpellDef) *CommandResu
 	if player.MistForm || player.SlimeForm || player.WolfForm {
 		return &CommandResult{Messages: []string{"You are already in another form."}}
 	}
-
-	dropMsg := removeInsectSwarm(player)
-	player.Entangles = nil
-	player.ImprisonedExpiry = time.Time{}
-
-	var bodyMsg string
-	switch spell.ID {
-	case 232:
-		player.MistForm = true
-		bodyMsg = "You feel your body changing shape. Suddenly, you realize that you are a cloud of mist! [Type TRANSFORM to assume a material shape again]"
-	default: // 245
-		player.SlimeForm = true
-		bodyMsg = "You feel your body changing shape. Suddenly, you realize that you are a slime! [Type TRANSFORM to assume a material shape again]"
+	if msg := formFixedMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{"You gesture.", msg}}
 	}
 
-	msgs := []string{"You gesture.", bodyMsg}
+	selfMsgs, roomMsg := takeForm(player, spell.ID)
+	return &CommandResult{Messages: append([]string{"You gesture."}, selfMsgs...), RoomBroadcast: []string{roomMsg}}
+}
+
+// takeForm puts the player into Mist Form (232) or Slime Form (245), slipping free of
+// whatever held them. Shared by CAST and by items and scripts that cast it. Returns the
+// lines for them and for the room ("Linnaeus suddenly becomes a cloud of mist!",
+// original/csanburn/chan0409.txt).
+func takeForm(p *Player, spellID int) (selfMsgs []string, roomMsg string) {
+	name := p.DisplayNameCap() // before the change turns it into "Some mist"
+	what := "a slime"
+	if spellID == 232 {
+		what = "a cloud of mist"
+	}
+	dropMsg := removeInsectSwarm(p)
+	p.Entangles = nil
+	p.ImprisonedExpiry = time.Time{}
+	p.MistForm = spellID == 232
+	p.SlimeForm = !p.MistForm
+	selfMsgs = []string{fmt.Sprintf("You feel your body changing shape. Suddenly, you realize that you are %s! [Type TRANSFORM to assume a material shape again]", what)}
 	if dropMsg != "" {
-		msgs = append(msgs, dropMsg)
+		selfMsgs = append(selfMsgs, dropMsg)
 	}
-	return &CommandResult{
-		Messages:      msgs,
-		RoomBroadcast: []string{fmt.Sprintf("%s shudders and transforms into %s!", player.FirstName, player.DisplayName())},
-	}
+	return selfMsgs, fmt.Sprintf("%s suddenly becomes %s!", name, what)
 }
 
 // formDamageReduction adjusts incoming physical/magical damage for a player

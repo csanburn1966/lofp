@@ -43,6 +43,18 @@ func (p *Player) EphemeralEthereal() bool {
 	return p.IsEphemeral() && !time.Now().Before(p.EphemeralPhysicalUntil)
 }
 
+// SlipsPastDoors reports whether the player can get past a closed door in the
+// wake of someone else who has: an Ephemeral, or anyone in Mist or Slime Form.
+func (p *Player) SlipsPastDoors() bool {
+	return p.IsEphemeral() || p.MistForm || p.SlimeForm
+}
+
+// TooInsubstantialToStop reports whether nobody guarding a door can stop the
+// player: an ethereal Ephemeral, or anyone in Mist or Slime Form.
+func (p *Player) TooInsubstantialToStop() bool {
+	return p.EphemeralEthereal() || p.MistForm || p.SlimeForm
+}
+
 // CanBleed reports whether wounds dealt to the player bleed: not undead (no active
 // life force — GMSCRIPT.DOC immunity #7) and not an Ephemeral (LEGENDS.DOC).
 func (p *Player) CanBleed() bool { return !p.IsUndead() && !p.IsEphemeral() }

@@ -1596,7 +1596,7 @@ gaze  glare  scowl  furrow (brow)  sing  recite  pace  comfort`}</pre>
 #3  Levitate                  Lev 2   Carry 50% more, reduce fatigue
 #4  Pyrokinetics              Lev 3   Heat damage
 #5  Cryokinetics              Lev 4   Cold damage
-#6  Capacitance               Lev 5   Drain charge from item for 5 psi
+#6  Capacitance               Lev 5   Drain an item's charges into psi
 #7  Electrify                 Lev 6   Electrical damage
 #8  Strengthen Steel          Lev 7   +15 weapon bonus
 #9  Manipulate Lock           Lev 8   Chance to unlock

@@ -139,7 +139,7 @@ func init() {
 		{ID: 135, Name: "Storm Blade", School: "Conjuration", Level: 24, ManaCost: 30, CastTime: 3, Effect: "buff"},
 		{ID: 136, Name: "Inferno Blade", School: "Conjuration", Level: 19, ManaCost: 25, CastTime: 3, Effect: "buff"},
 		{ID: 137, Name: "Winter Blade", School: "Conjuration", Level: 22, ManaCost: 28, CastTime: 3, Effect: "buff"},
-		{ID: 138, Name: "Energy Maelstrom", School: "Conjuration", Level: 31, ManaCost: 45, CastTime: 5, Effect: "damage", DmgMin: 30, DmgMax: 75, DmgType: "electric"},
+		{ID: 138, Name: "Energy Maelstrom", School: "Conjuration", Level: 31, ManaCost: 45, CastTime: 5, Effect: "utility", DmgMin: 8, DmgMax: 18, DmgType: "electric"}, // DmgMin/Max are per 5-second tick, to every creature in the room (maelstrom.go)
 		{ID: 141, Name: "Pyrotechnics", School: "Conjuration", Level: 17, ManaCost: 20, CastTime: 3, Effect: "utility"},
 		{ID: 139, Name: "Sorcerous Summons I", School: "Conjuration", Level: 20, ManaCost: 20, CastTime: 5, Effect: "utility"},
 		{ID: 140, Name: "Sorcerous Summons II", School: "Conjuration", Level: 35, ManaCost: 35, CastTime: 5, Effect: "utility"},
@@ -209,6 +209,7 @@ func init() {
 		{ID: 326, Name: "Spectral Shield", School: "Necromancy", Level: 9, ManaCost: 12, CastTime: 3, Effect: "defense", DefBonus: 20},
 		{ID: 334, Name: "Invigoration I", School: "Necromancy", Level: 2, ManaCost: 4, CastTime: 3, Effect: "heal", HealMin: 3, HealMax: 10},
 		{ID: 335, Name: "Invigoration II", School: "Necromancy", Level: 9, ManaCost: 10, CastTime: 3, Effect: "heal", HealMin: 8, HealMax: 25},
+		{ID: 336, Name: "Wight Animation", School: "Necromancy", Level: 17, ManaCost: 17, CastTime: 5, Effect: "utility"},
 		{ID: 337, Name: "Reconstruction", School: "Necromancy", Level: 4, ManaCost: 6, CastTime: 3, Effect: "heal", HealMin: 5, HealMax: 20},
 		{ID: 338, Name: "Unstun", School: "Necromancy", Level: 9, ManaCost: 8, CastTime: 2, Effect: "utility"},
 		{ID: 339, Name: "Destroy Undead I", School: "Necromancy", Level: 3, ManaCost: 5, CastTime: 3, Effect: "damage", DmgMin: 8, DmgMax: 20, DmgType: ""},
@@ -227,6 +228,7 @@ func init() {
 		{ID: 310, Name: "Control Undead III", School: "Necromancy", Level: 21, ManaCost: 21, CastTime: 4, Effect: "utility"},
 		{ID: 311, Name: "Speak With Dead", School: "Necromancy", Level: 3, ManaCost: 3, CastTime: 4, Effect: "utility"},
 		{ID: 353, Name: "Summon Spectral Warrior", School: "Necromancy", Level: 32, ManaCost: 32, CastTime: 5, Effect: "utility"},
+		{ID: 351, Name: "Wither Limb", School: "Necromancy", Level: 24, ManaCost: 24, CastTime: 4, Effect: "utility"},
 		{ID: 322, Name: "Death Scythe", School: "Necromancy", Level: 25, ManaCost: 30, CastTime: 4, Effect: "utility"},
 	}
 	// General (400-415)
@@ -264,17 +266,18 @@ func init() {
 		{ID: 506, Name: "Resist Weather", School: "Druidic", Level: 3, ManaCost: 3, CastTime: 3, Effect: "buff"},
 		{ID: 509, Name: "Repel Plants", School: "Druidic", Level: 10, ManaCost: 10, CastTime: 3, Effect: "buff"},
 		{ID: 510, Name: "Repel Plants and Webs", School: "Druidic", Level: 18, ManaCost: 18, CastTime: 3, Effect: "buff"},
-		{ID: 516, Name: "Wall of Thorns", School: "Druidic", Level: 14, ManaCost: 14, CastTime: 4, Effect: "utility"},
+		{ID: 516, Name: "Wall of Thorns", School: "Druidic", Level: 14, ManaCost: 14, CastTime: 4, Effect: "utility", DmgMin: 3, DmgMax: 9, DmgType: ""}, // DmgMin/Max are what each melee attack made from inside costs (snares.go)
 		{ID: 517, Name: "Stick to Snake", School: "Druidic", Level: 5, ManaCost: 5, CastTime: 4, Effect: "utility"},
 		{ID: 518, Name: "Claw Growth", School: "Druidic", Level: 2, ManaCost: 2, CastTime: 3, Effect: "buff"},
 		{ID: 522, Name: "Insect Swarm", School: "Druidic", Level: 25, ManaCost: 25, CastTime: 4, Effect: "utility", DmgMin: 3, DmgMax: 8, DmgType: ""}, // DmgMin/Max are per 5-second tick (swarm.go)
-		{ID: 526, Name: "Creeping Death", School: "Druidic", Level: 22, ManaCost: 22, CastTime: 4, Effect: "damage", DmgMin: 18, DmgMax: 45, DmgType: ""},
+		{ID: 526, Name: "Creeping Death", School: "Druidic", Level: 22, ManaCost: 22, CastTime: 4, Effect: "utility", DmgMin: 3, DmgMax: 7, DmgType: ""}, // per 5-second tick, like Insect Swarm (swarm.go)
 		{ID: 528, Name: "Free Action", School: "Druidic", Level: 20, ManaCost: 20, CastTime: 3, Effect: "buff"},
 		{ID: 531, Name: "Tree Door", School: "Druidic", Level: 10, ManaCost: 10, CastTime: 4, Effect: "utility"},
-		{ID: 532, Name: "Ride the Lightning", School: "Druidic", Level: 24, ManaCost: 24, CastTime: 3, Effect: "defense", DefBonus: 50},
+		{ID: 532, Name: "Ride the Lightning", School: "Druidic", Level: 24, ManaCost: 24, CastTime: 3, Effect: "buff"},
 		{ID: 533, Name: "Commune with Nature", School: "Druidic", Level: 27, ManaCost: 27, CastTime: 5, Effect: "utility"},
 		{ID: 534, Name: "Claws of the Elder Wolf", School: "Druidic", Level: 21, ManaCost: 21, CastTime: 3, Effect: "buff"},
 		{ID: 535, Name: "Form Lock", School: "Druidic", Level: 18, ManaCost: 18, CastTime: 4, Effect: "utility"},
+		{ID: wolfFormSpellID, Name: "Wolf Form", School: "Druidic", Level: 26, ManaCost: 26, CastTime: 4, Effect: "utility"}, // LEGENDS.DOC "536: Wolf Form: Lev=26"
 	}
 
 	spellRegistry = append(spellRegistry, conj...)
@@ -730,10 +733,28 @@ func spellReagentArch(spellID int) int {
 		return 494 // mandrake root for Breath of Life
 	case 353:
 		return 512 // ghoul dust for Summon Spectral Warrior
+	case 144:
+		return 521 // ursine tongue for Tindarath's Chaotic Summons
+	case 336:
+		return 512 // wight dust for Wight Animation (MAGIC.TXT: "wight dust skinned from a lesser")
 	case 243:
 		return 494 // mandrake root for Charge Wand
 	case enchantItemSpellID:
 		return 107 // diamond for Enchant an Item
+	}
+	return 0
+}
+
+// spellReagentAdj returns the adjective a spell's reagent must have where the
+// archetype alone isn't enough (item 512 is any kind of dust, 521 any tongue), or 0.
+func spellReagentAdj(spellID int) int {
+	switch spellID {
+	case 144:
+		return 868 // ursine
+	case 336:
+		return 547 // wight
+	case 353:
+		return 546 // ghoul
 	}
 	return 0
 }
@@ -761,6 +782,10 @@ func spellReagentName(spellID int) string {
 		return "some mandrake root"
 	case 353:
 		return "some ghoul dust"
+	case 144:
+		return "an ursine tongue"
+	case 336:
+		return "some wight dust"
 	case 243:
 		return "some mandrake root"
 	case enchantItemSpellID:
@@ -776,11 +801,11 @@ func spellReagentName(spellID int) string {
 // function's own reagent-consumption block). Matches the original's phrasing
 // (original/csanburn/chan0409.txt: "A worm scale turns to dust as it is
 // absorbed by the magic of your spell!"). Most spells share that generic
-// wording; ghoul dust has its own flavor text since "the ghoul dust turns to
-// dust" reads oddly.
+// wording; ghoul and wight dust have their own flavor text since "the ghoul
+// dust turns to dust" reads oddly.
 func spellReagentConsumeMessage(spellID int) string {
-	if spellID == 353 {
-		return "The ghoul dust swirls away into nothingness as it is consumed by the spell!"
+	if spellReagentArch(spellID) == 512 {
+		return fmt.Sprintf("The %s swirls away into nothingness as it is consumed by the spell!", strings.TrimPrefix(spellReagentName(spellID), "some "))
 	}
 	return fmt.Sprintf("%s turns to dust as it is absorbed by the magic of your spell!", capitalize(spellReagentName(spellID)))
 }
@@ -789,8 +814,8 @@ func spellReagentConsumeMessage(spellID int) string {
 // counterpart, shown to everyone else in the room — casterName should be the
 // caster's DisplayName (real name, or their apparent one if disguised/hidden).
 func spellReagentConsumeMessageRoom(spellID int, casterName string) string {
-	if spellID == 353 {
-		return fmt.Sprintf("The ghoul dust swirls away into nothingness as it is consumed by %s's spell!", casterName)
+	if spellReagentArch(spellID) == 512 {
+		return fmt.Sprintf("The %s swirls away into nothingness as it is consumed by %s's spell!", strings.TrimPrefix(spellReagentName(spellID), "some "), casterName)
 	}
 	return fmt.Sprintf("%s turns to dust as it is absorbed by the magic of %s's spell!", capitalize(spellReagentName(spellID)), casterName)
 }
@@ -799,7 +824,7 @@ func spellReagentConsumeMessageRoom(spellID int, casterName string) string {
 // rather than at CAST time (elementals, gargoyle summons, and Breath of Life).
 func spellConsumesReagentAtPrepare(spellID int) bool {
 	switch spellID {
-	case 106, 107, 108, 109, 123, 305, 353:
+	case 106, 107, 108, 109, 123, 144, 305, 336, 353:
 		return true
 	}
 	return false
@@ -843,6 +868,14 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 	if !player.KnownSpells[spell.ID] && !player.IsGM {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You haven't learned %s.", spell.Name)}}
 	}
+	if e.maintainsMaelstrom(player) {
+		return &CommandResult{Messages: []string{maintainingMagicMsg}}
+	}
+	if spell.ID == wolfFormSpellID {
+		if msg := wolfFormRefusal(player); msg != "" {
+			return &CommandResult{Messages: []string{msg}}
+		}
+	}
 	if player.Mana < spell.ManaCost {
 		return &CommandResult{Messages: []string{fmt.Sprintf("You don't have enough mana. (%s costs %d, you have %d)", spell.Name, spell.ManaCost, player.Mana)}}
 	}
@@ -868,7 +901,9 @@ func (e *GameEngine) doPrepareSpell(player *Player, args []string) *CommandResul
 			if def == nil || ii.Archetype != reqArch {
 				continue
 			}
-			if spell.ID == 353 && ii.Adj1 != 546 { // must specifically be ghoul dust
+			// The adjective's slot depends on where the dust came from: skinned or
+			// ground in an urn, it's Adj2; bought (STOREITEM), Adj3.
+			if adj := spellReagentAdj(spell.ID); adj != 0 && ii.Adj1 != adj && ii.Adj2 != adj && ii.Adj3 != adj {
 				continue
 			}
 			noun := e.getItemNounName(def)
@@ -996,6 +1031,9 @@ func (e *GameEngine) doRelease(ctx context.Context, player *Player) *CommandResu
 		e.SavePlayer(ctx, player)
 		return &CommandResult{Messages: []string{"You release your prepared discipline."}}
 	}
+	if e.releaseMaelstrom(player.FirstName) {
+		return &CommandResult{Messages: []string{"You let go of the magic you were maintaining."}}
+	}
 	if player.Carrying != "" {
 		return e.doReleaseCarry(ctx, player)
 	}
@@ -1057,6 +1095,9 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		}
 		if spellReagentArch(spell.ID) > 0 {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s requires a reagent. Use: PREPARE %d WITH %s", spell.Name, spell.ID, spellReagentName(spell.ID))}}
+		}
+		if e.maintainsMaelstrom(player) {
+			return &CommandResult{Messages: []string{maintainingMagicMsg}}
 		}
 		player.PreparedSpell = spell.ID
 	}
@@ -1279,9 +1320,31 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 		case 504: // Call Animal
 			result = e.castCallAnimal(player)
 		case 500: // Plant Snare
-			result = e.castPlantSnareSpell(player, spell, args)
-		case 522: // Insect Swarm
-			result = e.castInsectSwarmSpell(player, spell, args, castRoll, castChance)
+			result = e.castPlantSnareSpell(player, spell, args, castRoll, castChance)
+		case insectSwarmSpellID, creepingDeathSpellID: // Insect Swarm, Creeping Death
+			result = e.castDamagingSnareSpell(player, damagingSnareForSpell(spell.ID), args, castRoll, castChance)
+		case wallOfThornsSpellID: // Wall of Thorns
+			result = e.castWallOfThorns(player, spell, args, castRoll, castChance)
+		case 138: // Energy Maelstrom
+			result = e.castEnergyMaelstrom(player, spell, castRoll, castChance)
+		case 144: // Tindarath's Chaotic Summons
+			result = e.castChaoticSummons(player)
+		case 230: // Disjunction
+			result = e.castDisjunction(player)
+		case 338: // Unstun
+			result = e.castUnstun(player, spell, args)
+		case 351: // Wither Limb
+			result = e.castWitherLimb(player, spell, args, castRoll, castChance)
+		case 406: // Dispel Invisibility
+			result = e.castDispelInvisibility(player, args)
+		case 407: // Analyze Ore
+			result = e.castAnalyzeOre(player, args)
+		case treeDoorSpellID: // Tree Door
+			result = e.castTreeDoor(ctx, player, args)
+		case 535: // Form Lock
+			result = e.castFormLock(player, spell, args)
+		case wolfFormSpellID: // Wolf Form
+			result = e.castWolfForm(player)
 		case 320, 321: // Contagion, Poison
 			result = e.castAfflictionSpell(player, afflictionForSpell(spell.ID), args, castRoll, castChance)
 		case 501: // Call Storm
@@ -1306,6 +1369,8 @@ func (e *GameEngine) doCastSpell(ctx context.Context, player *Player, args []str
 			result = e.castCommandSpell(player, spell, args)
 		case 311: // Speak with Dead
 			result = e.castSpeakWithDead(player, args)
+		case 336: // Wight Animation
+			result = e.castWightAnimation(player)
 		case 353: // Summon Spectral Warrior
 			result = e.castSummonSpectralWarrior(player)
 		case 400: // Detect Magic
@@ -1432,6 +1497,13 @@ func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spel
 		dmg += masteryDamageBonus(spellMasteryLevel(player, spell), player)
 		if dmg <= 0 {
 			dmg = 1
+		}
+		if selfMsg, roomMsg := absorbLightning(player, dmg, spell.DmgType); selfMsg != "" {
+			return &CommandResult{
+				Messages:      []string{"The magic twists out of your control and strikes you instead!", selfMsg},
+				RoomBroadcast: []string{fmt.Sprintf("Magic flares wildly around %s and strikes them instead! %s", player.DisplayName(), roomMsg)},
+				PlayerState:   player,
+			}
 		}
 		part, _ := rollBodyPart("HUMAN", 0)
 		dtype := damageTypeForSpecAttack(spell.DmgType)
@@ -1649,6 +1721,10 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 	}
 
 	name := FormatMonsterName(def, e.monAdjs)
+
+	if charmedBy(player, inst.ID) {
+		return &CommandResult{Messages: []string{fmt.Sprintf("You can't bring yourself to harm the %s.", name)}, TargetNotFound: true}
+	}
 
 	// Imprison (231): the force bubble protects the target from being attacked
 	// as well as attacking — per MAGIC.TXT, "prevents them from attacking or
@@ -2343,7 +2419,7 @@ func (e *GameEngine) castTentaclesSpell(player *Player, spell *SpellDef, args []
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
 }
 
-func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *SpellDef, args []string) *CommandResult {
+func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *SpellDef, args []string) (res *CommandResult) {
 	// Reconstruction (337) only heals the undead; it has its own resolution logic.
 	if spell.ID == 337 {
 		return e.castReconstruction(player, spell, args)
@@ -2372,9 +2448,23 @@ func (e *GameEngine) castHealSpell(ctx context.Context, player *Player, spell *S
 	}
 
 	// Regeneration (343) heals once immediately, then again every minute for 5 more minutes.
+	// It also restores withered limbs (MAGIC.TXT).
+	restored := ""
 	if spell.ID == 343 {
 		target.RegenerationAmount = amount
 		target.RegenerationTicksLeft = 5
+		restored = restoreWitheredLimbs(target)
+	}
+	if restored != "" {
+		defer func() {
+			if target == player {
+				res.Messages = append(res.Messages, fmt.Sprintf("Life flows back into your %s!", restored))
+				return
+			}
+			res.Messages = append(res.Messages, fmt.Sprintf("Life flows back into %s's %s!", target.FirstName, restored))
+			res.TargetMsg = append(res.TargetMsg, fmt.Sprintf("Life flows back into your %s!", restored))
+			e.SavePlayer(ctx, target)
+		}()
 	}
 
 	// Invigoration spells restore fatigue instead of body points
@@ -2803,7 +2893,7 @@ func (e *GameEngine) castTranslocationSpell(ctx context.Context, player *Player,
 		e.breakAllMeleeEngagements(p)
 		p.RoomNumber = dest.Number
 		p.Submitting = false
-		p.GuardTargets = nil
+		p.breakGuard()
 		e.SavePlayer(ctx, p)
 		e.moveFollowingSummons(p, originalRoom, dest.Number)
 		player.TargetPlayers = removeFromStringSlice(player.TargetPlayers, p.FirstName)
@@ -3308,6 +3398,10 @@ func (e *GameEngine) castBuffSpell(player *Player, spell *SpellDef, args []strin
 		return e.castDivineBlessingSpell(player, spell, args)
 	case 518: // Claw Growth
 		return e.castClawGrowthSpell(player, spell, args)
+	case 512: // True Aim
+		return e.castTrueAim(player, spell, args)
+	case 528, 532, 534: // Free Action, Ride the Lightning, Claws of the Elder Wolf
+		return e.castTimedEffect(player, spell, args)
 	}
 	return &CommandResult{
 		Messages:      []string{msg},
@@ -3674,6 +3768,9 @@ func (e *GameEngine) castRepelPlantsSpell(player *Player, spell *SpellDef, args 
 // playerImmuneToPlantSnare reports whether Repel Plants (509) or Repel Plants
 // and Webs (510) is currently active on the player.
 func playerImmuneToPlantSnare(p *Player) bool {
+	if spellActive(p.FreeActionExpiry) {
+		return true
+	}
 	now := time.Now()
 	if !p.RepelPlantsExpiry.IsZero() && now.Before(p.RepelPlantsExpiry) {
 		return true
@@ -3682,54 +3779,6 @@ func playerImmuneToPlantSnare(p *Player) bool {
 		return true
 	}
 	return false
-}
-
-// castPlantSnareSpell handles Plant Snare (500): entangles another player in
-// grasping roots and vines, preventing movement until it wears off or Freedom
-// (505) is cast to remove it. Per MAGIC.TXT ("Plant Snare: Outdoors only"),
-// both caster and target must be outdoors.
-func (e *GameEngine) castPlantSnareSpell(player *Player, spell *SpellDef, args []string) *CommandResult {
-	room := e.rooms[player.RoomNumber]
-	if room == nil || !isOutdoorTerrain(room.Terrain) {
-		return &CommandResult{Messages: []string{"Plant Snare only works outdoors."}}
-	}
-	if len(args) == 0 {
-		return &CommandResult{Messages: []string{"Snare whom?"}}
-	}
-	targetName := strings.ToLower(strings.Join(args, " "))
-	target := e.findPlayerInRoom(player, targetName)
-	if target == nil {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You don't see '%s' here.", strings.Join(args, " "))}, TargetNotFound: true}
-	}
-
-	if playerImmuneToPlantSnare(target) {
-		return &CommandResult{
-			Messages:      []string{fmt.Sprintf("You gesture and cast %s at %s, but the roots and vines recoil from them!", spell.Name, target.FirstName)},
-			RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s, but nothing happens.", player.DisplayName(), target.DisplayName())},
-			TargetName:    target.FirstName,
-			TargetMsg:     []string{fmt.Sprintf("%s casts %s at you, but the roots and vines recoil from you!", player.FirstName, spell.Name)},
-		}
-	}
-
-	// Per MAGIC.TXT, being snared or webbed gets rid of an insect swarm.
-	dropMsg := removeInsectSwarm(target)
-	target.Entangles = append(target.Entangles, PlayerEntangle{
-		SpellID:   spell.ID,
-		SpellName: spell.Name,
-		Expiry:    time.Now().Add(60 * time.Second),
-	})
-	e.SavePlayer(context.Background(), target)
-
-	targetMsgs := []string{fmt.Sprintf("%s casts %s at you! Roots and vines burst from the ground, entangling you!", player.FirstName, spell.Name)}
-	if dropMsg != "" {
-		targetMsgs = append(targetMsgs, dropMsg)
-	}
-	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s at %s. Roots and vines burst from the ground, entangling them!", spell.Name, target.FirstName)},
-		RoomBroadcast: []string{fmt.Sprintf("%s gestures at %s. Roots and vines burst from the ground, entangling them!", player.DisplayName(), target.DisplayName())},
-		TargetName:    target.FirstName,
-		TargetMsg:     targetMsgs,
-	}
 }
 
 // castFreedomSpell handles Freedom (505): removes one active movement-
@@ -3933,6 +3982,17 @@ func activeDispellableEffects(target *Player) []dispellableEffect {
 		effects = append(effects, dispellableEffect{"Paranoia", func() string {
 			target.ParanoiaExpiry = time.Time{}
 			return "Your paranoia fades. You feel at ease once more."
+		}})
+	}
+	for _, te := range timedEffects {
+		expiry := te.field(target)
+		if !spellActive(*expiry) {
+			continue
+		}
+		fade := te.fade
+		effects = append(effects, dispellableEffect{te.name, func() string {
+			*expiry = time.Time{}
+			return fade
 		}})
 	}
 	for i, b := range target.TimedDefenseBuffs {
@@ -4754,6 +4814,18 @@ func (e *GameEngine) castCloakMindSpell(player *Player, spell *SpellDef, args []
 	}
 }
 
+// applyClawGrowth starts or extends Claw Growth (518). Returns the minutes remaining and
+// whether it wasn't already active.
+func applyClawGrowth(p *Player, mult float64) (mins int, applied bool) {
+	d := scaleSpellDuration(20*time.Minute, mult)
+	if spellActive(p.ClawGrowthExpiry) {
+		p.ClawGrowthExpiry = p.ClawGrowthExpiry.Add(d)
+		return int(time.Until(p.ClawGrowthExpiry).Minutes()) + 1, false
+	}
+	p.ClawGrowthExpiry = time.Now().Add(d)
+	return durationMinutes(d), true
+}
+
 // castClawGrowthSpell handles Claw Growth (518): self-only. Grants natural claws
 // (ITEMWEAP.SCR #279, CLAW_WEAPON) usable when the caster has no weapon wielded —
 // see currentWeaponDef in combat.go, which is what actually makes claws usable in
@@ -4768,20 +4840,16 @@ func (e *GameEngine) castClawGrowthSpell(player *Player, spell *SpellDef, args [
 		}
 	}
 
-	stackDuration := scaleSpellDuration(20*time.Minute, player.spellDurationMult(spell))
-	active := !player.ClawGrowthExpiry.IsZero() && time.Now().Before(player.ClawGrowthExpiry)
-	if active {
-		player.ClawGrowthExpiry = player.ClawGrowthExpiry.Add(stackDuration)
-		mins := int(time.Until(player.ClawGrowthExpiry).Minutes()) + 1
+	mins, applied := applyClawGrowth(player, player.spellDurationMult(spell))
+	if !applied {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and cast %s. Your claws grow sharper still! (%d minutes remaining)", spell.Name, mins)},
 			RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s.", player.DisplayName(), spell.Name)},
 		}
 	}
 
-	player.ClawGrowthExpiry = time.Now().Add(stackDuration)
 	return &CommandResult{
-		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Wicked claws erupt from your fingertips! (%s)", spell.Name, minutesText(durationMinutes(stackDuration)))},
+		Messages:      []string{fmt.Sprintf("You gesture and cast %s. Wicked claws erupt from your fingertips! (%s)", spell.Name, minutesText(mins))},
 		RoomBroadcast: []string{fmt.Sprintf("%s gestures and casts %s -- claws erupt from %s fingertips!", player.DisplayName(), spell.Name, player.Possessive())},
 	}
 }
@@ -6821,6 +6889,10 @@ func (e *GameEngine) springSigilTrap(ctx context.Context, player *Player, sigilS
 	}
 
 	dmg := (rand.Intn(base.DmgMax-base.DmgMin+1) + base.DmgMin) * mult
+	if selfMsg, _ := absorbLightning(player, dmg, base.DmgType); selfMsg != "" {
+		e.SavePlayer(ctx, player)
+		return []string{fmt.Sprintf("%s %s!", capitalize(itemName), verb), selfMsg}
+	}
 	part, _ := rollBodyPart("HUMAN", 0)
 	dtype := damageTypeForSpecAttack(base.DmgType)
 	woundLevel := woundLevelFromDamage(dmg, player.MaxBodyPoints)

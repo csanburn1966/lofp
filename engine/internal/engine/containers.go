@@ -2152,6 +2152,20 @@ func isJewelryBeneficialSpell(sp SpellDef) bool {
 		403: true, // Mindlink (communication)
 		406: true, // Dispel Invisibility (targets others)
 		407: true, // Analyze Ore (crafting only)
+		217: true, // Slumber II
+		218: true, // Slumber III
+		226: true, // Paranoia
+		231: true, // Imprison
+		320: true, // Contagion
+		321: true, // Poison
+		519: true, // Sunray
+		522: true, // Insect Swarm
+		138: true, // Energy Maelstrom
+		351: true, // Wither Limb
+		516: true, // Wall of Thorns
+		526: true, // Creeping Death
+		535: true, // Form Lock
+		536: true, // Wolf Form (good-aligned casters only)
 		412: true, // Rite of Preparation (Enchant an Item ritual, never held by items)
 		500: true, // Plant Snare
 	}

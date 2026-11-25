@@ -36,8 +36,74 @@ const (
 	insectSwarmDropMsg  = "The insects drop off and die."
 )
 
-// StartInsectSwarmLoop runs the 5-second swarm damage/expiry tick for players
-// and monsters.
+// damagingSnare is a spell that holds its target in place and hurts it every
+// insectSwarmTick: Insect Swarm, and Creeping Death (526), MAGIC.TXT's "Damaging
+// snare". Creeping Death has no text in any capture, so its lines are our own,
+// modelled on Plant Snare's; its damage (the SpellDef's DmgMin/DmgMax) is Insect
+// Swarm's scaled by spell level, 22 to 25.
+type damagingSnare struct {
+	spellID   int
+	spellName string
+	noun      string // what holds the player, for "You are bound by ..." lines
+	killer    string
+	catchMsg  string // %s = the target
+	noBiteMsg string // discorporate target, %s = the target
+	tickMsg   string // to the player
+	dropMsg   string // to the player, as it ends
+	monTick   string // %s = the monster, capitalized
+	monHit    string // "bite to left leg"
+	monDrop   string // %s = the monster
+	suffix    string // after the monster's name in the room
+	monster   func(*MonsterInstance) (*bool, *time.Time, *string)
+}
+
+const creepingDeathSpellID = 526
+
+var insectSwarmSnare = &damagingSnare{
+	spellID: insectSwarmSpellID, spellName: "Insect Swarm",
+	noun: "a swarm of insects", killer: "a swarm of insects",
+	catchMsg:  "Insects suddenly boil up from the ground and swarm over %s!",
+	noBiteMsg: "Insects boil up from the ground, but find nothing to bite on %s!",
+	tickMsg:   "You are being devoured by insects!",
+	dropMsg:   insectSwarmDropMsg,
+	monTick:   "%s is being devoured by insects!", monHit: "bite",
+	monDrop: "The insects swarming over %s drop off and die.",
+	suffix:  "swarmed by insects",
+	monster: func(m *MonsterInstance) (*bool, *time.Time, *string) {
+		return &m.Swarmed, &m.SwarmExpiry, &m.SwarmCasterName
+	},
+}
+
+var creepingDeathSnare = &damagingSnare{
+	spellID: creepingDeathSpellID, spellName: "Creeping Death",
+	noun: "strangling vines", killer: "strangling vines",
+	catchMsg:  "Thorny black vines creep up from the ground and coil around %s!",
+	noBiteMsg: "Thorny black vines creep up from the ground, but close on nothing as they pass through %s!",
+	tickMsg:   "The black vines tighten around you, tearing at your flesh!",
+	dropMsg:   "The black vines around you rapidly wither and turn to dust.",
+	monTick:   "The black vines tighten around %s!", monHit: "gash",
+	monDrop: "The black vines around %s rapidly wither and turn to dust.",
+	suffix:  "ensnared",
+	monster: func(m *MonsterInstance) (*bool, *time.Time, *string) {
+		return &m.Creeping, &m.CreepExpiry, &m.CreepCasterName
+	},
+}
+
+var damagingSnares = []*damagingSnare{insectSwarmSnare, creepingDeathSnare}
+
+// damagingSnareForSpell returns the damaging snare a spell makes, or nil.
+func damagingSnareForSpell(spellID int) *damagingSnare {
+	for _, ds := range damagingSnares {
+		if ds.spellID == spellID {
+			return ds
+		}
+	}
+	return nil
+}
+
+// StartInsectSwarmLoop runs the 5-second tick for damaging snares on players and
+// monsters, and for the short spell effects that can't wait for regenTick's minute
+// (spell_ticks.go).
 func (e *GameEngine) StartInsectSwarmLoop() {
 	go func() {
 		ticker := time.NewTicker(insectSwarmTick)
@@ -50,106 +116,128 @@ func (e *GameEngine) StartInsectSwarmLoop() {
 
 func (e *GameEngine) insectSwarmStep() {
 	defer recoverBackground("insect swarm tick")
-	e.insectSwarmPlayerTick()
-	e.insectSwarmMonsterTick()
+	for _, ds := range damagingSnares {
+		e.damagingSnarePlayerTick(ds)
+		e.damagingSnareMonsterTick(ds)
+	}
+	e.snareMonsterTick()
+	e.spellEffectTick()
+	e.maelstromTick()
 }
 
 // entangleReleaseMsg is the line a player sees when an entangle ends, however
 // it ends (expiry, Freedom, Dispel Lesser Magic, a form change).
 func entangleReleaseMsg(ent PlayerEntangle) string {
-	if ent.SpellID == insectSwarmSpellID {
-		return insectSwarmDropMsg
+	if ds := damagingSnareForSpell(ent.SpellID); ds != nil {
+		return ds.dropMsg
+	}
+	switch ent.SpellID {
+	case plantSnareSpellID:
+		return "The plant tendrils ensnaring you rapidly wither and turn to dust." // original/csanburn
+	case webSpellID:
+		return "The sticky webbing holding you falls away."
+	case wallOfThornsSpellID:
+		return "The wall of thorns around you withers and crumbles away."
 	}
 	return fmt.Sprintf("The %s releases its hold on you.", ent.SpellName)
 }
 
-// isInsectSwarmed reports whether an insect swarm is on the player.
-func isInsectSwarmed(p *Player) bool {
+// hasEntangle reports whether the player is held by the given spell.
+func hasEntangle(p *Player, spellID int) bool {
 	for _, ent := range p.Entangles {
-		if ent.SpellID == insectSwarmSpellID {
+		if ent.SpellID == spellID {
 			return true
 		}
 	}
 	return false
 }
 
-// swarmPlayer puts an insect swarm on the player, or refreshes the duration of
-// one already there.
-func swarmPlayer(p *Player) {
-	expiry := time.Now().Add(insectSwarmDuration)
+// isInsectSwarmed reports whether an insect swarm is on the player.
+func isInsectSwarmed(p *Player) bool { return hasEntangle(p, insectSwarmSpellID) }
+
+// entanglePlayer holds the player with the given spell for d, or refreshes the
+// duration if it already does.
+func entanglePlayer(p *Player, spellID int, spellName string, d time.Duration) {
+	expiry := time.Now().Add(d)
 	for i := range p.Entangles {
-		if p.Entangles[i].SpellID == insectSwarmSpellID {
+		if p.Entangles[i].SpellID == spellID {
 			p.Entangles[i].Expiry = expiry
 			return
 		}
 	}
-	p.Entangles = append(p.Entangles, PlayerEntangle{SpellID: insectSwarmSpellID, SpellName: "Insect Swarm", Expiry: expiry})
+	p.Entangles = append(p.Entangles, PlayerEntangle{SpellID: spellID, SpellName: spellName, Expiry: expiry})
+}
+
+// swarmPlayer puts an insect swarm on the player, or refreshes the duration of
+// one already there.
+func swarmPlayer(p *Player) {
+	entanglePlayer(p, insectSwarmSpellID, "Insect Swarm", insectSwarmDuration)
 }
 
 // removeInsectSwarm strips any insect swarm from the player, returning
 // insectSwarmDropMsg if there was one and "" otherwise.
 func removeInsectSwarm(p *Player) string {
-	kept := p.Entangles[:0]
-	removed := false
-	for _, ent := range p.Entangles {
-		if ent.SpellID == insectSwarmSpellID {
-			removed = true
-			continue
-		}
-		kept = append(kept, ent)
-	}
-	if !removed {
+	if !removeEntangle(p, insectSwarmSpellID) {
 		return ""
-	}
-	if len(kept) == 0 {
-		p.Entangles = nil
-	} else {
-		p.Entangles = kept
 	}
 	return insectSwarmDropMsg
 }
 
-// insectSwarmPlayerTick bites every swarmed player once and ends swarms that
+// removeEntangle strips the given spell's hold from the player, reporting whether
+// there was one.
+func removeEntangle(p *Player, spellID int) bool {
+	var kept []PlayerEntangle
+	for _, ent := range p.Entangles {
+		if ent.SpellID != spellID {
+			kept = append(kept, ent)
+		}
+	}
+	removed := len(kept) != len(p.Entangles)
+	p.Entangles = kept
+	return removed
+}
+
+// damagingSnarePlayerTick hurts every player the snare holds and ends those that
 // have run their course. Damage follows the poison tick's rules (regenTick): a
 // tick that takes a player to 0 knocks them out, and only a later tick while
 // they're still out at 0 kills them.
-func (e *GameEngine) insectSwarmPlayerTick() {
+func (e *GameEngine) damagingSnarePlayerTick(ds *damagingSnare) {
 	if e.sessions == nil {
 		return
 	}
-	spell := FindSpellByID(insectSwarmSpellID)
+	spell := FindSpellByID(ds.spellID)
 	if spell == nil {
 		return
 	}
 	now := time.Now()
 	for _, p := range e.sessions.OnlinePlayers() {
-		if p == nil || !isInsectSwarmed(p) {
+		if p == nil || !hasEntangle(p, ds.spellID) {
 			continue
 		}
 		if p.Dead {
-			removeInsectSwarm(p)
+			removeEntangle(p, ds.spellID)
 			continue
 		}
 		var expired bool
 		for _, ent := range p.Entangles {
-			if ent.SpellID == insectSwarmSpellID && now.After(ent.Expiry) {
+			if ent.SpellID == ds.spellID && now.After(ent.Expiry) {
 				expired = true
 			}
 		}
 		if expired {
-			removeInsectSwarm(p)
+			removeEntangle(p, ds.spellID)
 			e.SavePlayer(context.Background(), p)
-			e.sendToPlayerMsgs(p, []string{insectSwarmDropMsg})
+			e.sendToPlayerMsgs(p, []string{ds.dropMsg})
 			continue
 		}
 		if p.IsFormLocked() {
 			continue
 		}
 
-		msgs := []string{"You are being devoured by insects!"}
+		msgs := []string{ds.tickMsg}
 		if p.Unconscious && p.BodyPoints <= 0 {
-			removeInsectSwarm(p)
-			msgs = append(msgs, e.handlePlayerDeath(p, "a swarm of insects")...)
+			removeEntangle(p, ds.spellID)
+			msgs = append(msgs, e.handlePlayerDeath(p, ds.killer)...)
 		} else {
 			p.BodyPoints -= rand.Intn(spell.DmgMax-spell.DmgMin+1) + spell.DmgMin
 			if p.BodyPoints <= 0 {
@@ -170,16 +258,17 @@ func (e *GameEngine) sendToPlayerMsgs(p *Player, msgs []string) {
 	}
 }
 
-// castInsectSwarmSpell handles a player casting Insect Swarm (522) at a
-// monster: the monster is held in place (no wandering or fleeing, though it can
-// still fight back) and bitten every 5 seconds by insectSwarmMonsterTick.
-func (e *GameEngine) castInsectSwarmSpell(player *Player, spell *SpellDef, args []string, castRoll, castChance int) *CommandResult {
+// castDamagingSnareSpell handles a player casting Insect Swarm (522) or Creeping
+// Death (526) at a monster: the monster is held in place (no wandering or fleeing,
+// though it can still fight back) and hurt every 5 seconds by
+// damagingSnareMonsterTick.
+func (e *GameEngine) castDamagingSnareSpell(player *Player, ds *damagingSnare, args []string, castRoll, castChance int) *CommandResult {
 	targetName := strings.Join(args, " ")
 	if targetName == "" {
 		targetName = e.autoTargetMonsterName(player)
 	}
 	if targetName == "" {
-		return &CommandResult{Messages: []string{"Cast Insect Swarm at what?"}}
+		return &CommandResult{Messages: []string{fmt.Sprintf("Cast %s at what?", ds.spellName)}, TargetNotFound: true}
 	}
 
 	inst, def, refusal := e.findHostileMonsterInRoom(player, targetName)
@@ -196,10 +285,8 @@ func (e *GameEngine) castInsectSwarmSpell(player *Player, spell *SpellDef, args 
 	gestureRoom := fmt.Sprintf("%s gestures at %s%s.", player.DisplayNameCap(), article, name)
 
 	if def.Discorporate {
-		return &CommandResult{
-			Messages:      []string{gestureSelf, fmt.Sprintf("Insects boil up from the ground, but find nothing to bite on %s%s!", article, name)},
-			RoomBroadcast: []string{gestureRoom, fmt.Sprintf("Insects boil up from the ground, but find nothing to bite on %s%s!", article, name)},
-		}
+		line := fmt.Sprintf(ds.noBiteMsg, article+name)
+		return &CommandResult{Messages: []string{gestureSelf, line}, RoomBroadcast: []string{gestureRoom, line}}
 	}
 	if magicResisted(player, castRoll, castChance, def.MagicResist) {
 		return &CommandResult{
@@ -209,69 +296,74 @@ func (e *GameEngine) castInsectSwarmSpell(player *Player, spell *SpellDef, args 
 		}
 	}
 
-	e.monsterMgr.mu.Lock()
-	for i := range e.monsterMgr.instances {
-		if e.monsterMgr.instances[i].ID == inst.ID {
-			e.monsterMgr.instances[i].Swarmed = true
-			e.monsterMgr.instances[i].SwarmExpiry = time.Now().Add(insectSwarmDuration)
-			e.monsterMgr.instances[i].SwarmCasterName = player.FirstName
-			break
-		}
-	}
-	e.monsterMgr.mu.Unlock()
+	e.updateMonster(inst.ID, func(m *MonsterInstance) {
+		on, expiry, caster := ds.monster(m)
+		*on, *expiry, *caster = true, time.Now().Add(insectSwarmDuration), player.FirstName
+	})
 
-	swarmLine := fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s%s!", article, name)
-	return &CommandResult{
-		Messages:      []string{gestureSelf, swarmLine},
-		RoomBroadcast: []string{gestureRoom, swarmLine},
+	line := fmt.Sprintf(ds.catchMsg, article+name)
+	return &CommandResult{Messages: []string{gestureSelf, line}, RoomBroadcast: []string{gestureRoom, line}}
+}
+
+// updateMonster changes a live monster instance, found by ID, under the lock.
+func (e *GameEngine) updateMonster(id int, change func(*MonsterInstance)) {
+	e.monsterMgr.mu.Lock()
+	defer e.monsterMgr.mu.Unlock()
+	if i := e.monsterMgr.indexOfID(id); i >= 0 {
+		change(&e.monsterMgr.instances[i])
 	}
 }
 
-// insectSwarmMonsterTick bites every swarmed monster once and ends swarms that
+// damagingSnareMonsterTick hurts every monster the snare holds and ends those that
 // have run their course. Kills credit the caster, as with Tentacles.
-func (e *GameEngine) insectSwarmMonsterTick() {
+func (e *GameEngine) damagingSnareMonsterTick(ds *damagingSnare) {
 	if e.monsterMgr == nil {
 		return
 	}
-	spell := FindSpellByID(insectSwarmSpellID)
+	spell := FindSpellByID(ds.spellID)
 	if spell == nil {
 		return
 	}
 
-	type swarmKill struct {
-		inst MonsterInstance
-		def  *gameworld.MonsterDef
+	type snareKill struct {
+		inst   MonsterInstance
+		def    *gameworld.MonsterDef
+		caster string
 	}
-	var kills []swarmKill
+	var kills []snareKill
 	now := time.Now()
 
 	e.monsterMgr.mu.Lock()
 	for i := range e.monsterMgr.instances {
 		inst := &e.monsterMgr.instances[i]
-		if !inst.Swarmed {
+		on, expiry, caster := ds.monster(inst)
+		if !*on {
 			continue
 		}
 		def := e.monsters[inst.DefNumber]
 		if !inst.Alive || def == nil {
-			inst.Swarmed = false
+			*on = false
 			continue
 		}
 		name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
 		article := articleFor(name, def.Unique)
 
-		if now.After(inst.SwarmExpiry) {
-			inst.Swarmed = false
+		if now.After(*expiry) {
+			*on = false
 			if e.localRoomBroadcast != nil {
-				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("The insects swarming over %s%s drop off and die.", article, name)})
+				e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf(ds.monDrop, article+name)})
 			}
 			continue
+		}
+		if inst.Imprisoned {
+			continue // nothing reaches it inside the bubble
 		}
 
 		dmg := rand.Intn(spell.DmgMax-spell.DmgMin+1) + spell.DmgMin
 		if e.localRoomBroadcast != nil {
 			e.localRoomBroadcast(inst.RoomNumber, []string{
-				fmt.Sprintf("%s%s is being devoured by insects!", capArticle(article), name),
-				fmt.Sprintf(" %s bite to %s. [%d Damage]", damageSeverity(dmg, inst.MaxHP), randomBodyPart(def.BodyType), dmg),
+				capitalize(fmt.Sprintf(ds.monTick, article+name)),
+				fmt.Sprintf(" %s %s to %s. [%d Damage]", damageSeverity(dmg, inst.MaxHP), ds.monHit, randomBodyPart(def.BodyType), dmg),
 			})
 		}
 		inst.CurrentHP -= dmg
@@ -279,31 +371,47 @@ func (e *GameEngine) insectSwarmMonsterTick() {
 			inst.Alive = false
 			inst.CurrentHP = 0
 			inst.DeathTime = now
-			inst.Swarmed = false
-			kills = append(kills, swarmKill{inst: *inst, def: def})
+			*on = false
+			kills = append(kills, snareKill{inst: *inst, def: def, caster: *caster})
 		}
 	}
 	e.monsterMgr.mu.Unlock()
 
 	for _, k := range kills {
-		name := strings.ToLower(FormatMonsterName(k.def, e.monAdjs))
-		if e.localRoomBroadcast != nil {
-			if deathText := k.def.TextOverrides["TEXD"]; deathText != "" {
-				e.localRoomBroadcast(k.inst.RoomNumber, []string{fmt.Sprintf("A %s %s", name, deathText)})
-			} else {
-				e.localRoomBroadcast(k.inst.RoomNumber, []string{fmt.Sprintf("A %s collapses, dead!", name)})
-			}
-		}
-		if recipients := e.dotKillRecipients(k.inst.SwarmCasterName); len(recipients) > 0 {
+		e.announceMonsterDeath(&k.inst, k.def)
+		if recipients := e.dotKillRecipients(k.caster); len(recipients) > 0 {
 			e.handleMonsterDeath(recipients, &k.inst, k.def)
 		}
 	}
 }
 
+// announceMonsterDeath tells the room a monster has died of something other than
+// a blow that described its own kill.
+func (e *GameEngine) announceMonsterDeath(inst *MonsterInstance, def *gameworld.MonsterDef) {
+	if e.localRoomBroadcast == nil {
+		return
+	}
+	name := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+	capName := capArticle(articleFor(name, def.Unique)) + name
+	if deathText := def.TextOverrides["TEXD"]; deathText != "" {
+		e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("%s %s", capName, deathText)})
+	} else {
+		e.localRoomBroadcast(inst.RoomNumber, []string{fmt.Sprintf("%s collapses, dead!", capName)})
+	}
+}
+
 // entangleNoun names what is holding the player, for "You are bound by ..." lines.
 func entangleNoun(ent PlayerEntangle) string {
-	if ent.SpellID == insectSwarmSpellID {
-		return "a swarm of insects"
+	if ds := damagingSnareForSpell(ent.SpellID); ds != nil {
+		return ds.noun
+	}
+	switch ent.SpellID {
+	case plantSnareSpellID:
+		return "plant tendrils"
+	case webSpellID:
+		return "sticky webbing"
+	case wallOfThornsSpellID:
+		return "a wall of thorns"
 	}
 	return ent.SpellName
 }

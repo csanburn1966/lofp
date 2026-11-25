@@ -295,6 +295,12 @@ func (e *GameEngine) RunPreverbScripts(player *Player, room *gameworld.Room, ver
 		}
 	}
 
+	// A room script that stopped GO (CLEARVERB) or already moved the player has the
+	// last word: the door's own script must not then slip an Ephemeral past it.
+	if verb == "GO" && isPortal(def.Type) && (sc.Blocked || sc.MoveTo > 0 || sc.MoveGroupTo > 0) {
+		return sc
+	}
+
 	// Run bare top-level item actions (e.g. item 747's dice: "RANDOM dieone 1 6 0"
 	// ahead of "IFPREVERB ROLL -1") unconditionally, before any IFVERB/IFPREVERB
 	// check — same rationale as the room-level ACTION loop above. Without this the
@@ -1573,6 +1579,12 @@ func (sc *ScriptContext) evalIfItem(args []string) bool {
 	// test these independently (NEWCITY.SCR nests IFITEM 0 CLOSED around IFITEM 0
 	// LOCKED; RIDDLE.SCR's KNOCK checks CLOSED on a door DEEP2's CEVENT re-locked).
 	case "CLOSED":
+		// GO through a portal only treats CLOSED and LOCKED as shut (doGoPortal), so
+		// the doors' own Ephemeral squeeze script must too, or they'd squeeze under
+		// doors standing open.
+		if ref == -1 && sc.activeVerb == "GO" && sc.ItemDef != nil && isPortal(sc.ItemDef.Type) {
+			return state == "CLOSED" || state == "LOCKED"
+		}
 		return state == "CLOSED" || state == "LOCKED" || state == "UNLOCKED" || state == ""
 	case "LOCKED":
 		return state == "LOCKED"
@@ -1796,7 +1808,7 @@ func (sc *ScriptContext) getVar(name string) int {
 	case "RAC":
 		return sc.Player.Race
 	case "MISTFORM":
-		if sc.Player.Race == 8 {
+		if sc.Player.MistForm {
 			return 1
 		}
 		return 0
@@ -2359,6 +2371,9 @@ func (sc *ScriptContext) setVar(name string, val int) {
 		} else {
 			sc.Player.OrgRank = val
 		}
+	case "WARRANT": // the codex's crime classes, 0-9 (law.go)
+		sc.Player.Warrant = min(max(val, 0), maxWarrantLevel)
+		sc.NeedsSave = true
 	case "ALIGN":
 		sc.Player.Alignment = val
 	case "BODYPOINTS":
@@ -3192,6 +3207,9 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 		sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("Insects suddenly boil up from the ground and swarm over %s!", player.DisplayName()))
 		return
 	}
+	if sc.applyItemUtilitySpell(spell, mult) {
+		return
+	}
 	if a := afflictionForSpell(spell.ID); a != nil {
 		// Poisoned drinks, tarantula bites and wild-magic items (CHASSO.SCR, SHANTA.SCR, ICE.SCR).
 		if afflictPlayer(player, a, a.itemLevel) {
@@ -3202,6 +3220,11 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 	}
 	switch spell.Effect {
 	case "heal":
+		if spell.ID == 343 { // Regeneration restores withered limbs
+			if restored := restoreWitheredLimbs(player); restored != "" {
+				sc.Messages = append(sc.Messages, fmt.Sprintf("Life flows back into your %s!", restored))
+			}
+		}
 		healMin, healMax := spell.HealMin, spell.HealMax
 		if healMax <= healMin {
 			healMax = healMin + 1
@@ -3274,6 +3297,11 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			dmgMax = dmgMin + 1
 		}
 		amount := dmgMin + rand.Intn(dmgMax-dmgMin+1)
+		if selfMsg, roomMsg := absorbLightning(player, amount, spell.DmgType); selfMsg != "" {
+			sc.Messages = append(sc.Messages, fmt.Sprintf("The item channels %s!", spell.Name), selfMsg)
+			sc.RoomMsgs = append(sc.RoomMsgs, roomMsg)
+			return
+		}
 		player.BodyPoints -= amount
 		rawBP := player.BodyPoints
 		if player.BodyPoints < 0 {
@@ -3375,9 +3403,6 @@ func (sc *ScriptContext) applyItemSpellOnPlayer(spell *SpellDef) {
 			} else {
 				sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s! You feel immune to %s. (%s)", spell.Name, scope, minutesText(mins)))
 			}
-		case 512: // True Aim
-			sc.Messages = append(sc.Messages, fmt.Sprintf("The item casts %s. Your aim feels supernaturally true.", spell.Name))
-			sc.RoomMsgs = append(sc.RoomMsgs, fmt.Sprintf("%s's eyes gleam with unnatural focus.", player.FirstName))
 		case 513, 514, 515: // Agility I/II/III
 			bonus, mins, applied, ok := applyAgilityBuff(player, spell, mult)
 			if !ok {

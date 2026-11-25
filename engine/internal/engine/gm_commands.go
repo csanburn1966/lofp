@@ -967,6 +967,7 @@ func (e *GameEngine) gmHeal(ctx context.Context, player *Player, args []string) 
 	target.BodyPoints = target.MaxBodyPoints
 	target.Fatigue = target.MaxFatigue
 	target.Mana = target.MaxMana
+	target.WitheredLimbs = nil
 	target.Psi = target.MaxPsi
 	target.Wounds = nil
 	target.Bleeding = false

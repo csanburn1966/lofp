@@ -99,6 +99,11 @@ func (e *GameEngine) regenTick() {
 			changed = true
 		}
 
+		// Ride the Lightning draws the storm's lightning down (druid_spells.go).
+		if e.stormStrikesRider(p) {
+			changed = true
+		}
+
 		// PSI regen
 		if p.Psi < p.MaxPsi {
 			base := ceilDiv(p.Willpower, 10)

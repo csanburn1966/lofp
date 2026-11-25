@@ -537,6 +537,7 @@ func (e *GameEngine) moveGroupToRoom(ctx context.Context, srcRoom, destRoom int)
 	for _, p := range e.sessions.OnlinePlayers() {
 		if p.RoomNumber == srcRoom && !p.Dead {
 			p.RoomNumber = destRoom
+			p.breakGuard()
 			p.Submitting = false
 			e.disengageCombat(p)
 			e.SavePlayer(ctx, p)
@@ -639,6 +640,9 @@ func followBlockedReason(p *Player) string {
 	if p.Stunned {
 		return "stunned"
 	}
+	if heldInPlaceMessage(p) != "" {
+		return "held in place"
+	}
 	return ""
 }
 
@@ -676,14 +680,38 @@ func (e *GameEngine) moveGroupFollowers(ctx context.Context, leader *Player, ori
 				}
 			}
 			p.RoomNumber = destNum
+			p.breakGuard()
 			p.Submitting = false
 			e.disengageCombat(p)
 			e.SavePlayer(ctx, p)
+			if !bypassFollowCheck { // not a teleport: they walked
+				if line := witheredLegDelay(p); line != "" && e.sendToPlayer != nil {
+					e.sendToPlayer(p.FirstName, []string{line})
+				}
+			}
 			moved = append(moved, p)
 			break
 		}
 	}
 	return moved
+}
+
+// leaveBehindAtClosedDoor drops from leader's group the members in originalRoom
+// who can't get past a closed door as the leader just did (see SlipsPastDoors;
+// nobody can if it's sealed), so moveGroupFollowers won't bring them along.
+func (e *GameEngine) leaveBehindAtClosedDoor(leader *Player, originalRoom int, door string, sealed bool) {
+	if e.sessions == nil {
+		return
+	}
+	for _, p := range e.sessions.OnlinePlayers() {
+		if p.Following != leader.FirstName || p.RoomNumber != originalRoom || (!sealed && p.SlipsPastDoors()) {
+			continue
+		}
+		e.removeFromGroup(p)
+		if e.sendToPlayer != nil {
+			e.sendToPlayer(p.FirstName, []string{fmt.Sprintf("You can't follow %s through the closed %s! You are no longer following them.", leader.DisplayName(), door)})
+		}
+	}
 }
 
 // disbandGroup breaks up leader's group: every online member's Following is
@@ -1422,14 +1450,14 @@ func (e *GameEngine) HandlePlayerDisconnect(player *Player) {
 // Returns (blocked, playerMsg, oldRoomMsgs): if blocked the caller should return early;
 // if not blocked and oldRoomMsgs is non-empty, the bypass message should be added to OldRoomMsg.
 func (e *GameEngine) checkPortalGuard(mover *Player, portalArch int) (blocked bool, playerMsgs []string, oldRoomMsgs []string) {
-	if e.sessions == nil {
+	if e.sessions == nil || mover.TooInsubstantialToStop() {
 		return
 	}
 	for _, g := range e.sessions.OnlinePlayers() {
 		if g.FirstName == mover.FirstName || g.RoomNumber != mover.RoomNumber || g.Dead {
 			continue
 		}
-		if !containsInt(g.GuardPortals, portalArch) {
+		if !g.guardsPortal(portalArch) {
 			continue
 		}
 
@@ -1480,7 +1508,7 @@ func (e *GameEngine) checkItemGuard(mover *Player, itemArch int, itemName string
 		if g.FirstName == mover.FirstName || g.RoomNumber != mover.RoomNumber || g.Dead {
 			continue
 		}
-		if !containsInt(g.GuardItems, itemArch) {
+		if !g.guardsItem(itemArch) {
 			continue
 		}
 

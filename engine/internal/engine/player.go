@@ -397,6 +397,26 @@ type Player struct {
 	RepelPlantsExpiry        time.Time `bson:"repelPlantsExpiry,omitempty" json:"repelPlantsExpiry,omitempty"`
 	RepelPlantsAndWebsExpiry time.Time `bson:"repelPlantsAndWebsExpiry,omitempty" json:"repelPlantsAndWebsExpiry,omitempty"`
 
+	// Spell effects in druid_spells.go and wither.go. Ride the Lightning (532): immune
+	// to electricity, which becomes mana. Free Action (528): can't be snared. Claws of
+	// the Elder Wolf (534): claws strike creatures only magic weapons can hurt. Form
+	// Lock (535): can't change form. True Aim (512): +20 ranks of missile skill.
+	RideLightningExpiry time.Time `bson:"rideLightningExpiry,omitempty" json:"rideLightningExpiry,omitempty"`
+	FreeActionExpiry    time.Time `bson:"freeActionExpiry,omitempty" json:"freeActionExpiry,omitempty"`
+	ElderWolfExpiry     time.Time `bson:"elderWolfExpiry,omitempty" json:"elderWolfExpiry,omitempty"`
+	FormLockExpiry      time.Time `bson:"formLockExpiry,omitempty" json:"formLockExpiry,omitempty"`
+	TrueAimExpiry       time.Time `bson:"trueAimExpiry,omitempty" json:"trueAimExpiry,omitempty"`
+	// WitheredLimbs lists the limbs withered by Wither Limb (351), e.g. "left arm".
+	// They stay withered until Regeneration (343).
+	WitheredLimbs []string `bson:"witheredLimbs,omitempty" json:"witheredLimbs,omitempty"`
+	// Effects monsters' spells have on players (monster_spells.go). FearExpiry: Fear
+	// (200), a penalty to hit. CharmExpiry/CharmMonsterID: Charm (201), can't attack
+	// that monster, or any if it's 0 (a script's charm). SleepExpiry: Slumber (216-218), unconscious until struck or it passes.
+	FearExpiry     time.Time `bson:"fearExpiry,omitempty" json:"fearExpiry,omitempty"`
+	CharmExpiry    time.Time `bson:"-" json:"-"`
+	CharmMonsterID int       `bson:"-" json:"-"`
+	SleepExpiry    time.Time `bson:"-" json:"-"`
+
 	// Entangles tracks active movement-restricting spells (Plant Snare, and any
 	// future player-targeting Web/Tentacles) so Freedom (505) can remove one at
 	// random. Distinct from ImmobilizedExpiry (psi Immobilize and Imprisonment
@@ -465,6 +485,7 @@ type Player struct {
 	LoginNotices []string `bson:"-" json:"-"`
 	GuardPortals []int    `bson:"-" json:"-"` // portal item archetypes being guarded (CM level 3+)
 	GuardItems   []int    `bson:"-" json:"-"` // item archetypes on the ground being guarded
+	GuardRoom    int      `bson:"-" json:"-"` // room the guard was taken up in; it doesn't hold anywhere else (guard.go)
 
 	// Group system (transient)
 	Following     string   `bson:"-" json:"-"` // who this player is following
@@ -536,6 +557,13 @@ type Player struct {
 	OrgMemberships  map[int]int `bson:"orgMemberships,omitempty" json:"orgMemberships,omitempty"`
 	Alignment    int `bson:"alignment,omitempty" json:"alignment,omitempty"`       // ALIGN
 	Warrant      int `bson:"warrant,omitempty" json:"warrant,omitempty"`           // warrant level 0-9
+	// Jailed: in the Lockup until JailFine (copper) is paid (law.go).
+	// ArrestGraceUntil: a lawkeeper has ARRESTed them and they have until then to
+	// SUBMIT before the lawkeeps come for them.
+	Jailed           bool      `bson:"jailed,omitempty" json:"jailed,omitempty"`
+	JailFine         int       `bson:"jailFine,omitempty" json:"jailFine,omitempty"`
+	JailUntil        time.Time `bson:"jailUntil,omitempty" json:"jailUntil,omitempty"` // the sentence's end
+	ArrestGraceUntil time.Time `bson:"-" json:"-"`
 	BuildPoints  int `bson:"buildPoints,omitempty" json:"buildPoints,omitempty"`
 
 	// Skills

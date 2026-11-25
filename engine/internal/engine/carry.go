@@ -138,6 +138,20 @@ func (e *GameEngine) breakCarryAsCarrier(ctx context.Context, player *Player) {
 	}
 }
 
+// carriedPlayer returns the online player being carried by player and in roomNum,
+// or nil.
+func (e *GameEngine) carriedPlayer(player *Player, roomNum int) *Player {
+	if player.Carrying == "" || e.sessions == nil {
+		return nil
+	}
+	for _, p := range e.sessions.OnlinePlayers() {
+		if p.FirstName == player.Carrying && p.RoomNumber == roomNum {
+			return p
+		}
+	}
+	return nil
+}
+
 // breakCarryAsCarried ends the carry relationship when the carried player is
 // the one whose state/action broke it (un-submitting, or acting on their
 // own), notifying the carrier.

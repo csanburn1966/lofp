@@ -92,7 +92,7 @@ func psiRankHasBenefit(disc *PsiDiscipline, newRank int) bool {
 func resolveKnownPsi(player *Player, query string) *PsiDiscipline {
 	var disc *PsiDiscipline
 	if n, err := strconv.Atoi(query); err == nil {
-		disc = FindPsiByID(n)
+		disc = FindPsiByNumber(n)
 	} else {
 		disc = FindPsiByName(query)
 	}
@@ -170,7 +170,7 @@ func (e *GameEngine) gmPsiMastery(ctx context.Context, target *Player, args []st
 	query := strings.Join(args[2:len(args)-1], " ")
 	var disc *PsiDiscipline
 	if id, convErr := strconv.Atoi(query); convErr == nil {
-		disc = FindPsiByID(id)
+		disc = FindPsiByNumber(id)
 	} else {
 		disc = FindPsiByName(query)
 	}
@@ -224,10 +224,11 @@ func psiMasteryListLines(target *Player) []string {
 	lines := []string{fmt.Sprintf("Psionic mastery for %s:", target.FullName())}
 	for _, id := range ids {
 		name, maxRank := fmt.Sprintf("[unknown #%d]", id), 0
+		num := id
 		if disc := FindPsiByID(id); disc != nil {
-			name, maxRank = disc.Name, psiMasteryMaxRank(disc)
+			name, maxRank, num = disc.Name, psiMasteryMaxRank(disc), psiDocNumber(disc)
 		}
-		lines = append(lines, fmt.Sprintf("  #%-4d %-35s rank %d / %d", id, name, target.PsiMastery[id], maxRank))
+		lines = append(lines, fmt.Sprintf("  #%-4d %-35s rank %d / %d", num, name, target.PsiMastery[id], maxRank))
 	}
 	return lines
 }

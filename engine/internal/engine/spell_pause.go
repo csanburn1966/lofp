@@ -102,5 +102,12 @@ func (p *Player) spellTimers() []*time.Time {
 		&p.ClawGrowthExpiry,
 		&p.RepelPlantsExpiry,
 		&p.RepelPlantsAndWebsExpiry,
+		&p.RideLightningExpiry,
+		&p.FreeActionExpiry,
+		&p.ElderWolfExpiry,
+		&p.FormLockExpiry,
+		&p.TrueAimExpiry,
+		&p.FearExpiry,
+		&p.JailUntil, // a sentence is served in the Realms, not by logging off
 	}
 }

@@ -906,8 +906,9 @@ func (e *GameEngine) doRoomRecall(player *Player) *CommandResult {
 // Requires Combat Maneuvering (skill 10): level 2+ for players, level 3+ for portals, any level for items.
 // GUARD with no args lists what you are guarding. GUARD <target> only ever adds
 // a guard — guarding something you already guard just says so; UNGUARD (doUnguard)
-// is the only way to stop.
+// or leaving the room (guard.go) is the only way to stop.
 func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
+	player.breakStaleGuard()
 	cmSkill := player.Skills[10]
 
 	if len(args) == 0 {
@@ -935,10 +936,11 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 			return &CommandResult{Messages: []string{"You need Combat Maneuvering rank 2 to guard another player."}}
 		}
 		// Can't guard someone who is themselves on guard duty
-		if len(found.GuardTargets) > 0 || len(found.GuardPortals) > 0 || len(found.GuardItems) > 0 {
+		if found.onGuard() {
 			return &CommandResult{Messages: []string{fmt.Sprintf("%s is on guard duty and cannot be guarded.", found.FirstName)}}
 		}
 		player.GuardTargets = append(player.GuardTargets, found.FirstName)
+		player.GuardRoom = player.RoomNumber
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You position yourself to guard %s.", found.FirstName)},
 			RoomBroadcast: []string{fmt.Sprintf("%s moves to guard %s.", player.FirstName, found.FirstName)},
@@ -970,6 +972,7 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 				return &CommandResult{Messages: []string{"You need Combat Maneuvering rank 3 to guard a portal."}}
 			}
 			player.GuardPortals = append(player.GuardPortals, arch)
+			player.GuardRoom = player.RoomNumber
 			return &CommandResult{
 				Messages:      []string{fmt.Sprintf("You take a guarding stance before %s.", portalName)},
 				RoomBroadcast: []string{fmt.Sprintf("%s takes a guarding stance before %s.", player.FirstName, portalName)},
@@ -986,6 +989,7 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 			return &CommandResult{Messages: []string{fmt.Sprintf("You are already guarding %s.", itemName)}}
 		}
 		player.GuardItems = append(player.GuardItems, arch)
+		player.GuardRoom = player.RoomNumber
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You stand watch over %s.", itemName)},
 			RoomBroadcast: []string{fmt.Sprintf("%s stands watch over %s.", player.FirstName, itemName)},
@@ -995,17 +999,15 @@ func (e *GameEngine) doGuard(player *Player, args []string) *CommandResult {
 	return &CommandResult{Messages: []string{"You don't see that here."}}
 }
 
-// doUnguard handles UNGUARD — the only way to stop guarding. UNGUARD <target>
+// doUnguard handles UNGUARD — the only way to stop guarding short of leaving the
+// room. UNGUARD <target>
 // drops one guarded player, portal or item; bare UNGUARD drops them all.
 func (e *GameEngine) doUnguard(player *Player, args []string) *CommandResult {
-	hasGuards := len(player.GuardTargets) > 0 || len(player.GuardPortals) > 0 || len(player.GuardItems) > 0
-	if !hasGuards {
+	if !player.onGuard() {
 		return &CommandResult{Messages: []string{"You are not guarding anyone or anything."}}
 	}
 	if len(args) == 0 {
-		player.GuardTargets = nil
-		player.GuardPortals = nil
-		player.GuardItems = nil
+		player.breakGuard()
 		return &CommandResult{
 			Messages:      []string{"You relax your guard."},
 			RoomBroadcast: []string{fmt.Sprintf("%s relaxes their guard.", player.FirstName)},
@@ -1117,6 +1119,9 @@ func (e *GameEngine) doChant(ctx context.Context, player *Player, args []string)
 	}
 	if player.Skills[23] < 1 && !player.IsGM {
 		return &CommandResult{Messages: []string{"You lack the training in Spellcraft to invoke a scroll's magic."}}
+	}
+	if e.maintainsMaelstrom(player) {
+		return &CommandResult{Messages: []string{maintainingMagicMsg}}
 	}
 	target := strings.ToLower(strings.Join(args, " "))
 	target = strings.TrimPrefix(target, "my ")

@@ -202,6 +202,17 @@ func (e *GameEngine) castSummonSpectralWarrior(player *Player) *CommandResult {
 	return e.spawnSummonedCreature(player, 130, false, "Ghostly mist swirls and coalesces into")
 }
 
+// castWightAnimation handles spell 336 — Wight Animation. MAGIC.TXT: "necromancers of
+// 17th rank can SUMMON a greater wight [MNUMBER 53], using wight dust skinned from a
+// lesser." Requires wight dust (item 512 with adjective 547), consumed at PREPARE time.
+func (e *GameEngine) castWightAnimation(player *Player) *CommandResult {
+	if player.SummonedCreatureID != 0 {
+		return &CommandResult{Messages: []string{"You already have a summoned creature. Use COMMAND BEGONE to dismiss it first."}}
+	}
+	player.PreparedSpellReagentArch = 0
+	return e.spawnSummonedCreature(player, 53, false, "Grave dust swirls upward and knits itself into")
+}
+
 // castControlUndead handles Control Undead I (308), II (309) and III (310). Rather than summoning
 // a new creature, it dominates an existing undead creature in the room for 40 minutes,
 // after which control lapses and the creature turns hostile again (see monsterTick).
@@ -985,6 +996,34 @@ func (e *GameEngine) dismissSummonedCreature(player *Player) {
 		}
 		e.localRoomBroadcast(roomNum, []string{msg})
 	}
+}
+
+// leaveCreaturesBehind makes the summoned and controlled creatures in roomNum stop
+// following and guarding player, who has gone past a closed door they can't. They
+// stay under their controller's command. Returns the messages to show player.
+func (e *GameEngine) leaveCreaturesBehind(player *Player, roomNum int, door string) (msgs []string) {
+	if e.monsterMgr == nil {
+		return nil
+	}
+	e.monsterMgr.mu.Lock()
+	defer e.monsterMgr.mu.Unlock()
+	for i := range e.monsterMgr.instances {
+		inst := &e.monsterMgr.instances[i]
+		if !inst.Alive || !inst.IsSummoned || inst.RoomNumber != roomNum ||
+			(inst.FollowTarget != player.FirstName && !containsString(inst.GuardingPlayers, player.FirstName)) {
+			continue
+		}
+		if inst.FollowTarget == player.FirstName {
+			inst.FollowTarget = ""
+		}
+		// Off guard duty too, or monsterTick sets it following again.
+		inst.GuardingPlayers = removeFromStringSlice(append([]string(nil), inst.GuardingPlayers...), player.FirstName)
+		if def := e.monsters[inst.DefNumber]; def != nil {
+			cname := strings.ToLower(FormatMonsterName(def, e.monAdjs))
+			msgs = append(msgs, fmt.Sprintf("%s%s can't follow you through the closed %s and is left behind.", capArticle(articleFor(cname, def.Unique)), cname, door))
+		}
+	}
+	return msgs
 }
 
 // clearPlayerFromGuards removes playerName from all summoned creatures' GuardingPlayers lists.

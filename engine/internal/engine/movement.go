@@ -41,11 +41,8 @@ func npcStyleMovementText(player *Player, dirName string) (exitMsg, entryMsg str
 }
 
 func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *CommandResult {
-	if player.IsImmobilized() {
-		return &CommandResult{Messages: []string{"You are immobilized and cannot move!"}}
-	}
-	if len(player.Entangles) > 0 {
-		return &CommandResult{Messages: []string{fmt.Sprintf("You are bound by %s and cannot move!", entangleNoun(player.Entangles[0]))}}
+	if msg := heldInPlaceMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
 	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
@@ -97,9 +94,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	player.RoomNumber = destNum
 	player.Submitting = false // moving clears submit state
 	e.disengageCombat(player) // moving clears any non-melee combat lock
-	player.GuardTargets = nil // guard is room-specific
-	player.GuardPortals = nil
-	player.GuardItems = nil
+	player.breakGuard()       // guard is room-specific
 
 	// Moving away from leader breaks follow
 	if player.Following != "" {
@@ -124,7 +119,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 	// actually been moved there, making it look like they didn't follow.
 	// Walking off on your own ends any STALK; anyone stalking you rolls to keep up.
 	clearStalk(player)
-	e.movePlayerStalkers(ctx, player, originalRoom, destNum)
+	e.movePlayerStalkers(ctx, player, originalRoom, destNum, nil)
 	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
@@ -151,6 +146,7 @@ func (e *GameEngine) doMove(ctx context.Context, player *Player, dir string) *Co
 		for _, p := range e.sessions.OnlinePlayers() {
 			if p.FirstName == player.Carrying && p.RoomNumber == originalRoom {
 				p.RoomNumber = destNum
+				p.breakGuard()
 				e.SavePlayer(ctx, p)
 				if e.sendToPlayer != nil {
 					carriedLook := e.doLook(p)
@@ -778,6 +774,9 @@ func (e *GameEngine) runGoItemScripts(ctx context.Context, player *Player, room 
 // verb is the command that took the portal ("GO" or "CLIMB"), for the
 // movement echoes and the followers' "You follow" line.
 func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef, verb string) *CommandResult {
+	if msg := heldInPlaceMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
@@ -785,36 +784,34 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	if msg := e.meleeBlockMessage(player); msg != "" {
 		return &CommandResult{Messages: []string{msg}}
 	}
-	// Check if portal is closed — Mist Form and Slime Form seep through the cracks
-	// of a closed door/gate/etc. without opening it, unless the portal is SEALED
-	// (GMSCRIPT.DOC: "may not be seeped through if a player is in mist form").
-	state := strings.ToUpper(ri.State)
-	seepsThrough := (player.MistForm || player.SlimeForm) && !containsFlag(itemDef.Flags, "SEALED")
-	if (state == "CLOSED" || state == "LOCKED") && !seepsThrough {
-		portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
-		return &CommandResult{Messages: []string{fmt.Sprintf("The %s is closed.", e.getItemNounName(itemDef))}, RoomBroadcast: []string{fmt.Sprintf("%s bumps into %s.", player.DisplayName(), portalName)}}
-	}
-	seepMsg := ""
-	if (state == "CLOSED" || state == "LOCKED") && seepsThrough {
-		portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
-		seepMsg = fmt.Sprintf("You seep through the cracks around %s.", portalName)
-	}
-
 	// Capture room before running scripts — MOVE in scripts can change player.RoomNumber directly.
 	originalRoom := player.RoomNumber
 	defer revealForOpenMove(player, originalRoom)()
 
-	// Run IFPREVERB GO scripts (can CLEARVERB to block)
+	// Anyone guarding this portal (Combat Maneuvering level 3+) gets to stop the
+	// player before the scripts below act: a script MOVE takes the player out of
+	// the room, and by then it's too late to stop them. doClimb has already checked.
+	var guardMsgs, guardRoomMsgs []string
+	if verb != "CLIMB" {
+		var blocked bool
+		if blocked, guardMsgs, guardRoomMsgs = e.checkPortalGuard(player, ri.Archetype); blocked {
+			return &CommandResult{Messages: guardMsgs, RoomBroadcast: guardRoomMsgs}
+		}
+	}
+
+	// Run IFPREVERB GO scripts (can CLEARVERB to block). These run before the
+	// closed check below: scripts open the door for the player (STEEL.SCR room
+	// 3502's automatic door) or handle a closed one themselves (ITEM1.SCR's doors
+	// let Ephemerals squeeze under them).
+	wasClosed := strings.EqualFold(ri.State, "CLOSED") || strings.EqualFold(ri.State, "LOCKED")
+	sealed := containsFlag(itemDef.Flags, "SEALED")
 	sc := e.RunPreverbScripts(player, room, "GO", ri, itemDef)
 	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything after
 	// the delay is lost — regardless of which branch below is taken.
 	if len(sc.DeferredSegments) > 0 {
 		e.scheduleScriptSegments(player, sc.DeferredSegments)
 	}
-	result := &CommandResult{}
-	if seepMsg != "" {
-		result.Messages = append(result.Messages, seepMsg)
-	}
+	result := &CommandResult{Messages: guardMsgs, RoomBroadcast: guardRoomMsgs}
 	if len(sc.Messages) > 0 {
 		result.Messages = append(result.Messages, sc.Messages...)
 	}
@@ -825,8 +822,10 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		// sc.RoomMsgs here are pre-MOVEGROUP echoes (e.g. "%N goes through the hole")
 		// describing the departure — they belong in the room being left, not wherever
 		// the player ends up after moveGroupToRoom updates player.RoomNumber below.
-		if len(sc.RoomMsgs) > 0 {
+		result.RoomBroadcast = nil
+		if len(guardRoomMsgs)+len(sc.RoomMsgs) > 0 {
 			result.OldRoom = originalRoom
+			result.OldRoomMsg = append(result.OldRoomMsg, guardRoomMsgs...)
 			result.OldRoomMsg = append(result.OldRoomMsg, sc.RoomMsgs...)
 		}
 		if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
@@ -849,6 +848,26 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		return result
 	}
 
+	// Check if portal is closed — Mist Form and Slime Form seep through the cracks
+	// of a closed door/gate/etc. without opening it, unless the portal is SEALED
+	// (GMSCRIPT.DOC: "may not be seeped through if a player is in mist form").
+	// A script MOVE has already taken the player past it.
+	state := strings.ToUpper(ri.State)
+	seeped := false
+	if (state == "CLOSED" || state == "LOCKED") && sc.MoveTo == 0 {
+		portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
+		if (!player.MistForm && !player.SlimeForm) || sealed {
+			if sc.NeedsSave {
+				e.SavePlayer(ctx, player)
+			}
+			result.Messages = append(result.Messages, fmt.Sprintf("The %s is closed.", e.getItemNounName(itemDef)))
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s bumps into %s.", player.DisplayName(), portalName))
+			return result
+		}
+		seeped = true
+		result.Messages = append(result.Messages, fmt.Sprintf("You seep through the cracks around %s.", portalName))
+	}
+
 	// Script MOVE overrides destination
 	destNum := ri.Val2
 	if sc.MoveTo > 0 {
@@ -869,21 +888,18 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		return result
 	}
 
-	// Check if any player is guarding this portal (Combat Maneuvering level 3+)
-	if guardBlocked, guardPlayerMsgs, guardOldRoomMsgs := e.checkPortalGuard(player, ri.Archetype); guardBlocked {
-		result.Messages = append(result.Messages, guardPlayerMsgs...)
-		result.RoomBroadcast = append(result.RoomBroadcast, guardOldRoomMsgs...)
-		return result
-	} else if len(guardOldRoomMsgs) > 0 {
-		// Bypass succeeded — show roll result to mover before the room description
-		result.Messages = append(result.Messages, guardPlayerMsgs...)
-		result.OldRoomMsg = append(result.OldRoomMsg, guardOldRoomMsgs...)
+	// RoomBroadcast goes to the room the player ends up in, so what bystanders saw
+	// before the move (slipping past a guard, the script's echoes) belongs in
+	// OldRoomMsg. After a script MOVE, sc.RoomMsgs already describes the arrival.
+	before := len(guardRoomMsgs)
+	if sc.MoveTo == 0 {
+		before += len(sc.RoomMsgs)
 	}
+	result.OldRoomMsg = append(result.OldRoomMsg, result.RoomBroadcast[:before]...)
+	result.RoomBroadcast = append([]string(nil), result.RoomBroadcast[before:]...)
 
 	portalName := e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend)
-	player.GuardTargets = nil // guard is room-specific; clear on movement
-	player.GuardPortals = nil
-	player.GuardItems = nil
+	player.breakGuard() // guard is room-specific; clear on movement
 	player.RoomNumber = destNum
 	e.SavePlayer(ctx, player)
 
@@ -907,7 +923,20 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	// (see doMove for why — otherwise the group looks like it didn't follow).
 	// Walking off on your own ends any STALK; anyone stalking you rolls to keep up.
 	clearStalk(player)
-	e.movePlayerStalkers(ctx, player, originalRoom, destNum)
+	// Past a closed door (seeping, or a script MOVE such as the Ephemerals'
+	// squeeze), only those who can slip through it too keep up.
+	pastClosed := seeped || (wasClosed && sc.MoveTo > 0)
+	var canFollow func(*Player) bool
+	if pastClosed {
+		e.leaveBehindAtClosedDoor(player, originalRoom, e.getItemNounName(itemDef), sealed)
+		canFollow = func(p *Player) bool { return !sealed && p.SlipsPastDoors() }
+		if carried := e.carriedPlayer(player, originalRoom); carried != nil && !canFollow(carried) {
+			e.removeFromGroup(carried)
+			e.breakCarryAsCarrier(ctx, player)
+		}
+		result.Messages = append(result.Messages, e.leaveCreaturesBehind(player, originalRoom, e.getItemNounName(itemDef))...)
+	}
+	e.movePlayerStalkers(ctx, player, originalRoom, destNum, canFollow)
 	movedFollowers := e.moveGroupFollowers(ctx, player, originalRoom, destNum, false)
 	var summonOldMsgs, summonRoomMsgs []string
 	if e.monsterMgr != nil {
@@ -933,6 +962,7 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 		for _, p := range e.sessions.OnlinePlayers() {
 			if p.FirstName == player.Carrying && p.RoomNumber == originalRoom {
 				p.RoomNumber = destNum
+				p.breakGuard()
 				e.SavePlayer(ctx, p)
 				if e.sendToPlayer != nil {
 					carriedLook := e.doLook(p)
@@ -955,7 +985,16 @@ func (e *GameEngine) doGoPortal(ctx context.Context, player *Player, room *gamew
 	if verb == "CLIMB" {
 		portalGoes, portalHow = "climbs "+portalName, "climbing "+portalName
 	}
-	if !player.IsConcealed() && len(movedFollowers) > 0 {
+	if pastClosed && len(sc.PreMoveMsgs) > 0 {
+		// The script described getting past the closed door; "goes through" would be wrong.
+		result.OldRoomMsg = append(result.OldRoomMsg, sc.PreMoveMsgs...)
+		if len(movedFollowers) > 0 && !player.IsConcealed() {
+			result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group follows through %s.", player.DisplayNameCap(), portalName))
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
+		} else if len(sc.RoomMsgs) == 0 && !player.IsConcealed() {
+			result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+		}
+	} else if !player.IsConcealed() && len(movedFollowers) > 0 {
 		result.OldRoomMsg = append(result.OldRoomMsg, fmt.Sprintf("%s's group %s.", player.DisplayNameCap(), portalGoes))
 		result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s's group arrives.", player.DisplayNameCap()))
 	} else if !player.IsConcealed() {
@@ -993,6 +1032,9 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 		}
 		return &CommandResult{Messages: []string{fmt.Sprintf("You can't climb while %s! Try STANDing first.", posName)}}
 	}
+	if msg := heldInPlaceMessage(player); msg != "" {
+		return &CommandResult{Messages: []string{msg}}
+	}
 	if player.RoundTimeExpiry.After(time.Now()) {
 		remaining := int(player.RoundTimeExpiry.Sub(time.Now()).Seconds()) + 1
 		return &CommandResult{Messages: []string{fmt.Sprintf("[Wait %d seconds...]", remaining)}}
@@ -1020,82 +1062,109 @@ func (e *GameEngine) doClimb(ctx context.Context, player *Player, args []string)
 				continue
 			}
 
-			// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
-			// immediately, so reading it after script execution would give the new room).
+			if !isPortal(itemDef.Type) {
+				return e.climbItem(ctx, player, room, &room.Items[i], itemDef)
+			}
+			// Anyone guarding the portal gets to stop the climber, before its CLIMB
+			// scripts act (a script MOVE takes them straight over). A guard slipped
+			// past is announced in the room the attempt was made in.
 			origRoom := player.RoomNumber
-			// Run IFVERB CLIMB scripts first (some rooms use IFVERB instead of IFPREVERB)
-			sc := e.RunVerbScripts(player, room, "CLIMB", &room.Items[i], itemDef)
-			// If IFVERB CLIMB produced nothing, try IFPREVERB CLIMB
-			if sc.MoveTo == 0 && !sc.Blocked && len(sc.Messages) == 0 && len(sc.RoomMsgs) == 0 {
-				sc = e.RunPreverbScripts(player, room, "CLIMB", &room.Items[i], itemDef)
+			blocked, guardMsgs, guardRoomMsgs := e.checkPortalGuard(player, ri.Archetype)
+			if blocked {
+				return &CommandResult{Messages: guardMsgs, RoomBroadcast: guardRoomMsgs}
 			}
-			// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
-			// after the delay is lost.
-			if len(sc.DeferredSegments) > 0 {
-				e.scheduleScriptSegments(player, sc.DeferredSegments)
+			result := e.climbItem(ctx, player, room, &room.Items[i], itemDef)
+			if len(guardMsgs) > 0 {
+				result.Messages = append(append([]string(nil), guardMsgs...), result.Messages...)
+				if player.RoomNumber != origRoom {
+					result.OldRoom = origRoom
+					result.OldRoomMsg = append(append([]string(nil), guardRoomMsgs...), result.OldRoomMsg...)
+				} else {
+					result.RoomBroadcast = append(append([]string(nil), guardRoomMsgs...), result.RoomBroadcast...)
+				}
 			}
-
-			// If climb scripts handled it, apply the result
-			if sc.MoveTo > 0 || sc.Blocked || sc.MoveGroupTo > 0 || len(sc.Messages) > 0 || len(sc.RoomMsgs) > 0 {
-				result := &CommandResult{}
-				result.Messages = append(result.Messages, sc.Messages...)
-				result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
-				result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
-
-				if sc.MoveGroupTo > 0 {
-					// MOVEGROUP: move entire group to destination. Post-MOVEGROUP echoes
-					// were already suppressed in doEcho via moveGroupFired, so sc.Messages
-					// only contains pre-success messages. Append round time then move.
-					if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
-						result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
-					}
-					e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
-					return result
-				}
-
-				if sc.MoveTo > 0 {
-					dest := e.rooms[sc.MoveTo]
-					if dest != nil {
-						player.RoomNumber = sc.MoveTo
-						e.SavePlayer(ctx, player)
-						lookResult := e.doLook(player)
-						result.Messages = append(result.Messages, lookResult.Messages...)
-						result.RoomName = lookResult.RoomName
-						result.RoomDesc = lookResult.RoomDesc
-						result.Exits = lookResult.Exits
-						result.Items = lookResult.Items
-						result.OldRoom = origRoom
-						if len(sc.PreMoveMsgs) > 0 {
-							result.OldRoomMsg = sc.PreMoveMsgs
-						} else {
-							// Name what they climbed, as doGoPortal's CLIMB does ("X climbs a rope.").
-							result.OldRoomMsg = []string{fmt.Sprintf("%s climbs %s.", player.DisplayNameCap(),
-								e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))}
-						}
-						result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
-						e.applyEntryScripts(ctx, player, dest, result)
-					}
-				} else if sc.NeedsSave {
-					e.SavePlayer(ctx, player)
-				}
-
-				if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
-					result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
-				}
-				if len(result.Messages) == 0 {
-					result.Messages = []string{"You can't climb that."}
-				}
-				return result
-			}
-
-			// No CLIMB scripts fired — fall back to portal behavior (uses Val2)
-			if isPortal(itemDef.Type) {
-				return e.doGoPortal(ctx, player, room, &room.Items[i], itemDef, "CLIMB")
-			}
-
-			return &CommandResult{Messages: []string{"You can't climb that."}}
+			return result
 		}
 	}
 
 	return &CommandResult{Messages: []string{"You don't see that here."}}
+}
+
+// climbItem climbs a room item doClimb has matched: its CLIMB scripts if any act,
+// else through it if it's a portal.
+func (e *GameEngine) climbItem(ctx context.Context, player *Player, room *gameworld.Room, ri *gameworld.RoomItem, itemDef *gameworld.ItemDef) *CommandResult {
+	// Capture before scripts may MOVE the player (doMove updates player.RoomNumber
+	// immediately, so reading it after script execution would give the new room).
+	origRoom := player.RoomNumber
+	// Run IFVERB CLIMB scripts first (some rooms use IFVERB instead of IFPREVERB)
+	sc := e.RunVerbScripts(player, room, "CLIMB", ri, itemDef)
+	// If IFVERB CLIMB produced nothing, try IFPREVERB CLIMB
+	if sc.MoveTo == 0 && !sc.Blocked && len(sc.Messages) == 0 && len(sc.RoomMsgs) == 0 {
+		sc = e.RunPreverbScripts(player, room, "CLIMB", ri, itemDef)
+	}
+	// PLREVENT/CONTPLREVENT-deferred actions must be scheduled, or everything
+	// after the delay is lost.
+	if len(sc.DeferredSegments) > 0 {
+		e.scheduleScriptSegments(player, sc.DeferredSegments)
+	}
+
+	// If climb scripts handled it, apply the result
+	if sc.MoveTo > 0 || sc.Blocked || sc.MoveGroupTo > 0 || len(sc.Messages) > 0 || len(sc.RoomMsgs) > 0 {
+		result := &CommandResult{}
+		result.Messages = append(result.Messages, sc.Messages...)
+		result.RoomBroadcast = append(result.RoomBroadcast, sc.RoomMsgs...)
+		result.GMBroadcast = append(result.GMBroadcast, sc.GMMsgs...)
+
+		if sc.MoveGroupTo > 0 {
+			// MOVEGROUP: move entire group to destination. Post-MOVEGROUP echoes
+			// were already suppressed in doEcho via moveGroupFired, so sc.Messages
+			// only contains pre-success messages. Append round time then move.
+			if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
+				result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
+			}
+			e.moveGroupToRoom(ctx, player.RoomNumber, sc.MoveGroupTo)
+			return result
+		}
+
+		if sc.MoveTo > 0 {
+			dest := e.rooms[sc.MoveTo]
+			if dest != nil {
+				player.RoomNumber = sc.MoveTo
+				e.SavePlayer(ctx, player)
+				lookResult := e.doLook(player)
+				result.Messages = append(result.Messages, lookResult.Messages...)
+				result.RoomName = lookResult.RoomName
+				result.RoomDesc = lookResult.RoomDesc
+				result.Exits = lookResult.Exits
+				result.Items = lookResult.Items
+				result.OldRoom = origRoom
+				if len(sc.PreMoveMsgs) > 0 {
+					result.OldRoomMsg = sc.PreMoveMsgs
+				} else {
+					// Name what they climbed, as doGoPortal's CLIMB does ("X climbs a rope.").
+					result.OldRoomMsg = []string{fmt.Sprintf("%s climbs %s.", player.DisplayNameCap(),
+						e.formatItemName(itemDef, ri.Adj1, ri.Adj2, ri.Adj3, ri.Extend))}
+				}
+				result.RoomBroadcast = append(result.RoomBroadcast, fmt.Sprintf("%s arrives.", player.DisplayNameCap()))
+				e.applyEntryScripts(ctx, player, dest, result)
+			}
+		} else if sc.NeedsSave {
+			e.SavePlayer(ctx, player)
+		}
+
+		if sc.RoundTimeSet > 0 && !messagesHaveRoundTime(result.Messages) {
+			result.Messages = append(result.Messages, fmt.Sprintf("[Round: %d sec]", sc.RoundTimeSet))
+		}
+		if len(result.Messages) == 0 {
+			result.Messages = []string{"You can't climb that."}
+		}
+		return result
+	}
+
+	// No CLIMB scripts fired — fall back to portal behavior (uses Val2)
+	if isPortal(itemDef.Type) {
+		return e.doGoPortal(ctx, player, room, ri, itemDef, "CLIMB")
+	}
+
+	return &CommandResult{Messages: []string{"You can't climb that."}}
 }

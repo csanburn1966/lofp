@@ -39,7 +39,7 @@ func (e *GameEngine) guardianOf(target *Player) *Player {
 		if p.RoomNumber != target.RoomNumber || p.FirstName == target.FirstName {
 			continue
 		}
-		if containsString(p.GuardTargets, target.FirstName) {
+		if p.guardsPlayer(target.FirstName) {
 			return p
 		}
 	}
