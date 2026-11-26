@@ -407,16 +407,14 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 	}
 
 	// Search all player items (inventory + worn + wielded + off-hand)
-	allItems := make([]InventoryItem, 0, len(player.Inventory)+len(player.Worn)+2)
-	allItems = append(allItems, player.Inventory...)
-	allItems = append(allItems, player.Worn...)
-	if player.Wielded != nil {
-		allItems = append(allItems, *player.Wielded)
+	// Pointers to the real items, so examining can change one (a scroll learns its
+	// spell's name; see scrollLookMsg).
+	allPtrs := carriedItemPtrs(player)
+	allItems := make([]InventoryItem, 0, len(allPtrs))
+	for _, p := range allPtrs {
+		allItems = append(allItems, *p)
 	}
-	if player.OffHand != nil {
-		allItems = append(allItems, *player.OffHand)
-	}
-	for _, ii := range allItems {
+	for _, ii := range allPtrs {
 		itemDef := e.items[ii.Archetype]
 		if itemDef == nil {
 			continue
@@ -433,7 +431,10 @@ func (e *GameEngine) doLookAt(ctx context.Context, player *Player, args []string
 	// Not found directly — check one level into any open carried container
 	// (e.g. an alchemist checking a vial of potion sitting inside an open bag).
 	for _, container := range e.findOpenContainers(allItems) {
-		for _, ci := range container.Contents {
+		for j := range container.Contents {
+			// Contents shares its backing array with the real container's, so this
+			// pointer reaches the real item even though container is a copy.
+			ci := &container.Contents[j]
 			cdef := e.items[ci.Archetype]
 			if cdef == nil {
 				continue
@@ -492,7 +493,7 @@ func (e *GameEngine) lookInEye(ctx context.Context, player *Player, idx int, def
 // player is carrying — held directly, worn, wielded, or nested one level inside an
 // open container. A LIQCONTAINER examined without an IN/ON/UNDER prefix implicitly
 // behaves like LOOK IN, reporting fullness and what liquid (if any) is visible.
-func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii InventoryItem, itemDef *gameworld.ItemDef, prefix string) *CommandResult {
+func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii *InventoryItem, itemDef *gameworld.ItemDef, prefix string) *CommandResult {
 	name := e.getItemNounName(itemDef)
 	if (prefix == "" || prefix == "IN") && itemDef.Type == "LIQCONTAINER" {
 		if !containerIsOpen(itemDef, ii.State) {
@@ -500,10 +501,10 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 		}
 		// lookInContainer handles both liquid models: a named LIQUID item carried
 		// inside (NEWPUT ale picked up with its mug) and the vessel's own Val2/Val4.
-		return e.lookInContainer(player, itemDef, &ii)
+		return e.lookInContainer(player, itemDef, ii)
 	}
 	if prefix == "IN" && isContainerDef(itemDef) {
-		return e.lookInContainer(player, itemDef, &ii)
+		return e.lookInContainer(player, itemDef, ii)
 	}
 	if prefix != "" {
 		displayName := e.formatItemName(itemDef, ii.Adj1, ii.Adj2, ii.Adj3, ii.Tail)
@@ -514,7 +515,7 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 	// session captures — EXAMINE with a custom description prints just the
 	// description, no opener line).
 	var msgs []string
-	if sm := e.scrollLookMsg(ii.Archetype, ii.Val3); sm != "" {
+	if sm := e.examineScroll(player, ii); sm != "" {
 		msgs = []string{fmt.Sprintf("You look at your %s.", name), sm}
 	} else if itemDef.ExamineDesc != "" {
 		msgs = descriptionToMessages(itemDef.ExamineDesc)
@@ -548,16 +549,48 @@ func (e *GameEngine) examineCarriedItem(player *Player, room *gameworld.Room, ii
 	return &CommandResult{Messages: msgs, RoomBroadcast: roomMsgs}
 }
 
-// scrollLookMsg returns a description line if the item is a scroll, empty string otherwise.
-func (e *GameEngine) scrollLookMsg(archetype int, val3 int) string {
-	if archetype != 168 {
+// carriedItemPtrs returns pointers to everything the player holds directly:
+// inventory, worn, wielded and off-hand.
+func carriedItemPtrs(player *Player) []*InventoryItem {
+	out := make([]*InventoryItem, 0, len(player.Inventory)+len(player.Worn)+2)
+	for i := range player.Inventory {
+		out = append(out, &player.Inventory[i])
+	}
+	for i := range player.Worn {
+		out = append(out, &player.Worn[i])
+	}
+	if player.Wielded != nil {
+		out = append(out, player.Wielded)
+	}
+	if player.OffHand != nil {
+		out = append(out, player.OffHand)
+	}
+	return out
+}
+
+// examineScroll returns the line EXAMINE adds for a spell scroll, or "" if the
+// item isn't one. Reading the inscription takes at least one rank of Spellcraft
+// (skill 23, the same requirement as CHANT). Once someone who can read it has
+// looked, the scroll is named for its spell ("an old scroll of Summon Water
+// Elemental") through its TAIL, unless it already has a tail of its own.
+func (e *GameEngine) examineScroll(player *Player, ii *InventoryItem) string {
+	if ii.Archetype != 168 {
 		return ""
 	}
-	spell := FindSpellByID(val3)
-	if spell != nil {
-		return fmt.Sprintf("The scroll contains the spell '%s' (spell #%d).", spell.Name, val3)
+	if player.Skills[23] < 1 && !player.IsGM {
+		return "You do not understand what is written on the scroll."
 	}
-	return fmt.Sprintf("The scroll contains spell #%d.", val3)
+	spell := FindSpellByID(ii.Val3)
+	if spell == nil {
+		return fmt.Sprintf("The scroll contains spell #%d.", ii.Val3)
+	}
+	if ii.Tail == "" {
+		ii.Tail = "of " + spell.Name
+		if e.db != nil {
+			go e.SavePlayer(context.Background(), player)
+		}
+	}
+	return fmt.Sprintf("The scroll contains the spell '%s' (spell #%d).", spell.Name, ii.Val3)
 }
 
 // findPlayerInRoom finds an online player in the same room by name (first name

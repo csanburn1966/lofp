@@ -567,6 +567,12 @@ func (e *GameEngine) doLearn(ctx context.Context, player *Player, args []string)
             return &CommandResult{Messages: []string{"That's not something you can learn from."}}
         }
 
+        // Without Spellcraft the inscription is unreadable (see examineScroll), and
+        // the messages below would name the spell.
+        if player.Skills[23] < 1 && !player.IsGM {
+            return &CommandResult{Messages: []string{"You do not understand what is written on the scroll."}}
+        }
+
         spellNum := c.item.Val3
         if spellNum == 0 {
             return &CommandResult{Messages: []string{"This scroll holds no magical inscription."}}
@@ -1487,6 +1493,13 @@ func (e *GameEngine) castSpellBackfire(ctx context.Context, player *Player, spel
 		// Turn Undead I/II/III and Destroy Undead I/II/III only harm the undead (see
 		// isUndeadOnlySpell) — a non-undead caster is just as immune to their own
 		// backfire as any other living target would be to the spell itself.
+		if isTurnUndeadSpell(spell.ID) && player.IsUndead() {
+			// The turn line does no damage (turn_undead.go); a backfire just rattles the caster.
+			return &CommandResult{
+				Messages:      []string{"The magic twists out of your control and washes over you, leaving you shaken but unharmed."},
+				RoomBroadcast: []string{fmt.Sprintf("Magic flares wildly around %s but fizzles harmlessly.", player.DisplayName())},
+			}
+		}
 		if isUndeadOnlySpell(spell.ID) && !player.IsUndead() {
 			return &CommandResult{
 				Messages:      []string{"The magic twists out of your control, but since you aren't undead, it has no effect on you!"},
@@ -1736,7 +1749,19 @@ func (e *GameEngine) castDamageSpell(player *Player, spell *SpellDef, args []str
 		}
 	}
 
-	// Turn Undead I/II/III and Destroy Undead I/II/III only affect the undead (RACE 22).
+	// Turn Undead I/II/III frighten or destroy the undead by tier (turn_undead.go);
+	// they never do ordinary spell damage.
+	if isTurnUndeadSpell(spell.ID) {
+		if undeadTier(def) == 0 {
+			return &CommandResult{
+				Messages:      []string{fmt.Sprintf("You gesture and cast %s at a %s, but it has no effect — only the undead are vulnerable to this magic!", spell.Name, name)},
+				RoomBroadcast: []string{fmt.Sprintf("%s casts %s at a %s, but nothing happens.", player.DisplayName(), spell.Name, name)},
+			}
+		}
+		return e.castTurnUndead(player, spell, inst, def, name)
+	}
+
+	// Destroy Undead I/II/III only affect the undead (RACE 22).
 	if isUndeadOnlySpell(spell.ID) && def.Race != 22 {
 		return &CommandResult{
 			Messages:      []string{fmt.Sprintf("You gesture and cast %s at a %s, but it has no effect — only the undead are vulnerable to this magic!", spell.Name, name)},

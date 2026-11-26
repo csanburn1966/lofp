@@ -62,7 +62,8 @@ Host names, IPs, paths, and SSH access for these environments are in `CLAUDE.loc
 - `deploy/docker-compose.yml` (project name `lofp-deploy`) runs from a repo clone, with secrets in `deploy/.env` (gitignored; template in `deploy/.env.example`).
 - Two containers: `lofp` (built from the repo's `Dockerfile`) and `mongo:7` as a single-node replica set `rs0` (the hub needs change streams).
 - Ports: web 8080, telnet 4000, SSH game access 4022.
-- Update to the latest pushed code: `git pull && cd deploy && sudo docker compose up -d --build`
+- Update to the latest pushed code: `git pull && cd deploy && sudo docker compose up -d --build && sudo docker builder prune -af`
+- Always run the `docker builder prune -af` after an update. Each rebuild adds to Docker's build cache, and on 2026-11-25 it filled the dev disk (about 12 GB of cache on a 22 GB disk): the build failed and MongoDB crashed. The prune only removes reusable build layers, never containers, images in use or the MongoDB volume.
 - No email service, Google OAuth, or Turnstile keys are configured. Email/password login works in the web client. Telnet/SSH logins need a verified email, so mark accounts verified by hand:
   ```sh
   cd deploy && sudo docker compose exec mongo mongosh lofp --eval 'db.accounts.updateOne({email:"you@example.com"},{$set:{emailVerified:true}})'
