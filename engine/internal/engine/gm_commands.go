@@ -82,7 +82,10 @@ func (e *GameEngine) processGMCommand(ctx context.Context, player *Player, verb 
 		text := extractRawArgs(rawInput, 1)
 		// RoomBroadcast delivers the identical raw text to everyone else in the
 		// room — Messages alone (the old behavior) only ever reached the GM.
-		return &CommandResult{Messages: []string{text}, RoomBroadcast: []string{text}}
+		// ConcealedBroadcastOK: sending text is the whole point of the command, so it
+		// goes out even while the GM is @hide or @invis (api.go otherwise drops a
+		// concealed actor's RoomBroadcast).
+		return &CommandResult{Messages: []string{text}, RoomBroadcast: []string{text}, ConcealedBroadcastOK: true}
 	case "@SNDROOM":
 		return e.gmSndRoom(args, rawInput)
 	case "@ANNOUNCE":
@@ -176,7 +179,7 @@ func (e *GameEngine) processGMCommand(ctx context.Context, player *Player, verb 
 	case "@ECHOPLR":
 		return e.gmEchoPlr(args, rawInput)
 	case "@EXCLUDE":
-		return e.gmExclude(args, rawInput)
+		return e.gmExclude(player, args, rawInput)
 	case "@SPEECH":
 		return e.gmSpeech(ctx, player, args, rawInput)
 	case "@LINE1":
@@ -3217,12 +3220,33 @@ func (e *GameEngine) gmEchoPlr(args []string, rawInput string) *CommandResult {
 	}
 }
 
-func (e *GameEngine) gmExclude(args []string, rawInput string) *CommandResult {
+// gmExclude sends text to everyone in the GM's room except the named player. Like
+// @snd it works while the GM is @hide or @invis.
+func (e *GameEngine) gmExclude(player *Player, args []string, rawInput string) *CommandResult {
 	if len(args) < 2 {
 		return &CommandResult{Messages: []string{"Usage: @exclude <name> <text>"}}
 	}
+	// Match by name directly: findPlayerInRoom skips hidden players, who must still
+	// be excludable.
+	var target *Player
+	if e.sessions != nil {
+		for _, p := range e.sessions.OnlinePlayers() {
+			if p.RoomNumber == player.RoomNumber && p != player && strings.EqualFold(p.FirstName, args[0]) {
+				target = p
+				break
+			}
+		}
+	}
+	if target == nil {
+		return &CommandResult{Messages: []string{fmt.Sprintf("%s isn't here.", args[0])}}
+	}
 	text := extractRawArgs(rawInput, 2)
-	return &CommandResult{Messages: []string{fmt.Sprintf("[Room echo, excluding %s] %s", args[0], text)}}
+	return &CommandResult{
+		Messages:             []string{fmt.Sprintf("[Room echo, excluding %s] %s", target.FirstName, text)},
+		RoomBroadcast:        []string{text},
+		BroadcastExclude:     []string{target.FirstName},
+		ConcealedBroadcastOK: true,
+	}
 }
 
 func (e *GameEngine) gmGet(ctx context.Context, player *Player, args []string) *CommandResult {
